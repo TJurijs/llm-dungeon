@@ -1,0 +1,36 @@
+{
+  "name": "llm-dungeon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A persistent, non-agentic LLM dungeon master with terminal and browser companions",
+  "type": "module",
+  "bin": {
+    "llm-dungeon": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "web-cli": "tsx src/cli.ts web-cli",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "start:web-cli": "node dist/cli.js web-cli",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "commander": "^14.0.0",
+    "gray-matter": "^4.0.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

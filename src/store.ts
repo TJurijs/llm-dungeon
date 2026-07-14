@@ -1,0 +1,784 @@
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import matter from "gray-matter";
+import { languageInstruction, localizeInspection, type LanguageCode } from "./language.js";
+import { allocateGeneratedId, canonicalEntityName } from "./domain/ids.js";
+import { applyTransaction } from "./domain/transaction.js";
+import { assertCampaignStateConsistency } from "./domain/state-consistency.js";
+import { atomicWriteJson, atomicWriteText, pathExists, unlinkIfExists } from "./persistence/files.js";
+import { acquireFileLock } from "./persistence/lock.js";
+import { ReplacementIntentSchema, type ReplacementIntent } from "./persistence/replacement.js";
+import {
+  PendingActionSchema,
+  PendingTurnSchema,
+  type PendingAction,
+  type PendingCommit,
+  type PendingTurn,
+} from "./persistence/pending.js";
+import {
+  compactTurnHistory,
+  entityFilename,
+  parseEntity,
+  parsePlayerVisibleTurn,
+  renderChronicle,
+  renderChronicleForContext,
+  renderContextEntities,
+  renderEntity,
+  parseTurnOperations,
+  renderThreads,
+  renderThreadsForContext,
+  renderTurnLog,
+  renderTurnForInspection,
+} from "./persistence/markdown.js";
+import {
+  ChronicleEventSchema,
+  EntitySchema,
+  ManifestSchema,
+  SetupResultSchema,
+  ThreadSchema,
+  type ChronicleEvent,
+  type Entity,
+  type Fact,
+  type GameState,
+  type SetupResult,
+  type Thread,
+} from "./schemas.js";
+import type {
+  CommittedTurn,
+  NewGameInput,
+  PlayerVisibleTurn,
+  StateView,
+} from "./types.js";
+
+function contentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function commitTarget(currentDir: string, relative: string): string {
+  const supported = relative === "manifest.json"
+    || relative === "threads.md"
+    || relative === "chronicle.md"
+    || /^entities\/[^/\\]+\.md$/.test(relative)
+    || /^turns\/\d{6}\.md$/.test(relative);
+  if (
+    !supported
+    || relative.includes("\0")
+    || path.posix.normalize(relative) !== relative
+    || path.isAbsolute(relative)
+    || path.win32.isAbsolute(relative)
+  ) {
+    throw new Error(`Unsafe or unsupported path in pending commit: ${relative}`);
+  }
+  const root = path.resolve(currentDir);
+  const target = path.resolve(root, relative);
+  if (!target.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Unsafe or unsupported path in pending commit: ${relative}`);
+  }
+  return target;
+}
+
+export interface LoadedCampaign {
+  manifest: GameState;
+  entities: Map<string, Entity>;
+  /** Existing source filename by entity ID, retained for pre-V1 save compatibility. */
+  entityFiles: Map<string, string>;
+  scenario: string;
+  threads: Thread[];
+  chronicle: ChronicleEvent[];
+}
+
+export interface CommitTurnResult {
+  state: GameState;
+  operations: import("./schemas.js").StateOperation[];
+}
+
+export function validateInitialSetup(input: unknown): SetupResult {
+  const setup = SetupResultSchema.parse(input);
+  if (setup.player.id !== "player:hero") throw new Error("The initial player ID must be player:hero");
+  const initial = [setup.player, ...setup.entities];
+  if (new Set(initial.map((entity) => entity.id)).size !== initial.length) {
+    throw new Error("Initial entity IDs must be unique");
+  }
+  const byId = new Map(initial.map((entity) => [entity.id, entity]));
+  const locationEntities = initial.filter((entity) => entity.kind === "location");
+  const locations = new Set(locationEntities.map((entity) => entity.id));
+  const locationNames = new Map<string, string>();
+  for (const location of locationEntities) {
+    const canonical = canonicalEntityName(location.name);
+    const duplicate = locationNames.get(canonical);
+    if (duplicate) throw new Error(`Initial location ${location.id} duplicates ${duplicate} by name`);
+    locationNames.set(canonical, location.id);
+  }
+  if (!setup.player.location || !locations.has(setup.player.location)) {
+    throw new Error("Player must begin at an included location entity");
+  }
+  const inventoriedItems = new Set<string>();
+  for (const entity of initial) {
+    if (entity.location && !locations.has(entity.location)) {
+      throw new Error(`Initial entity ${entity.id} references an unknown location`);
+    }
+    if (entity.location === entity.id) throw new Error(`Initial entity ${entity.id} cannot be located inside itself`);
+    const inventoryIds = new Set<string>();
+    for (const entry of entity.inventory) {
+      if (inventoryIds.has(entry.entityId)) {
+        throw new Error(`Initial entity ${entity.id} has duplicate inventory entries for ${entry.entityId}`);
+      }
+      inventoryIds.add(entry.entityId);
+      const item = byId.get(entry.entityId);
+      if (!item) throw new Error(`Initial inventory item ${entry.entityId} does not exist`);
+      if (item.kind !== "item") throw new Error(`Initial inventory entry ${entry.entityId} is not an item`);
+      inventoriedItems.add(item.id);
+    }
+  }
+  for (const itemId of inventoriedItems) {
+    if (byId.get(itemId)?.location) {
+      throw new Error(`Initial inventoried item ${itemId} must not also have a world location`);
+    }
+  }
+  for (const location of locationEntities) {
+    const visited = new Set<string>([location.id]);
+    let parentId = location.location;
+    while (parentId) {
+      if (visited.has(parentId)) throw new Error(`Initial location hierarchy contains a cycle at ${parentId}`);
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.location;
+    }
+  }
+  for (const thread of setup.threads) {
+    for (const relatedId of thread.relatedEntityIds) {
+      if (!byId.has(relatedId)) throw new Error(`Initial thread ${thread.title} references unknown entity ${relatedId}`);
+    }
+  }
+  const usedThreadIds = new Set<string>();
+  const threads = setup.threads.map((thread) => ({
+    ...thread,
+    id: allocateGeneratedId("thread", thread.title, 0, usedThreadIds),
+  }));
+  return { ...setup, threads };
+}
+
+export class StateStore {
+  readonly currentDir: string;
+  readonly archiveDir: string;
+  readonly pendingPath: string;
+  readonly lockPath: string;
+  readonly replacementIntentPath: string;
+  private readonly lockContext = new AsyncLocalStorage<boolean>();
+
+  constructor(readonly dataRoot: string) {
+    this.currentDir = path.join(dataRoot, "current");
+    this.archiveDir = path.join(dataRoot, "archive");
+    this.pendingPath = path.join(this.currentDir, "pending-turn.json");
+    this.lockPath = path.join(dataRoot, ".campaign.lock");
+    this.replacementIntentPath = path.join(dataRoot, ".replacement-intent.json");
+  }
+
+  async withCampaignLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.lockContext.getStore()) return operation();
+    const release = await acquireFileLock(this.lockPath, "Campaign state");
+    try {
+      return await this.lockContext.run(true, operation);
+    } finally {
+      await release();
+    }
+  }
+
+  async hasCurrentGame(): Promise<boolean> {
+    if (await pathExists(this.replacementIntentPath)) {
+      await this.withCampaignLock(() => this.recoverReplacementUnlocked());
+    }
+    return pathExists(path.join(this.currentDir, "manifest.json"));
+  }
+
+  async createGame(input: NewGameInput): Promise<GameState> {
+    return this.withCampaignLock(() => this.createGameUnlocked(input));
+  }
+
+  private async createGameUnlocked(input: NewGameInput): Promise<GameState> {
+    await this.recoverReplacementUnlocked();
+    if (await pathExists(this.currentDir)) throw new Error("A current campaign already exists");
+    const staged = await this.stageGame(input);
+    try {
+      if (await pathExists(this.currentDir)) throw new Error("A current campaign already exists");
+      await rename(staged.path, this.currentDir);
+      return staged.manifest;
+    } catch (error) {
+      await rm(staged.path, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  /** Stage a complete replacement before archiving the authoritative campaign. */
+  async replaceGame(input: NewGameInput): Promise<GameState> {
+    return this.withCampaignLock(() => this.replaceGameUnlocked(input));
+  }
+
+  private async replaceGameUnlocked(input: NewGameInput): Promise<GameState> {
+    await this.recoverReplacementUnlocked();
+    const staged = await this.stageGame(input);
+    const previousCampaignId = await this.campaignIdAt(this.currentDir);
+    const archivedDirectory = previousCampaignId
+      ? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`
+      : undefined;
+    const intent: ReplacementIntent = {
+      schemaVersion: 1,
+      stagedDirectory: path.basename(staged.path),
+      stagedCampaignId: staged.manifest.campaignId,
+      ...(archivedDirectory ? { archivedDirectory, previousCampaignId } : {}),
+    };
+    try {
+      if (previousCampaignId) await this.recoverCommitUnlocked();
+      await atomicWriteJson(this.replacementIntentPath, ReplacementIntentSchema.parse(intent));
+      if (archivedDirectory) {
+        await mkdir(this.archiveDir, { recursive: true });
+        await rename(this.currentDir, path.join(this.archiveDir, archivedDirectory));
+      }
+      await rename(staged.path, this.currentDir);
+      await unlinkIfExists(this.replacementIntentPath);
+      return staged.manifest;
+    } catch (error) {
+      try {
+        await this.recoverReplacementUnlocked();
+        if (await this.campaignIdAt(this.currentDir) === staged.manifest.campaignId) return staged.manifest;
+      } catch (recoveryError) {
+        throw new AggregateError([error, recoveryError], "Campaign replacement failed and its durable recovery intent could not be completed");
+      }
+      throw error;
+    } finally {
+      if (!(await pathExists(this.replacementIntentPath))) {
+        await rm(staged.path, { recursive: true, force: true });
+      }
+    }
+  }
+
+  private async campaignIdAt(directory: string): Promise<string | undefined> {
+    const manifestPath = path.join(directory, "manifest.json");
+    if (!(await pathExists(manifestPath))) return undefined;
+    return ManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8"))).campaignId;
+  }
+
+  private async recoverReplacementUnlocked(): Promise<void> {
+    if (!(await pathExists(this.replacementIntentPath))) return;
+    const intent = ReplacementIntentSchema.parse(JSON.parse(
+      await readFile(this.replacementIntentPath, "utf8"),
+    ));
+    const stagedPath = path.join(this.dataRoot, intent.stagedDirectory);
+    const archivedPath = intent.archivedDirectory
+      ? path.join(this.archiveDir, intent.archivedDirectory)
+      : undefined;
+    const stagedId = await this.campaignIdAt(stagedPath);
+    if (stagedId && stagedId !== intent.stagedCampaignId) {
+      throw new Error("Replacement staging directory belongs to another campaign");
+    }
+    if (archivedPath && await pathExists(archivedPath)) {
+      const archivedId = await this.campaignIdAt(archivedPath);
+      if (archivedId !== intent.previousCampaignId) {
+        throw new Error("Replacement archive directory belongs to another campaign");
+      }
+    }
+
+    const currentId = await this.campaignIdAt(this.currentDir);
+    if (currentId === intent.stagedCampaignId) {
+      if (stagedId) await rm(stagedPath, { recursive: true, force: true });
+      await unlinkIfExists(this.replacementIntentPath);
+      return;
+    }
+    if (currentId) {
+      if (!archivedPath || currentId !== intent.previousCampaignId || await pathExists(archivedPath)) {
+        throw new Error("Replacement intent conflicts with the active campaign");
+      }
+      await mkdir(this.archiveDir, { recursive: true });
+      await rename(this.currentDir, archivedPath);
+    }
+
+    if (await pathExists(stagedPath)) {
+      await rename(stagedPath, this.currentDir);
+      await unlinkIfExists(this.replacementIntentPath);
+      return;
+    }
+    if (archivedPath && await pathExists(archivedPath)) {
+      await rename(archivedPath, this.currentDir);
+      await unlinkIfExists(this.replacementIntentPath);
+      return;
+    }
+    throw new Error("Replacement intent has neither a staged nor recoverable archived campaign");
+  }
+
+  private async stageGame(input: NewGameInput): Promise<{ path: string; manifest: GameState }> {
+    const setup = validateInitialSetup(input.setup);
+    const initial = [setup.player, ...setup.entities];
+
+    const now = new Date().toISOString();
+    const manifest = ManifestSchema.parse({
+      schemaVersion: 1,
+      campaignId: `campaign:${randomUUID()}`,
+      title: setup.campaignTitle,
+      turn: 0,
+      status: "active",
+      playerId: setup.player.id,
+      currentLocationId: setup.player.location,
+      elapsedMinutes: 0,
+      timeLabel: setup.timeLabel,
+      language: input.language ?? "en",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const usedFactIds = new Set<string>();
+    const entities = initial.map((source) => {
+      const facts: Fact[] = [];
+      for (const [section, values] of [
+        ["established", source.establishedFacts],
+        ["secrets", source.secrets],
+        ["knowledge", source.playerKnowledge],
+      ] as const) {
+        for (const text of values) {
+          facts.push({
+            id: allocateGeneratedId("fact", source.id, 0, usedFactIds),
+            section,
+            text,
+            active: true,
+          });
+        }
+      }
+      return EntitySchema.parse({
+        id: source.id,
+        kind: source.kind,
+        name: source.name,
+        status: source.status,
+        ...(source.location ? { location: source.location } : {}),
+        tags: source.tags,
+        updatedTurn: 0,
+        description: source.description,
+        traits: source.traits,
+        conditions: source.conditions,
+        inventory: source.inventory,
+        facts,
+        relationships: [],
+      });
+    });
+
+    assertCampaignStateConsistency(
+      manifest,
+      new Map(entities.map((entity) => [entity.id, entity])),
+      setup.threads,
+      [],
+    );
+
+    await mkdir(this.dataRoot, { recursive: true });
+    const staging = path.join(this.dataRoot, `.new-${randomUUID()}`);
+    try {
+      await mkdir(path.join(staging, "entities"), { recursive: true });
+      await mkdir(path.join(staging, "turns"), { recursive: true });
+      await writeFile(path.join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await writeFile(
+        path.join(staging, "scenario.md"),
+        `# Campaign Rules Snapshot\n\n${input.worldRules.trim()}\n\n# Scenario\n\n${setup.scenarioMarkdown.trim()}\n`,
+        "utf8",
+      );
+      await writeFile(path.join(staging, "threads.md"), renderThreads(setup.threads), "utf8");
+      await writeFile(path.join(staging, "chronicle.md"), renderChronicle([]), "utf8");
+      for (const entity of entities) {
+        await writeFile(path.join(staging, "entities", entityFilename(entity.id)), renderEntity(entity), "utf8");
+      }
+      const opening: CommittedTurn = {
+        action: "Campaign begins.",
+        resolved: { narration: setup.openingNarration, turnSummary: "The campaign began.", operations: [] },
+        provider: "setup",
+        model: "setup",
+      };
+      await writeFile(path.join(staging, "turns", "000000.md"), renderTurnLog(0, opening), "utf8");
+      return { path: staging, manifest };
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  async archiveAndReset(): Promise<string | undefined> {
+    return this.withCampaignLock(() => this.archiveAndResetUnlocked());
+  }
+
+  private async archiveAndResetUnlocked(): Promise<string | undefined> {
+    await this.recoverReplacementUnlocked();
+    if (!(await pathExists(this.currentDir))) return;
+    await this.recoverCommit();
+    await mkdir(this.archiveDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const archivedPath = path.join(this.archiveDir, `${stamp}-${randomUUID().slice(0, 8)}`);
+    await rename(this.currentDir, archivedPath);
+    return archivedPath;
+  }
+
+  async setLanguage(language: LanguageCode): Promise<GameState> {
+    return this.withCampaignLock(() => this.setLanguageUnlocked(language));
+  }
+
+  private async setLanguageUnlocked(language: LanguageCode): Promise<GameState> {
+    const loaded = await this.load();
+    const manifest = ManifestSchema.parse({
+      ...loaded.manifest,
+      language,
+      updatedAt: new Date().toISOString(),
+    });
+    await atomicWriteText(path.join(this.currentDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    return manifest;
+  }
+
+  async readManifest(): Promise<GameState> {
+    return ManifestSchema.parse(JSON.parse(
+      await readFile(path.join(this.currentDir, "manifest.json"), "utf8"),
+    ));
+  }
+
+  async load(): Promise<LoadedCampaign> {
+    await this.withCampaignLock(() => this.recoverReplacementUnlocked());
+    await this.recoverCommit();
+    const manifest = await this.readManifest();
+    const entityDir = path.join(this.currentDir, "entities");
+    const names = (await readdir(entityDir)).filter((name) => name.endsWith(".md")).sort();
+    const entities = new Map<string, Entity>();
+    const entityFiles = new Map<string, string>();
+    for (const name of names) {
+      const entity = parseEntity(await readFile(path.join(entityDir, name), "utf8"));
+      if (entities.has(entity.id)) throw new Error(`Duplicate entity ID ${entity.id}`);
+      entities.set(entity.id, entity);
+      entityFiles.set(entity.id, name);
+    }
+    const scenario = await readFile(path.join(this.currentDir, "scenario.md"), "utf8");
+    const threadsDoc = matter(await readFile(path.join(this.currentDir, "threads.md"), "utf8"));
+    const chronicleDoc = matter(await readFile(path.join(this.currentDir, "chronicle.md"), "utf8"));
+    const threads = ThreadSchema.array().parse(threadsDoc.data.threads ?? []);
+    const chronicle = ChronicleEventSchema.array().parse(chronicleDoc.data.events ?? []);
+    assertCampaignStateConsistency(manifest, entities, threads, chronicle);
+    return { manifest, entities, entityFiles, scenario, threads, chronicle };
+  }
+
+  async getPending(): Promise<PendingTurn | undefined> {
+    if (!(await pathExists(this.pendingPath))) return undefined;
+    return PendingTurnSchema.parse(JSON.parse(await readFile(this.pendingPath, "utf8")));
+  }
+
+  async setPendingAction(pending: PendingAction): Promise<void> {
+    return this.withCampaignLock(() => this.setPendingActionUnlocked(pending));
+  }
+
+  private async setPendingActionUnlocked(pending: PendingAction): Promise<void> {
+    const validated = PendingActionSchema.parse(pending);
+    await atomicWriteText(this.pendingPath, `${JSON.stringify(validated, null, 2)}\n`);
+  }
+
+  async discardPendingAction(): Promise<void> {
+    return this.withCampaignLock(() => this.discardPendingActionUnlocked());
+  }
+
+  private async discardPendingActionUnlocked(): Promise<void> {
+    const pending = await this.getPending();
+    if (pending?.kind === "commit") throw new Error("Cannot discard a prepared commit");
+    await rm(this.pendingPath, { force: true });
+  }
+
+  async recoverCommit(): Promise<void> {
+    return this.withCampaignLock(() => this.recoverCommitUnlocked());
+  }
+
+  private async recoverCommitUnlocked(): Promise<void> {
+    const pending = await this.getPending();
+    if (!pending || pending.kind !== "commit") return;
+    await this.executeCommit(pending);
+  }
+
+  private async executeCommit(commit: PendingCommit): Promise<void> {
+    // Validate the complete recovery plan before touching the authoritative
+    // campaign. A bad later entry must never leave earlier writes applied.
+    const targets = new Map(
+      Object.keys(commit.writes).map((relative) => [relative, commitTarget(this.currentDir, relative)]),
+    );
+    const targetTurnPath = `turns/${String(commit.targetTurn).padStart(6, "0")}.md`;
+    const turnPaths = Object.keys(commit.writes).filter((relative) => relative.startsWith("turns/"));
+    if (!Object.prototype.hasOwnProperty.call(commit.writes, targetTurnPath)) {
+      throw new Error(`Pending commit must write its target turn log ${targetTurnPath}`);
+    }
+    if (turnPaths.some((relative) => relative !== targetTurnPath)) {
+      throw new Error("Pending commit may write only its target turn log");
+    }
+    const targetTurnText = commit.writes[targetTurnPath]!;
+    const targetTurnDocument = matter(targetTurnText);
+    if (targetTurnDocument.data.turn !== commit.targetTurn) {
+      throw new Error("Pending commit turn log metadata does not match its target turn");
+    }
+    parseTurnOperations(targetTurnText);
+    const existingTurnPath = targets.get(targetTurnPath)!;
+    if (await pathExists(existingTurnPath)) {
+      const existingTurn = await readFile(existingTurnPath, "utf8");
+      if (existingTurn !== targetTurnText) {
+        throw new Error(`Pending commit cannot alter existing turn log ${targetTurnPath}`);
+      }
+    }
+    const targetManifestText = commit.writes["manifest.json"]!;
+    const targetManifest = ManifestSchema.parse(JSON.parse(targetManifestText));
+    if (targetManifest.campaignId !== commit.campaignId || targetManifest.turn !== commit.targetTurn) {
+      throw new Error("Pending commit target manifest does not match its recovery metadata");
+    }
+    const manifestText = await readFile(path.join(this.currentDir, "manifest.json"), "utf8");
+    const manifest = ManifestSchema.parse(JSON.parse(manifestText));
+    if (manifest.campaignId !== commit.campaignId) throw new Error("Pending commit belongs to another campaign");
+    if (manifest.turn !== commit.expectedPreviousTurn && manifest.turn !== commit.targetTurn) {
+      throw new Error(`Pending commit expected turn ${commit.expectedPreviousTurn} or ${commit.targetTurn}, found ${manifest.turn}`);
+    }
+    if (manifest.turn === commit.targetTurn) {
+      if (manifestText !== targetManifestText) {
+        throw new Error("Committed target manifest differs from the pending recovery record");
+      }
+      await unlinkIfExists(this.pendingPath);
+      return;
+    }
+    if (contentHash(manifestText) !== commit.preManifestHash) {
+      throw new Error("Pending commit pre-state manifest hash does not match");
+    }
+    const orderedWrites = Object.entries(commit.writes).sort(([left], [right]) => {
+      if (left === "manifest.json") return 1;
+      if (right === "manifest.json") return -1;
+      return left.localeCompare(right);
+    });
+    for (const [relative, content] of orderedWrites) {
+      await atomicWriteText(targets.get(relative)!, content);
+    }
+    await unlinkIfExists(this.pendingPath);
+  }
+
+  async commitTurn(committed: CommittedTurn): Promise<GameState> {
+    return (await this.commitTurnWithResult(committed)).state;
+  }
+
+  async commitTurnWithResult(committed: CommittedTurn): Promise<CommitTurnResult> {
+    return this.withCampaignLock(() => this.commitTurnWithResultUnlocked(committed));
+  }
+
+  private async commitTurnWithResultUnlocked(committed: CommittedTurn): Promise<CommitTurnResult> {
+    const loaded = await this.load();
+    if (loaded.manifest.status !== "active") throw new Error("The campaign has ended");
+    const nextTurn = loaded.manifest.turn + 1;
+    const manifestPath = path.join(this.currentDir, "manifest.json");
+    const preManifestText = await readFile(manifestPath, "utf8");
+    const previousOperations = loaded.manifest.turn > 0
+      ? parseTurnOperations(await readFile(
+        path.join(this.currentDir, "turns", `${String(loaded.manifest.turn).padStart(6, "0")}.md`),
+        "utf8",
+      ))
+      : [];
+    const transaction = applyTransaction(
+      committed.resolved.operations,
+      nextTurn,
+      loaded.manifest,
+      loaded.entities,
+      loaded.threads,
+      loaded.chronicle,
+      previousOperations,
+    );
+    const { manifest, entities, threads, chronicle } = transaction;
+    manifest.updatedAt = new Date().toISOString();
+    const normalizedCommitted: CommittedTurn = {
+      ...committed,
+      resolved: { ...committed.resolved, operations: transaction.operations },
+    };
+
+    const writes: Record<string, string> = {
+      [`turns/${String(nextTurn).padStart(6, "0")}.md`]: renderTurnLog(nextTurn, normalizedCommitted),
+    };
+    for (const entity of [...entities.values()].filter((candidate) => candidate.updatedTurn === nextTurn)) {
+      writes[`entities/${loaded.entityFiles.get(entity.id) ?? entityFilename(entity.id)}`] = renderEntity(EntitySchema.parse(entity));
+    }
+    if (transaction.operations.some((operation) =>
+      operation.type === "create_thread" || operation.type === "update_thread" || operation.type === "resolve_thread")) {
+      writes["threads.md"] = renderThreads(ThreadSchema.array().parse(threads));
+    }
+    if (transaction.operations.some((operation) =>
+      operation.type === "record_major_event" || operation.type === "end_campaign")) {
+      writes["chronicle.md"] = renderChronicle(ChronicleEventSchema.array().parse(chronicle));
+    }
+    writes["manifest.json"] = `${JSON.stringify(ManifestSchema.parse(manifest), null, 2)}\n`;
+    const pending: PendingCommit = {
+      kind: "commit",
+      writes,
+      campaignId: loaded.manifest.campaignId,
+      expectedPreviousTurn: loaded.manifest.turn,
+      targetTurn: nextTurn,
+      preManifestHash: contentHash(preManifestText),
+    };
+    await atomicWriteText(this.pendingPath, `${JSON.stringify(pending, null, 2)}\n`);
+    await this.executeCommit(pending);
+    return {
+      state: ManifestSchema.parse(manifest),
+      operations: transaction.operations,
+    };
+  }
+
+  async recentTurnLogs(limit = 8): Promise<string[]> {
+    const turnDir = path.join(this.currentDir, "turns");
+    const files = (await readdir(turnDir)).filter((name) => name.endsWith(".md")).sort().slice(-limit);
+    return Promise.all(files.map((name) => readFile(path.join(turnDir, name), "utf8")));
+  }
+
+  async recentTranscript(limit = 8): Promise<PlayerVisibleTurn[]> {
+    const manifest = await this.readManifest();
+    return (await this.recentTurnLogs(limit))
+      .map((log) => parsePlayerVisibleTurn(log, manifest.language));
+  }
+
+  async inspect(view: StateView): Promise<string> {
+    const loaded = await this.load();
+    const player = loaded.entities.get(loaded.manifest.playerId);
+    if (!player) throw new Error("Player entity is missing");
+    if (view === "character") return localizeInspection(renderEntity(player, false), loaded.manifest.language);
+    if (view === "inventory") {
+      const output = !player.inventory.length
+        ? "Inventory is empty."
+        : player.inventory.map((entry) => `${entry.quantity} × ${loaded.entities.get(entry.entityId)?.name ?? entry.entityId}`).join("\n");
+      return localizeInspection(output, loaded.manifest.language);
+    }
+    if (view === "location") {
+      const location = loaded.entities.get(loaded.manifest.currentLocationId);
+      if (!location) throw new Error("Current location is missing");
+      const present = [...loaded.entities.values()].filter((entity) => entity.location === location.id && entity.id !== player.id);
+      return localizeInspection(`${renderEntity(location, false)}\n\n## Present\n\n${present.map((entity) => `- ${entity.name} (${entity.status})`).join("\n") || "_Nobody else of note._"}`, loaded.manifest.language);
+    }
+    if (view === "threads") return localizeInspection(renderThreads(loaded.threads), loaded.manifest.language);
+    return localizeInspection(
+      (await this.recentTurnLogs(8))
+        .map((log) => renderTurnForInspection(log, loaded.manifest.language))
+        .join("\n\n---\n\n"),
+      loaded.manifest.language,
+    );
+  }
+
+  async buildContext(): Promise<string> {
+    const loaded = await this.load();
+    const player = loaded.entities.get(loaded.manifest.playerId);
+    const location = loaded.entities.get(loaded.manifest.currentLocationId);
+    if (!player || !location) throw new Error("Campaign is missing the player or current location");
+    const selected = new Map<string, Entity>([[player.id, player], [location.id, location]]);
+    for (const entity of loaded.entities.values()) {
+      if (entity.location === location.id) selected.set(entity.id, entity);
+    }
+    let parentId = location.location;
+    const visitedParents = new Set<string>();
+    while (parentId && !visitedParents.has(parentId)) {
+      visitedParents.add(parentId);
+      const parent = loaded.entities.get(parentId);
+      if (!parent || parent.kind !== "location") break;
+      selected.set(parent.id, parent);
+      parentId = parent.location;
+    }
+    const directlyRelevant = [...selected.values()];
+    for (const owner of directlyRelevant) {
+      for (const item of owner.inventory) {
+        const entity = loaded.entities.get(item.entityId);
+        if (entity) selected.set(entity.id, entity);
+      }
+    }
+    for (const entity of directlyRelevant) {
+      for (const relationship of entity.relationships) {
+        const related = loaded.entities.get(relationship.targetId);
+        if (related) selected.set(related.id, related);
+      }
+    }
+    for (const thread of loaded.threads.filter((candidate) => candidate.status === "active")) {
+      for (const relatedId of thread.relatedEntityIds) {
+        const related = loaded.entities.get(relatedId);
+        if (related) selected.set(related.id, related);
+      }
+    }
+    const recent = await this.recentTurnLogs(8);
+    const lastCommittedOperations = recent.length ? parseTurnOperations(recent.at(-1)!) : [];
+    const authoritativeInventory = player.inventory.map((entry) => {
+      const item = loaded.entities.get(entry.entityId);
+      return `- ${entry.quantity} × [${entry.entityId}] ${item?.name ?? "Unknown item"}`;
+    }).join("\n") || "_Empty. The player carries no items._";
+    const relevantInventories = directlyRelevant.map((owner) => {
+      const inventory = owner.inventory.map((entry) => {
+        const item = loaded.entities.get(entry.entityId);
+        return `  - ${entry.quantity} × [${entry.entityId}] ${item?.name ?? "Unknown item"}`;
+      }).join("\n") || "  - _Empty._";
+      return `- [${owner.id}] ${owner.name}\n${inventory}`;
+    }).join("\n");
+    const locationDirectory = [...loaded.entities.values()]
+      .filter((entity) => entity.kind === "location")
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((entity) => `- [${entity.id}] ${entity.name}; status=${entity.status}${entity.location ? `; parent=[${entity.location}]` : ""}`)
+      .join("\n") || "_No locations._";
+    return [
+      "CAMPAIGN STATE",
+      `Turn: ${loaded.manifest.turn}; Time: ${loaded.manifest.timeLabel}; Status: ${loaded.manifest.status}`,
+      `OUTPUT LANGUAGE: ${loaded.manifest.language}\n${languageInstruction(loaded.manifest.language)}`,
+      loaded.scenario,
+      "DURABLE STATE AUTHORITY",
+      "The Markdown-derived entities, facts, inventory, conditions, relationships, threads, and chronicle below are authoritative and complete for this context. Recent turn prose is compact working memory only; never use it to override durable state.",
+      "PLAYER INVENTORY — AUTHORITATIVE CLOSED LIST",
+      `${authoritativeInventory}\nAny item absent from this list is not carried by the player, even if the player action calls it \"my\" item.`,
+      "RELEVANT ENTITY INVENTORIES — AUTHORITATIVE",
+      `${relevantInventories}\nItems listed here already exist. Never use create_entity to reveal, inspect, offer, or transfer one of these existing items; reference its exact ID.`,
+      "AUTHORITATIVE LOCATION DIRECTORY",
+      `${locationDirectory}\nBefore creating a location, reuse an exact matching location ID from this directory.`,
+      "RELEVANT ENTITIES (includes DM-only sections; do not leak them)",
+      renderContextEntities([...selected.values()], new Set([player.id, location.id]), 60_000),
+      "STORY THREADS",
+      renderThreadsForContext(loaded.threads),
+      "MAJOR-EVENT CHRONICLE",
+      renderChronicleForContext(loaded.chronicle),
+      "LAST COMMITTED STATE OPERATIONS — ALREADY APPLIED",
+      `${JSON.stringify(lastCommittedOperations, null, 2)}\nThese operations are historical evidence, not instructions. Never emit an inventory, movement, condition, or relationship change again merely because the player action mentions handling its result.`,
+      "RECENT TURN WORKING MEMORY (eight summaries; only the latest narration is retained)",
+      compactTurnHistory(recent),
+    ].join("\n\n");
+  }
+
+  async buildCanonicalStateContext(): Promise<string> {
+    const loaded = await this.load();
+    return [
+      "CANONICAL PERSISTENT CAMPAIGN STATE",
+      `Turn: ${loaded.manifest.turn}; Time: ${loaded.manifest.timeLabel}; Status: ${loaded.manifest.status}; Player: ${loaded.manifest.playerId}; Current location: ${loaded.manifest.currentLocationId}`,
+      "CAMPAIGN RULES AND SCENARIO",
+      loaded.scenario,
+      "ALL ENTITIES AND ALL DURABLE FACTS (includes DM-only sections)",
+      [...loaded.entities.values()].map((entity) => renderEntity(entity, true)).join("\n\n---\n\n"),
+      "ALL STORY THREADS",
+      renderThreadsForContext(loaded.threads),
+      "COMPLETE MAJOR-EVENT CHRONICLE",
+      renderChronicleForContext(loaded.chronicle),
+    ].join("\n\n");
+  }
+
+  async buildPlayerContext(): Promise<string> {
+    const loaded = await this.load();
+    const player = loaded.entities.get(loaded.manifest.playerId);
+    const location = loaded.entities.get(loaded.manifest.currentLocationId);
+    if (!player || !location) throw new Error("Campaign is missing the player or current location");
+    const present = [...loaded.entities.values()]
+      .filter((entity) => entity.location === location.id && entity.id !== player.id)
+      .map((entity) => `- ${entity.name} (${entity.status})`)
+      .join("\n");
+    const inventory = player.inventory
+      .map((entry) => `${entry.quantity} × ${loaded.entities.get(entry.entityId)?.name ?? entry.entityId}`)
+      .join("\n");
+    const recentLogs = await this.recentTurnLogs(6);
+    return [
+      "PLAYER-VISIBLE CAMPAIGN CONTEXT",
+      `Turn: ${loaded.manifest.turn}; Time: ${loaded.manifest.timeLabel}; Campaign status: ${loaded.manifest.status}`,
+      `OUTPUT LANGUAGE: ${loaded.manifest.language}\n${languageInstruction(loaded.manifest.language)}`,
+      "YOUR CHARACTER",
+      renderEntity(player, false),
+      "YOUR INVENTORY",
+      inventory || "Empty.",
+      "CURRENT LOCATION",
+      renderEntity(location, false),
+      "NOTABLE PEOPLE OR CREATURES PRESENT",
+      present || "Nobody else of note.",
+      "KNOWN STORY THREADS",
+      renderThreads(loaded.threads),
+      "RECENT PLAY (six summaries; only the latest narration is retained)",
+      compactTurnHistory(recentLogs),
+    ].join("\n\n");
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.DS_Store
+data/
+coverage/
+evaluations/runs/
+work/
+config/app.json
+config/provider.json
+*.log

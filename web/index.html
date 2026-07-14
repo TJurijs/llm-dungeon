@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>llm-dungeon web-cli</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <span class="sigil">◆</span>
+      <strong>llm-dungeon</strong>
+      <span class="subtitle">web-cli</span>
+    </div>
+    <div class="status-row">
+      <span id="provider-status" class="status">provider: loading</span>
+      <span id="campaign-status" class="status">campaign: loading</span>
+      <span id="task-status" class="status">evaluation: idle</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="terminal-wrap">
+      <div class="terminal-title">
+        <span>TERMINAL OUTPUT</span>
+        <div class="terminal-actions">
+          <button id="command-log-toggle" class="command-log-button" aria-haspopup="dialog"><span id="command-log-label">activity log</span> <span id="command-count">0</span></button>
+          <button id="clear-terminal" class="quiet">clear</button>
+        </div>
+      </div>
+      <div id="terminal" data-pristine="true" aria-live="polite">
+        <section class="terminal-welcome">
+          <div class="terminal-welcome-title"><span>◆</span> LLM DUNGEON <small>WEB-CLI ONLINE</small></div>
+          <p>Configure a provider, create or resume a campaign, then enter any action.</p>
+        </section>
+      </div>
+    </section>
+
+    <div id="workspace-resizer" class="workspace-resizer" role="separator" aria-label="Resize terminal and controls" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="64" tabindex="0" title="Drag to resize · Double-click to reset"><span></span></div>
+
+    <aside class="controls">
+      <nav class="tabs" role="tablist" aria-label="Control panels">
+        <div class="tab-group tab-group-campaign" role="presentation">
+          <span id="tab-group-campaign-label" class="tab-group-label">Campaign</span>
+          <div class="tab-group-controls">
+            <div class="tab-group-tabs" role="presentation">
+              <button id="tab-game" type="button" role="tab" aria-controls="panel-game" aria-describedby="tab-group-campaign-label" aria-selected="true" tabindex="0" data-panel="game" class="active">Play</button>
+              <button id="tab-campaign" type="button" role="tab" aria-controls="panel-campaign" aria-describedby="tab-group-campaign-label" aria-selected="false" tabindex="-1" data-panel="campaign">New campaign</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-group tab-group-configuration" role="presentation">
+          <span id="tab-group-configuration-label" class="tab-group-label">Configuration</span>
+          <div class="tab-group-controls">
+            <div class="tab-group-tabs" role="presentation">
+              <button id="tab-provider" type="button" role="tab" aria-controls="panel-provider" aria-describedby="tab-group-configuration-label" aria-selected="false" tabindex="-1" data-panel="provider">Provider & key</button>
+              <button id="tab-world" type="button" role="tab" aria-controls="panel-world" aria-describedby="tab-group-configuration-label" aria-selected="false" tabindex="-1" data-panel="world">World rules</button>
+            </div>
+            <label class="language-picker" for="language-select"><span>Language</span>
+              <select id="language-select" aria-label="Game and interface language">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="tab-group tab-group-testing" role="presentation">
+          <span id="tab-group-testing-label" class="tab-group-label">Testing</span>
+          <div class="tab-group-controls">
+            <div class="tab-group-tabs" role="presentation">
+              <button id="tab-evaluations" type="button" role="tab" aria-controls="panel-evaluations" aria-describedby="tab-group-testing-label" aria-selected="false" tabindex="-1" data-panel="evaluations">Auto-runs</button>
+            </div>
+          </div>
+        </div>
+      </nav>
+      <section id="panel-game" class="panel active" role="tabpanel" aria-labelledby="tab-game" tabindex="0">
+        <h1>Play</h1>
+        <p id="game-summary" class="state-card">Loading campaign state…</p>
+        <label for="action">What do you do?</label>
+        <textarea id="action" rows="6" placeholder="I approach the hooded traveler and ask why they have been watching the door."></textarea>
+        <div class="button-row">
+          <button id="play" class="primary">Send action</button>
+          <button id="retry" title="Resume an action that failed before it was committed">Retry pending</button>
+          <button id="discard" title="Remove an uncommitted action without changing world state">Discard pending</button>
+        </div>
+        <p class="hint">Ctrl/⌘ + Enter sends the action. Rolls and modifiers appear in the output.</p>
+        <p id="pending-help" class="hint hidden"><b>Pending recovery:</b> Retry resumes the same action and locked roll. Discard removes it with no world-state change.</p>
+        <h2>Inspect</h2>
+        <div class="button-grid" id="inspect-buttons">
+          <button data-view="character">Character</button>
+          <button data-view="inventory">Inventory</button>
+          <button data-view="location">Location</button>
+          <button data-view="threads">Threads</button>
+          <button data-view="journal">Journal</button>
+        </div>
+        <button id="archive" class="danger subtle">Archive current campaign</button>
+      </section>
+
+      <section id="panel-campaign" class="panel" role="tabpanel" aria-labelledby="tab-campaign" tabindex="0" hidden>
+        <h1>New campaign</h1>
+        <label for="premise">Premise / scenario (optional)</label>
+        <textarea id="premise" rows="6" placeholder="Default: A classical opening in a tavern, with immediate but optional possibilities."></textarea>
+        <label for="character">Character concept (optional)</label>
+        <textarea id="character" rows="6" placeholder="Default: A grounded adventurer with two useful traits and one complicating trait."></textarea>
+        <button id="generate-campaign" class="primary">Generate preview</button>
+        <div id="draft-controls" class="hidden">
+          <label class="check"><input id="archive-on-confirm" type="checkbox"><span>Archive the current campaign if one exists</span></label>
+          <div class="button-row">
+            <button id="confirm-campaign" class="primary">Accept & begin</button>
+            <button id="regenerate-campaign">Regenerate</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-provider" class="panel" role="tabpanel" aria-labelledby="tab-provider" tabindex="0" hidden>
+        <h1>Provider & key</h1>
+        <p class="notice">Browser-entered keys stay only in this server process and are never written to files or returned by the API.</p>
+        <div id="schema-compatibility" class="capability-card untested" aria-live="polite">
+          <strong id="schema-compatibility-title">Structured output required</strong>
+          <p id="schema-compatibility-detail">The selected model must support JSON-schema-constrained output. Run Test connection after changing provider or model.</p>
+          <small id="schema-compatibility-rule">Unsupported models fail closed; the game never falls back to unrestricted JSON.</small>
+        </div>
+        <label for="provider">Provider</label>
+        <select id="provider">
+          <option value="gemini">Google — recommended</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
+        <label for="model">Model ID</label>
+        <div class="model-picker" data-model-picker data-recommended="google/gemini-3.5-flash">
+          <div class="model-picker-field">
+            <input id="model" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="model-options" aria-describedby="model-guidance" autocomplete="off" spellcheck="false" placeholder="Search or enter a model ID">
+            <button class="model-picker-toggle" type="button" aria-label="Show model options" aria-controls="model-options" tabindex="-1">▾</button>
+          </div>
+          <div id="model-options" class="model-picker-menu" role="listbox" hidden></div>
+        </div>
+        <p id="model-guidance" class="hint model-guidance" aria-live="polite"></p>
+        <div class="two-col">
+          <div><label for="temperature">Temperature</label><input id="temperature" type="number" min="0" max="2" step="0.1" value="0.8"></div>
+          <div><label for="max-tokens">Max output tokens</label><input id="max-tokens" type="number" min="256" max="32000" value="4000"></div>
+        </div>
+        <label for="endpoint">Endpoint override <span class="muted">optional</span></label>
+        <input id="endpoint" type="url" placeholder="Use provider default">
+        <label for="api-key">API key <span class="muted">leave blank to keep current key</span></label>
+        <input id="api-key" type="password" autocomplete="off" placeholder="Session-only key">
+        <div class="button-row">
+          <button id="save-provider" class="primary">Save config</button>
+          <button id="test-provider">Test connection</button>
+        </div>
+        <p id="key-status" class="hint"></p>
+      </section>
+
+      <section id="panel-evaluations" class="panel" role="tabpanel" aria-labelledby="tab-evaluations" tabindex="0" hidden>
+        <h1>Self-play auto-runs</h1>
+        <p id="evaluation-provider" class="notice">Auto-runs use the saved provider configuration.</p>
+        <div class="two-col">
+          <div><label for="max-cost">Cost ceiling ($)</label><input id="max-cost" type="number" min="0.01" step="0.01" value="5"></div>
+          <div><label for="sessions">Sessions</label><input id="sessions" type="number" min="1" max="100" value="1"></div>
+          <div><label for="turns">Turns / session</label><input id="turns" type="number" min="1" max="200" value="20"></div>
+          <div><label for="concurrency">Parallel sessions</label><input id="concurrency" type="number" min="1" max="10" value="3"></div>
+          <fieldset id="profile-control" class="wide profile-control">
+            <legend>Player profile pool</legend>
+            <p id="profile-help" class="hint">Select one or more. Sessions rotate through profiles in the order you select them.</p>
+            <details id="profile-dropdown" class="profile-multiselect">
+              <summary id="profile-selection-summary" aria-label="Selected player profiles">Curious explorer</summary>
+              <div id="profile-pool" class="profile-pool">
+                <label class="profile-option"><input type="checkbox" value="curious-explorer" checked><span><b>Curious explorer</b><small>Explores and follows discoveries</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="social-manipulator"><span><b>Social manipulator</b><small>Bargains, deceives, and builds alliances</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="cautious-investigator"><span><b>Cautious investigator</b><small>Verifies clues and prepares carefully</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="reckless-adventurer"><span><b>Reckless adventurer</b><small>Takes bold risks and escalates danger</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="combat-focused"><span><b>Combat focused</b><small>Favors force and adapts to injuries</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="creative-problem-solver"><span><b>Creative problem solver</b><small>Combines tools and environment</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="rule-challenger"><span><b>Rule challenger</b><small>Tests impossible or unsupported claims</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="long-term-planner"><span><b>Long-term planner</b><small>Tracks goals, promises, and consequences</small></span></label>
+                <label class="profile-option"><input type="checkbox" value="chaotic"><span><b>Chaotic</b><small>Stress-tests gibberish, nonsense, and invented items</small></span></label>
+              </div>
+            </details>
+            <p id="profile-order" class="profile-order" aria-live="polite"></p>
+          </fieldset>
+        </div>
+        <label for="player-model">Simulated-player model <span class="muted">optional override</span></label>
+        <div class="model-picker" data-model-picker data-recommended="google/gemini-3.1-flash-lite">
+          <div class="model-picker-field">
+            <input id="player-model" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="player-model-options" autocomplete="off" spellcheck="false" placeholder="google/gemini-3.1-flash-lite — recommended">
+            <button class="model-picker-toggle" type="button" aria-label="Show model options" aria-controls="player-model-options" tabindex="-1">▾</button>
+          </div>
+          <div id="player-model-options" class="model-picker-menu" role="listbox" hidden></div>
+        </div>
+        <p id="player-model-schema-hint" class="hint">A player-model override must also support schema-constrained JSON output.</p>
+        <button id="start-evaluation" class="primary">Start bounded auto-run</button>
+        <h2>Run artifacts</h2>
+        <label for="run-select">Run</label>
+        <select id="run-select"><option value="">No runs yet</option></select>
+        <div class="button-grid">
+          <button id="show-report">Show report</button>
+          <button id="resume-run">Resume run</button>
+          <button id="regenerate-report">Regenerate report</button>
+        </div>
+        <label for="session-select">Session</label>
+        <select id="session-select"><option value="">Select a run</option></select>
+        <div class="button-row">
+          <button id="show-transcript">Transcript</button>
+          <button id="show-evaluation">AI evaluation</button>
+        </div>
+      </section>
+
+      <section id="panel-world" class="panel" role="tabpanel" aria-labelledby="tab-world" tabindex="0" hidden>
+        <h1>World rules</h1>
+        <p class="notice">These Markdown rules affect future campaigns. Every campaign keeps its own snapshot when created.</p>
+        <textarea id="world-markdown" rows="28" spellcheck="false"></textarea>
+        <button id="save-world" class="primary">Save world.md</button>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="command-log-dialog" class="command-dialog">
+    <div class="command-dialog-head">
+      <div>
+        <span class="eyebrow">WEB-CLI</span>
+        <h2>Activity log</h2>
+      </div>
+      <button id="command-log-close" class="quiet" aria-label="Close activity log">close</button>
+    </div>
+    <p class="hint">A local audit trail of actions performed through this interface. API keys are always redacted.</p>
+    <pre id="command-log">No activity recorded yet.</pre>
+    <div class="button-row command-dialog-actions">
+      <button id="copy-command-log">Copy</button>
+      <button id="clear-command-log" class="danger subtle">Clear activity</button>
+    </div>
+  </dialog>
+
+  <div id="busy" class="busy hidden"><span></span><b>Working…</b></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
