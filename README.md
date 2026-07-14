@@ -154,6 +154,8 @@ world rules, and language), and **Testing** (self-play auto-runs). It provides:
 - free-text play with visible checks;
 - campaign-scoped browser transcript persistence across reloads and browser
   restarts, with player-visible turn-by-turn reconstruction for older sessions;
+- tab-scoped terminal channels that keep gameplay, setup, configuration, world,
+  and auto-run output separate;
 - character, inventory, location, threads, and journal views;
 - pending-turn retry/discard controls;
 - campaign archival and creation;

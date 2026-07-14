@@ -18,6 +18,7 @@ const TERMINAL_STORAGE_PREFIX = "llm-dungeon:web-cli-terminal:";
 const TERMINAL_MAX_ENTRIES = 300;
 const TERMINAL_MAX_TEXT = 50_000;
 const TERMINAL_MAX_STORAGE = 750_000;
+const TERMINAL_CHANNELS = new Set(["game", "campaign", "provider", "evaluations", "world"]);
 const LEGACY_JOURNAL_DUMP_TITLES = new Set([
   "RECENT JOURNAL — RESTORED",
   "НЕДАВНИЙ ЖУРНАЛ — ВОССТАНОВЛЕН",
@@ -48,7 +49,7 @@ const UI_COPY = {
     noCampaign: "No current campaign. Create one in the New campaign panel.", pendingAvailable: "pending action available", none: "none",
     providerMissing: "provider: not configured", noKey: "no key", campaignNone: "campaign: none", evaluationIdle: "evaluation: idle",
     autoUses: "Auto-runs use the saved provider; completed sessions are judged by the same DM model", configureAuto: "Configure and save a provider before starting an auto-run.",
-    ready: "llm-dungeon web-cli ready.\n\nConfigure a provider, create or resume a campaign, then enter any action.",
+    ready: "llm-dungeon web-cli ready.\n\nConfigure a provider, create or resume a campaign, then enter any action.", emptyOutput: "No output for this tab yet.",
     changed: "LANGUAGE CHANGED", changedBody: "The selected language now applies to the interface where translated and to new campaign narration.",
     actionPlaceholder: "I approach the hooded traveler and ask why they have been watching the door.", premisePlaceholder: "Default: A classical opening in a tavern, with immediate but optional possibilities.", characterPlaceholder: "Default: A grounded adventurer with two useful traits and one complicating trait.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — recommended",
     endpointPlaceholder: "Use provider default", keyPlaceholder: "Session-only key", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", campaignEnded: "CAMPAIGN ENDED",
@@ -75,7 +76,7 @@ const UI_COPY = {
     noCampaign: "Текущей кампании нет. Создайте её на вкладке «Новая кампания».", pendingAvailable: "есть ожидающее действие", none: "нет",
     providerMissing: "провайдер: не настроен", noKey: "нет ключа", campaignNone: "кампания: нет", evaluationIdle: "автопрогон: не запущен",
     autoUses: "Автопрогоны используют сохранённого провайдера; завершённые сессии оценивает та же модель мастера", configureAuto: "Настройте и сохраните провайдера перед запуском.",
-    ready: "llm-dungeon web-cli готов.\n\nНастройте провайдера, создайте или продолжите кампанию, затем введите любое действие.",
+    ready: "llm-dungeon web-cli готов.\n\nНастройте провайдера, создайте или продолжите кампанию, затем введите любое действие.", emptyOutput: "На этой вкладке пока нет вывода.",
     changed: "ЯЗЫК ИЗМЕНЁН", changedBody: "Язык интерфейса и текущей кампании обновлён. Новое повествование будет на русском.",
     actionPlaceholder: "Я подхожу к путнику в капюшоне и спрашиваю, почему он следит за дверью.", premisePlaceholder: "По умолчанию: классическое начало в таверне с немедленными, но необязательными возможностями.", characterPlaceholder: "По умолчанию: приземлённый искатель приключений с двумя полезными и одной осложняющей чертой.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — рекомендуется",
     endpointPlaceholder: "Адрес провайдера по умолчанию", keyPlaceholder: "Ключ только для этой сессии", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
@@ -322,7 +323,9 @@ function setTerminalReady() {
   mode.textContent = t("online");
   title.append(sigil, document.createTextNode(" LLM DUNGEON "), mode);
   const message = document.createElement("p");
-  message.textContent = t("ready").split("\n\n").slice(1).join("\n\n");
+  message.textContent = currentTerminalChannel() === "game"
+    ? t("ready").split("\n\n").slice(1).join("\n\n")
+    : t("emptyOutput");
   welcome.append(title, message);
   terminal.replaceChildren(welcome);
   terminal.dataset.pristine = "true";
@@ -332,13 +335,15 @@ function terminalStorageKey(campaignId) {
   return `${TERMINAL_STORAGE_PREFIX}${campaignId ?? "no-campaign"}`;
 }
 
-function normalizedTerminalEntry(value) {
+function normalizedTerminalEntry(value, fallbackChannel = "game") {
   if (!value || typeof value !== "object") return null;
   const mode = ["normal", "success", "error"].includes(value.mode) ? value.mode : "normal";
+  const channel = TERMINAL_CHANNELS.has(value.channel) ? value.channel : fallbackChannel;
   return {
     title: String(value.title ?? "").slice(0, 500),
     text: String(value.text ?? "").slice(0, TERMINAL_MAX_TEXT),
     mode,
+    channel,
   };
 }
 
@@ -347,7 +352,52 @@ function isLegacyEvaluationTranscriptEntry(entry) {
     && entry.text.trimStart().startsWith("# Self-Play Transcript:");
 }
 
+function migratedTerminalEntries(values) {
+  let evaluationOpening = false;
+  let evaluationTurn = false;
+  return values.map((value) => {
+    if (TERMINAL_CHANNELS.has(value?.channel)) return normalizedTerminalEntry(value);
+    const entry = normalizedTerminalEntry(value);
+    if (!entry) return null;
+    const title = entry.title;
+    let channel = "game";
+    const autoRunHeader = title.startsWith("AUTO-RUN") || title.startsWith("АВТОПРОГОН");
+    const evaluationArtifact = title.startsWith("REPORT — ")
+      || title.startsWith("EVALUATION — ")
+      || title.startsWith("TRANSCRIPT — ")
+      || title.startsWith("TURN FAILED ")
+      || title.startsWith("СБОЙ ХОДА ");
+    const evaluationAction = title.startsWith("YOU — ") || title.startsWith("ВЫ — ");
+    if (autoRunHeader || evaluationArtifact) {
+      channel = "evaluations";
+      evaluationOpening = title.includes(" — session-");
+    } else if (evaluationAction) {
+      channel = "evaluations";
+      evaluationOpening = false;
+      evaluationTurn = true;
+    } else if (evaluationOpening && (title.endsWith(" — OPENING") || title.endsWith(" — НАЧАЛО"))) {
+      channel = "evaluations";
+      evaluationOpening = false;
+    } else if (evaluationTurn && (title === "D100 CHECK" || title === "ПРОВЕРКА D100")) {
+      channel = "evaluations";
+    } else if (evaluationTurn && (title.includes(" — TURN ") || title.includes(" — ХОД "))) {
+      channel = "evaluations";
+      evaluationTurn = false;
+    } else if (title.startsWith("CAMPAIGN PREVIEW — ")) {
+      channel = "campaign";
+    } else if (title === "PROVIDER SAVED"
+      || title.includes("CONNECTION + REQUIRED SCHEMAS")
+      || title.includes("СОЕДИНЕНИЕ И ОБЯЗАТЕЛЬНЫЕ СХЕМЫ")) {
+      channel = "provider";
+    } else if (title === "WORLD RULES SAVED") {
+      channel = "world";
+    }
+    return { ...entry, channel };
+  }).filter(Boolean);
+}
+
 function appendTerminalEntry(entry) {
+  if (terminal.dataset.pristine === "true") terminal.replaceChildren();
   const marker = entry.mode === "error" ? "!!" : entry.mode === "success" ? ">>" : "==";
   const section = document.createElement("section");
   section.className = `terminal-entry ${entry.mode}`;
@@ -366,13 +416,31 @@ function appendTerminalEntry(entry) {
   terminal.dataset.pristine = "false";
 }
 
+function currentTerminalChannel() {
+  const selected = panelTabs().find((button) => button.getAttribute("aria-selected") === "true");
+  return TERMINAL_CHANNELS.has(selected?.dataset.panel) ? selected.dataset.panel : "game";
+}
+
+function renderTerminalChannel(channel = currentTerminalChannel()) {
+  terminal.replaceChildren();
+  terminal.dataset.channel = channel;
+  const visible = terminalHistory.filter((entry) => entry.channel === channel);
+  if (visible.length) {
+    visible.forEach(appendTerminalEntry);
+  } else {
+    setTerminalReady();
+  }
+  if (channel === "evaluations" && status?.evaluationTask) renderTask(status.evaluationTask);
+  requestAnimationFrame(() => { terminal.scrollTop = terminal.scrollHeight; });
+}
+
 function persistTerminalHistory() {
   if (terminalCampaignId === undefined) return;
   let entries = terminalHistory.slice(-TERMINAL_MAX_ENTRIES);
-  let serialized = JSON.stringify({ version: 1, entries });
+  let serialized = JSON.stringify({ version: 2, entries });
   while (entries.length > 1 && serialized.length > TERMINAL_MAX_STORAGE) {
     entries = entries.slice(1);
-    serialized = JSON.stringify({ version: 1, entries });
+    serialized = JSON.stringify({ version: 2, entries });
   }
   terminalHistory = entries;
   try { localStorage.setItem(terminalStorageKey(terminalCampaignId), serialized); } catch { /* Storage can be disabled or full. */ }
@@ -383,9 +451,9 @@ function readTerminalHistory(campaignId) {
     const raw = localStorage.getItem(terminalStorageKey(campaignId));
     if (raw === null) return { found: false, entries: [] };
     const parsed = JSON.parse(raw);
-    const values = Array.isArray(parsed) ? parsed : parsed?.version === 1 ? parsed.entries : [];
+    const values = Array.isArray(parsed) ? parsed : [1, 2].includes(parsed?.version) ? parsed.entries : [];
     const entries = Array.isArray(values)
-      ? values.map(normalizedTerminalEntry).filter(Boolean).slice(-TERMINAL_MAX_ENTRIES)
+      ? migratedTerminalEntries(values).slice(-TERMINAL_MAX_ENTRIES)
       : [];
     const visibleEntries = entries.filter((entry) => !isLegacyEvaluationTranscriptEntry(entry));
     if (entries.some((entry) => LEGACY_JOURNAL_DUMP_TITLES.has(entry.title))) {
@@ -403,13 +471,7 @@ async function switchTerminalCampaign(campaign) {
   const restored = readTerminalHistory(campaignId);
   terminalCampaignId = campaignId;
   terminalHistory = restored.entries;
-  terminal.replaceChildren();
-  if (terminalHistory.length) {
-    terminalHistory.forEach(appendTerminalEntry);
-    requestAnimationFrame(() => { terminal.scrollTop = terminal.scrollHeight; });
-  } else {
-    setTerminalReady();
-  }
+  renderTerminalChannel();
 
   // Browser transcripts created before this feature cannot exist in local
   // storage. Reconstruct the authoritative recent player-visible turns once,
@@ -419,12 +481,12 @@ async function switchTerminalCampaign(campaign) {
       const body = await api("/api/game/transcript");
       for (const turn of body.turns) {
         if (turn.turn === 0) {
-          print(`CAMPAIGN BEGINS — ${campaign.title}`, turn.narration, "success");
+          print(`CAMPAIGN BEGINS — ${campaign.title}`, turn.narration, "success", "game");
           continue;
         }
-        print(t("you"), turn.action);
-        if (turn.checkText) print(t("check"), turn.checkText);
-        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success");
+        print(t("you"), turn.action, "normal", "game");
+        if (turn.checkText) print(t("check"), turn.checkText, "normal", "game");
+        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success", "game");
       }
     } catch { /* Status and normal play remain available if transcript restoration is temporarily busy. */ }
   }
@@ -560,24 +622,27 @@ async function api(url, options = {}) {
   return body;
 }
 
-function print(title, text, mode = "normal") {
-  const entry = normalizedTerminalEntry({ title, text, mode });
+function print(title, text, mode = "normal", channel = currentTerminalChannel()) {
+  const entry = normalizedTerminalEntry({ title, text, mode, channel });
   if (!entry) return;
-  appendTerminalEntry(entry);
   terminalHistory.push(entry);
   persistTerminalHistory();
-  requestAnimationFrame(() => { terminal.scrollTop = terminal.scrollHeight; });
+  if (entry.channel === currentTerminalChannel()) {
+    appendTerminalEntry(entry);
+    requestAnimationFrame(() => { terminal.scrollTop = terminal.scrollHeight; });
+  }
 }
 
-function error(error) {
-  print("ERROR", error instanceof Error ? error.message : String(error), "error");
+function error(error, channel = currentTerminalChannel()) {
+  print("ERROR", error instanceof Error ? error.message : String(error), "error", channel);
 }
 
 async function work(label, operation) {
+  const channel = currentTerminalChannel();
   busy.querySelector("b").textContent = label;
   busy.classList.remove("hidden");
   try { return await operation(); }
-  catch (caught) { error(caught); return undefined; }
+  catch (caught) { error(caught, channel); return undefined; }
   finally { busy.classList.add("hidden"); await refreshStatus().catch(() => {}); }
 }
 
@@ -678,9 +743,11 @@ async function refreshStatus() {
 }
 
 function renderTask(task) {
+  if (currentTerminalChannel() !== "evaluations") return;
   let entry = $$(".evaluation-progress").find((candidate) => candidate.dataset.taskId === task.id);
   const isNew = !entry;
   if (!entry) {
+    if (terminal.dataset.pristine === "true") terminal.replaceChildren();
     entry = document.createElement("section");
     entry.className = "terminal-entry evaluation-progress";
     entry.dataset.taskId = task.id;
@@ -735,10 +802,14 @@ function showPanel(name, { focus = false } = {}) {
     panel.classList.toggle("active", selected);
     panel.hidden = !selected;
   });
+  // The play transcript is part of the campaign experience and should not be
+  // accidentally erased. Other channel-local output remains disposable.
+  $("#clear-terminal").hidden = name === "game";
+  renderTerminalChannel(name);
   if (focus) selectedTab.focus();
-  if (name === "provider") loadProvider().catch(error);
-  if (name === "world") loadWorld().catch(error);
-  if (name === "evaluations") loadRuns().catch(error);
+  if (name === "provider") loadProvider().catch((caught) => error(caught, "provider"));
+  if (name === "world") loadWorld().catch((caught) => error(caught, "world"));
+  if (name === "evaluations") loadRuns().catch((caught) => error(caught, "evaluations"));
 }
 
 function handleTabKeydown(event) {
@@ -789,7 +860,7 @@ async function saveProvider() {
     body: JSON.stringify(payload),
   });
   $("#api-key").value = "";
-  print("PROVIDER SAVED", `${providerLabel(body.config.provider)}/${displayModelId(body.config.provider, body.config.model)}\nAPI key storage: memory only`, "success");
+  print("PROVIDER SAVED", `${providerLabel(body.config.provider)}/${displayModelId(body.config.provider, body.config.model)}\nAPI key storage: memory only`, "success", "provider");
   await loadProvider();
 }
 
@@ -808,6 +879,8 @@ async function generateCampaign() {
   print(
     `CAMPAIGN PREVIEW — ${setup.campaignTitle}`,
     `${setup.scenarioMarkdown}\n\n--- ${setup.player.name} ---\n${setup.player.description}\n\nTraits: ${setup.player.traits.join(", ") || "none"}\n\n--- OPENING ---\n${setup.openingNarration}`,
+    "normal",
+    "campaign",
   );
   $("#draft-controls").classList.remove("hidden");
 }
@@ -820,7 +893,7 @@ async function confirmCampaign() {
     body: JSON.stringify({ draftId: currentDraft.draftId, archiveCurrent: $("#archive-on-confirm").checked }),
   });
   await switchTerminalCampaign(body.state);
-  print(`CAMPAIGN BEGINS — ${body.state.title}`, body.openingNarration, "success");
+  print(`CAMPAIGN BEGINS — ${body.state.title}`, body.openingNarration, "success", "game");
   currentDraft = null;
   $("#draft-controls").classList.add("hidden");
   showPanel("game");
@@ -830,25 +903,25 @@ async function play() {
   const action = $("#action").value.trim();
   if (!action) throw new Error("Enter an action first");
   recordCommand(`> ${action}`);
-  print(t("you"), action);
+  print(t("you"), action, "normal", "game");
   $("#action").value = "";
   const result = await api("/api/game/play", { method: "POST", body: JSON.stringify({ action }) });
-  if (result.checkText) print(t("check"), result.checkText);
-  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success");
-  if (result.state.status !== "active") print(t("campaignEnded"), `${locale === "ru" ? "Статус" : "Status"}: ${result.state.status}`, "error");
+  if (result.checkText) print(t("check"), result.checkText, "normal", "game");
+  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success", "game");
+  if (result.state.status !== "active") print(t("campaignEnded"), `${locale === "ru" ? "Статус" : "Status"}: ${result.state.status}`, "error", "game");
 }
 
 async function retry() {
   recordCommand(":retry");
   const result = await api("/api/game/retry", { method: "POST", body: "{}" });
-  if (result.checkText) print(t("check"), result.checkText);
-  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success");
+  if (result.checkText) print(t("check"), result.checkText, "normal", "game");
+  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success", "game");
 }
 
 async function inspect(view) {
   recordCommand(`:${view}`);
   const body = await api(`/api/game/inspect?view=${encodeURIComponent(view)}`);
-  print(view.toUpperCase(), body.text);
+  print(view.toUpperCase(), body.text, "normal", "game");
 }
 
 function runPayload() {
@@ -906,7 +979,7 @@ async function startEvaluation() {
   const profileLine = configuredProfiles.length === 1
     ? `Profile for every session: ${configuredProfiles[0]}`
     : `Profile rotation: ${configuredProfiles.join(" → ")}`;
-  print("AUTO-RUN STARTED", `${body.task.runId}\nDM: ${body.config.dm.config.provider}/${body.config.dm.config.model}\nPlayer: ${body.config.player.config.provider}/${body.config.player.config.model}\n${profileLine}\n${$("#sessions").value} session(s) × ${$("#turns").value} turns · ${body.config.concurrency ?? 3} parallel\nCost ceiling: $${$("#max-cost").value}`, "success");
+  print("AUTO-RUN STARTED", `${body.task.runId}\nDM: ${body.config.dm.config.provider}/${body.config.dm.config.model}\nPlayer: ${body.config.player.config.provider}/${body.config.player.config.model}\n${profileLine}\n${$("#sessions").value} session(s) × ${$("#turns").value} turns · ${body.config.concurrency ?? 3} parallel\nCost ceiling: $${$("#max-cost").value}`, "success", "evaluations");
   await refreshStatus();
 }
 
@@ -965,31 +1038,35 @@ async function artifact(kind) {
     print(
       `${locale === "ru" ? "АВТОПРОГОН" : "AUTO-RUN"} — ${sessionId}`,
       `${locale === "ru" ? "Профиль" : "Profile"}: ${transcript.profile}`,
+      "normal",
+      "evaluations",
     );
     if (transcript.opening) {
-      print(`${t("dm")} — ${locale === "ru" ? "НАЧАЛО" : "OPENING"}`, transcript.opening, "success");
+      print(`${t("dm")} — ${locale === "ru" ? "НАЧАЛО" : "OPENING"}`, transcript.opening, "success", "evaluations");
     }
     for (const turn of transcript.turns) {
       const approach = String(turn.approach || "").replaceAll("_", " ").toUpperCase();
-      print(`${t("you")}${approach ? ` — ${approach}` : ""}`, turn.action);
-      if (turn.checkText) print(t("check"), turn.checkText);
+      print(`${t("you")}${approach ? ` — ${approach}` : ""}`, turn.action, "normal", "evaluations");
+      if (turn.checkText) print(t("check"), turn.checkText, "normal", "evaluations");
       if (turn.narration) {
-        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success");
+        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success", "evaluations");
       }
       if (turn.status === "failed") {
         print(
           `${locale === "ru" ? "СБОЙ ХОДА" : "TURN FAILED"} ${turn.turn}`,
           turn.error || (locale === "ru" ? "Неизвестная техническая ошибка" : "Unknown technical failure"),
           "error",
+          "evaluations",
         );
       }
     }
     return;
   }
-  print(`${kind.toUpperCase()} — ${run.runId}${sessionId ? ` / ${sessionId}` : ""}`, body.text);
+  print(`${kind.toUpperCase()} — ${run.runId}${sessionId ? ` / ${sessionId}` : ""}`, body.text, "normal", "evaluations");
 }
 
 $("#language-select").addEventListener("change", () => work(locale === "ru" ? "Меняю язык…" : "Changing language…", async () => {
+  const outputChannel = currentTerminalChannel();
   const language = $("#language-select").value;
   recordCommand(`llm-dungeon language ${language}`);
   await api("/api/config/language", {
@@ -997,17 +1074,17 @@ $("#language-select").addEventListener("change", () => work(locale === "ru" ? "�
     body: JSON.stringify({ language, applyToCurrent: true }),
   });
   applyUiLanguage(language);
-  print(t("changed"), t("changedBody"), "success");
+  print(t("changed"), t("changedBody"), "success", outputChannel);
 }));
 panelTabs().forEach((button) => {
   button.addEventListener("click", () => showPanel(button.dataset.panel));
   button.addEventListener("keydown", handleTabKeydown);
 });
 $("#clear-terminal").addEventListener("click", () => {
-  terminalHistory = [];
+  const channel = currentTerminalChannel();
+  terminalHistory = terminalHistory.filter((entry) => entry.channel !== channel);
   persistTerminalHistory();
-  terminal.replaceChildren();
-  terminal.dataset.pristine = "false";
+  renderTerminalChannel(channel);
 });
 $("#save-provider").addEventListener("click", () => work("Saving provider…", saveProvider));
 $("#test-provider").addEventListener("click", () => work("Testing provider…", async () => {
@@ -1023,7 +1100,7 @@ $("#test-provider").addEventListener("click", () => work("Testing provider…", 
     const safety = locale === "ru"
       ? "неограниченный резервный режим намеренно отключён (ошибка вместо ослабления схемы)"
       : "unrestricted fallback intentionally disabled (fail closed)";
-    print(t("connectionSchemaOk"), `${body.provider}/${body.model}\nEnforcement: ${mode}\nSafety: ${safety}`, "success");
+    print(t("connectionSchemaOk"), `${body.provider}/${body.model}\nEnforcement: ${mode}\nSafety: ${safety}`, "success", "provider");
   } catch (caught) {
     providerCompatibility = { status: "failed", error: caught instanceof Error ? caught.message : String(caught) };
     renderProviderCompatibility();
@@ -1039,7 +1116,7 @@ $("#endpoint").addEventListener("input", invalidateProviderCompatibility);
 $("#save-world").addEventListener("click", () => work("Saving world rules…", async () => {
   recordCommand("world.save config/world.md");
   await api("/api/config/world", { method: "PUT", body: JSON.stringify({ markdown: $("#world-markdown").value }) });
-  print("WORLD RULES SAVED", "Changes will apply to future campaigns.", "success");
+  print("WORLD RULES SAVED", "Changes will apply to future campaigns.", "success", "world");
 }));
 $("#generate-campaign").addEventListener("click", () => work("Generating campaign…", generateCampaign));
 $("#regenerate-campaign").addEventListener("click", () => work("Regenerating campaign…", generateCampaign));
@@ -1048,7 +1125,7 @@ $("#play").addEventListener("click", () => work("The dungeon master considers th
 $("#retry").addEventListener("click", () => work("Retrying pending turn…", retry));
 $("#discard").addEventListener("click", () => work("Discarding pending turn…", async () => {
   recordCommand(":discard");
-  await api("/api/game/discard", { method: "POST", body: "{}" }); print("PENDING TURN", "Discarded without changing campaign state.", "success");
+  await api("/api/game/discard", { method: "POST", body: "{}" }); print("PENDING TURN", "Discarded without changing campaign state.", "success", "game");
 }));
 $("#archive").addEventListener("click", () => {
   if (!confirm("Archive the current campaign? This cannot be undone or resumed.")) return;
@@ -1056,7 +1133,7 @@ $("#archive").addEventListener("click", () => {
   work("Archiving campaign…", async () => {
     await api("/api/game/archive", { method: "POST", body: "{}" });
     await switchTerminalCampaign(null);
-    print("CAMPAIGN ARCHIVED", "You can now create a new campaign.", "success");
+    print("CAMPAIGN ARCHIVED", "You can now create a new campaign.", "success", "game");
   });
 });
 $("#inspect-buttons").addEventListener("click", (event) => {
@@ -1085,13 +1162,13 @@ $("#resume-run").addEventListener("click", () => work("Resuming run…", async (
   const run = selectedRun();
   recordCommand(`llm-dungeon evaluate:resume ${run.runId}`);
   await api("/api/evaluations/resume", { method: "POST", body: JSON.stringify({ runId: run.runId }) });
-  print("AUTO-RUN RESUMED", run.runId, "success");
+  print("AUTO-RUN RESUMED", run.runId, "success", "evaluations");
 }));
 $("#regenerate-report").addEventListener("click", () => work("Regenerating report…", async () => {
   const run = selectedRun();
   recordCommand(`llm-dungeon evaluate:report ${run.runId}`);
   const body = await api("/api/evaluations/report", { method: "POST", body: JSON.stringify({ runId: run.runId }) });
-  print(`REPORT — ${run.runId}`, body.report, "success");
+  print(`REPORT — ${run.runId}`, body.report, "success", "evaluations");
 }));
 $("#command-log-toggle").addEventListener("click", () => {
   renderCommandLog();
