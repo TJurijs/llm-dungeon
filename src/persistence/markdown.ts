@@ -8,9 +8,9 @@ import {
   type StateOperation,
   type Thread,
 } from "../schemas.js";
-import type { CommittedTurn, PlayerVisibleTurn } from "../types.js";
+import type { CommittedTurn, PlayerVisibleTurn, TurnKind } from "../types.js";
 import { CheckResultSchema, formatCheck } from "../mechanics.js";
-import type { LanguageCode } from "../language.js";
+import { DEFAULT_LANGUAGE, type LanguageCode } from "../language.js";
 
 const SECTION_HEADINGS: Record<Fact["section"], string> = {
   established: "Established Facts",
@@ -30,6 +30,12 @@ interface TaggedEntry {
   id: string;
   text: string;
   inactiveSection?: Fact["section"];
+}
+
+export interface TurnOperationLedger {
+  turn: number;
+  kind: TurnKind;
+  operations: StateOperation[];
 }
 
 export function entityFilename(id: string): string {
@@ -254,11 +260,21 @@ export function compactTurnHistory(logs: string[], fullNarrationCount = 1): stri
   return logs.map((log, index) => {
     const parsed = matter(log);
     const turn = typeof parsed.data.turn === "number" ? parsed.data.turn : "?";
+    const kind = turnKind(parsed.data.turn, parsed.data.turnKind);
     const encoded = parsed.data.contentCodec === CONTENT_CODEC;
     const action = storedSectionText(parsed.content, "Player Action", encoded);
     const summary = storedSectionText(parsed.content, "Summary", encoded);
     const narration = storedSectionText(parsed.content, "Narration", encoded);
     const includeNarration = index >= logs.length - fullNarrationCount;
+    if (kind === "appeal") {
+      return [
+        `### Administrative Appeal ${turn}`,
+        `Appeal request: ${action}`,
+        ...(includeNarration ? [`Decision explanation:\n${narration}`] : []),
+        `Administrative decision summary: ${summary || narration}`,
+        "This append-only correction does not advance in-world time and is not a new fictional event.",
+      ].join("\n\n");
+    }
     return [
       `### Turn ${turn}`,
       `Action: ${action}`,
@@ -266,6 +282,12 @@ export function compactTurnHistory(logs: string[], fullNarrationCount = 1): stri
       `Durable outcome summary: ${summary || narration}`,
     ].join("\n\n");
   }).join("\n\n---\n\n");
+}
+
+function turnKind(turn: unknown, value: unknown): TurnKind {
+  if (value === undefined) return turn === 0 ? "opening" : "gameplay";
+  if (value === "opening" || value === "gameplay" || value === "appeal") return value;
+  throw new Error("Turn log has an invalid turn kind");
 }
 
 export function parseTurnOperations(log: string): StateOperation[] {
@@ -279,14 +301,34 @@ export function parseTurnOperations(log: string): StateOperation[] {
   return StateOperationSchema.array().parse(JSON.parse(fenced[1]));
 }
 
+/** Decode the private operation ledger metadata needed by deterministic state selection. */
+export function parseTurnOperationLedger(log: string): TurnOperationLedger {
+  const parsed = matter(log);
+  if (!Number.isInteger(parsed.data.turn) || parsed.data.turn < 0) {
+    throw new Error("Turn log is missing a valid turn number");
+  }
+  const turn = parsed.data.turn as number;
+  return {
+    turn,
+    kind: turnKind(turn, parsed.data.turnKind),
+    operations: parseTurnOperations(log),
+  };
+}
+
 /** Decode only player-visible turn history, excluding provider metadata and state operations. */
-export function parsePlayerVisibleTurn(log: string, language: LanguageCode = "en"): PlayerVisibleTurn {
+export function parsePlayerVisibleTurn(log: string, language: LanguageCode = DEFAULT_LANGUAGE): PlayerVisibleTurn {
   const parsed = matter(log);
   const encoded = parsed.data.contentCodec === CONTENT_CODEC;
   if (!Number.isInteger(parsed.data.turn) || parsed.data.turn < 0) {
     throw new Error("Turn log is missing a valid turn number");
   }
   const turn = parsed.data.turn as number;
+  const kind = turnKind(turn, parsed.data.turnKind);
+  const appealTargetTurn = parsed.data.appealTargetTurn;
+  if (appealTargetTurn !== undefined
+    && (!Number.isInteger(appealTargetTurn) || appealTargetTurn < 1 || kind !== "appeal")) {
+    throw new Error("Turn log has invalid appeal target metadata");
+  }
   const action = storedSectionText(parsed.content, "Player Action", encoded);
   const checkSection = extractSection(parsed.content, "Check").trim();
   let check = "";
@@ -300,22 +342,15 @@ export function parsePlayerVisibleTurn(log: string, language: LanguageCode = "en
   }
   const narration = storedSectionText(parsed.content, "Narration", encoded);
   const summary = storedSectionText(parsed.content, "Summary", encoded);
-  return { turn, action, narration, summary, ...(check ? { checkText: check } : {}) };
-}
-
-/** Render only player-visible turn history, excluding provider metadata and state operations. */
-export function renderTurnForInspection(log: string, language: LanguageCode = "en"): string {
-  const { turn, action, narration, summary, checkText } = parsePlayerVisibleTurn(log, language);
-  return [
-    `# Turn ${turn}`,
-    "## Player Action",
+  return {
+    turn,
+    kind,
+    ...(appealTargetTurn === undefined ? {} : { appealTargetTurn }),
     action,
-    ...(checkText ? ["## Check", checkText] : []),
-    "## Narration",
     narration,
-    "## Summary",
     summary,
-  ].join("\n\n");
+    ...(check ? { checkText: check } : {}),
+  };
 }
 
 export function renderContextEntities(entities: Entity[], mandatoryIds: Set<string>, budget: number): string {
@@ -338,12 +373,20 @@ export function renderContextEntities(entities: Entity[], mandatoryIds: Set<stri
 }
 
 export function renderTurnLog(turn: number, committed: CommittedTurn): string {
+  const kind = committed.kind ?? (turn === 0 ? "opening" : "gameplay");
+  if (kind === "opening" && turn !== 0) throw new Error("Only turn zero may be an opening turn");
+  if (kind === "appeal" && committed.check) throw new Error("An appeal cannot contain a check");
+  if (kind !== "appeal" && committed.appealTargetTurn !== undefined) {
+    throw new Error("Only an appeal may reference an appeal target turn");
+  }
   const check = committed.check
     ? `## Check\n\n\`\`\`json\n${JSON.stringify(committed.check, null, 2)}\n\`\`\``
     : "## Check\n\n_No check._";
   const metadata = {
     contentCodec: CONTENT_CODEC,
     turn,
+    turnKind: kind,
+    ...(committed.appealTargetTurn === undefined ? {} : { appealTargetTurn: committed.appealTargetTurn }),
     provider: committed.provider,
     model: committed.model,
     ...(committed.protocolVersion === undefined ? {} : { protocolVersion: committed.protocolVersion }),

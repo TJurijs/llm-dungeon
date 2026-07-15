@@ -12,20 +12,26 @@ import {
   decodeResolvedTurn,
   decodeTurnDecision,
   gameplayRequest,
+  resolvedGameplayRequest,
 } from "./llm/gameplay-protocol.js";
 import { resolveCheck, secureRollD100, type RollD100 } from "./mechanics.js";
 import {
   adjudicationPrompt,
-  correctionPrompt,
+  APPEAL_SYSTEM_PROMPT,
+  appealPrompt,
   DM_SYSTEM_PROMPT,
   resolutionPrompt,
-  setupCorrectionPrompt,
+  setupDomainCorrectionPrompt,
   setupPrompt,
+  turnDomainCorrectionPrompt,
 } from "./prompts.js";
 import { StateStore, validateInitialSetup } from "./store.js";
 import { TransactionValidationError } from "./domain/transaction.js";
+import { AppealPolicyError } from "./domain/appeal.js";
+import { formatAppealCommand } from "./appeal.js";
 import { StructuredClient, combineUsage } from "./llm/structured-generation.js";
 import type {
+  AppealInput,
   CheckResult,
   CommittedTurn,
   GameEngine,
@@ -36,7 +42,13 @@ import type {
   StructuredResult,
   TurnResult,
 } from "./types.js";
-import type { PendingAction } from "./persistence/pending.js";
+import type { PendingRequest } from "./persistence/pending.js";
+
+type CommitRequest =
+  | { kind: "gameplay"; action: string }
+  | { kind: "appeal"; action: string; targetTurn?: number };
+
+const SETUP_MAX_OUTPUT_TOKENS = 8_000;
 
 function lockedOutcomeStake(check: CheckResult): string {
   switch (check.outcome) {
@@ -93,7 +105,7 @@ export class DungeonEngine implements GameEngine {
       system: DM_SYSTEM_PROMPT,
       prompt,
       temperature: 0.8,
-      maxOutputTokens: 6000,
+      maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
     });
     try {
       return validateInitialSetup(generated.data);
@@ -102,9 +114,9 @@ export class DungeonEngine implements GameEngine {
         schemaName: "domain_repair_campaign_setup",
         schema: SetupResultSchema,
         system: DM_SYSTEM_PROMPT,
-        prompt: setupCorrectionPrompt(prompt, generated.data, error),
+        prompt: setupDomainCorrectionPrompt(prompt, generated.data, error),
         temperature: 0.4,
-        maxOutputTokens: 6000,
+        maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
       });
       return validateInitialSetup(corrected.data);
     }
@@ -117,7 +129,7 @@ export class DungeonEngine implements GameEngine {
   inspect(view: StateView) { return this.store.withCampaignLock(() => this.store.inspect(view)); }
   recentTranscript(limit = 8) { return this.store.withCampaignLock(() => this.store.recentTranscript(limit)); }
   getPendingTurn() { return this.store.getPending(); }
-  discardPendingTurn() { return this.store.discardPendingAction(); }
+  discardPendingTurn() { return this.store.discardPendingRequest(); }
 
   async recoverPendingCommit(): Promise<boolean> {
     if ((await this.store.getPending())?.kind !== "commit") return false;
@@ -136,10 +148,33 @@ export class DungeonEngine implements GameEngine {
     if (campaign.manifest.status !== "active") throw new Error("The campaign has ended");
     const pending = await this.store.getPending();
     if (pending) throw new Error("An uncommitted turn already exists; use :retry or discard it");
-    await this.store.setPendingAction({
+    await this.store.setPendingRequest({
       kind: "action", action: cleanAction, phase: "requested",
     });
-    return this.resumePendingTurn();
+    return this.resumePendingTurnLocked();
+  }
+
+  async appeal(input: AppealInput): Promise<TurnResult> {
+    return this.store.withCampaignLock(() => this.appealLocked(input));
+  }
+
+  private async appealLocked(input: AppealInput): Promise<TurnResult> {
+    formatAppealCommand(input);
+    const campaign = await this.store.load();
+    if (campaign.manifest.status !== "active") throw new Error("The campaign has ended");
+    if (input.targetTurn !== undefined && input.targetTurn > campaign.manifest.turn) {
+      throw new Error(`Appeal target turn must be between 1 and ${campaign.manifest.turn}`);
+    }
+    if (await this.store.getPending()) {
+      throw new Error("An uncommitted turn already exists; use :retry or discard it");
+    }
+    await this.store.setPendingRequest({
+      kind: "appeal",
+      claim: input.claim.trim(),
+      ...(input.targetTurn === undefined ? {} : { targetTurn: input.targetTurn }),
+      phase: "requested",
+    });
+    return this.resumePendingTurnLocked();
   }
 
   async resumePendingTurn(): Promise<TurnResult> {
@@ -153,6 +188,7 @@ export class DungeonEngine implements GameEngine {
       await this.store.recoverCommit();
       throw new Error("The interrupted commit was recovered; the turn is already complete");
     }
+    if (pending.kind === "appeal") return this.resolveAppeal(pending);
     const context = await this.store.buildContext();
 
     if (pending.phase === "requested") {
@@ -165,7 +201,13 @@ export class DungeonEngine implements GameEngine {
         prompt,
       }));
       if (decision.data.kind === "resolved") {
-        return this.commitWithDomainRepair(pending, decision.data, undefined, decision, prompt);
+        return this.commitWithDomainRepair(
+          { kind: "gameplay", action: pending.action },
+          decision.data,
+          undefined,
+          decision,
+          prompt,
+        );
       }
 
       const checkResult = resolveCheck(decision.data.check, this.rollD100());
@@ -176,7 +218,7 @@ export class DungeonEngine implements GameEngine {
         checkResult,
         ...(decision.usage ? { priorUsage: decision.usage } : {}),
       };
-      await this.store.setPendingAction(pending);
+      await this.store.setPendingRequest(pending);
       return this.resolveAndCommit(context, pending, checkResult);
     }
 
@@ -186,11 +228,11 @@ export class DungeonEngine implements GameEngine {
 
   private async resolveAndCommit(
     context: string,
-    pending: Extract<PendingAction, { phase: "rolled" }>,
+    pending: Extract<PendingRequest, { kind: "action"; phase: "rolled" }>,
     check: CheckResult,
   ): Promise<TurnResult> {
     const prompt = resolutionPrompt(context, pending.action, check);
-    const resolution = await this.structured.generate(gameplayRequest({
+    const resolution = await this.structured.generate(resolvedGameplayRequest({
       schemaName: GAMEPLAY_SCHEMA_NAMES.resolution,
       schema: ResolvedTurnSchema,
       decodeResponse: decodeResolvedTurn,
@@ -199,34 +241,78 @@ export class DungeonEngine implements GameEngine {
     }));
     const usage = combineUsage(pending.priorUsage, resolution.usage);
     const combined: StructuredResult<ResolvedTurn> = { ...resolution, ...(usage ? { usage } : {}) };
-    return this.commitWithDomainRepair(pending, resolution.data, check, combined, prompt);
+    return this.commitWithDomainRepair(
+      { kind: "gameplay", action: pending.action },
+      resolution.data,
+      check,
+      combined,
+      prompt,
+    );
+  }
+
+  private async resolveAppeal(
+    pending: Extract<PendingRequest, { kind: "appeal" }>,
+  ): Promise<TurnResult> {
+    const context = await this.store.buildAppealContext(pending.targetTurn);
+    const prompt = appealPrompt(context, pending.claim, pending.targetTurn);
+    const resolution = await this.structured.generate(resolvedGameplayRequest({
+      schemaName: GAMEPLAY_SCHEMA_NAMES.appealResolution,
+      schema: ResolvedTurnSchema,
+      decodeResponse: decodeResolvedTurn,
+      system: APPEAL_SYSTEM_PROMPT,
+      prompt,
+      temperature: 0.2,
+    }));
+    return this.commitWithDomainRepair(
+      {
+        kind: "appeal",
+        action: formatAppealCommand(pending.targetTurn === undefined
+          ? { claim: pending.claim }
+          : { claim: pending.claim, targetTurn: pending.targetTurn }),
+        ...(pending.targetTurn === undefined ? {} : { targetTurn: pending.targetTurn }),
+      },
+      resolution.data,
+      undefined,
+      resolution,
+      prompt,
+    );
   }
 
   private async commitWithDomainRepair(
-    pending: Pick<PendingAction, "action">,
+    request: CommitRequest,
     resolved: ResolvedTurn,
     check: CheckResult | undefined,
     result: StructuredResult<unknown>,
     originalPrompt: string,
   ): Promise<TurnResult> {
     try {
-      return await this.commit(pending.action, enforceLockedCampaignOutcome(resolved, check), check, result);
+      const enforced = request.kind === "gameplay"
+        ? enforceLockedCampaignOutcome(resolved, check)
+        : resolved;
+      return await this.commit(request, enforced, check, result);
     } catch (error) {
-      if (!(error instanceof TransactionValidationError) && !(error instanceof LockedOutcomeError)) throw error;
+      if (!(error instanceof TransactionValidationError)
+        && !(error instanceof LockedOutcomeError)
+        && !(error instanceof AppealPolicyError)) throw error;
       const currentPending = await this.store.getPending();
       if (currentPending?.kind === "commit") throw error;
-      const corrected = await this.structured.generate(gameplayRequest({
-        schemaName: GAMEPLAY_SCHEMA_NAMES.domainCorrection,
+      const corrected = await this.structured.generate(resolvedGameplayRequest({
+        schemaName: request.kind === "appeal"
+          ? GAMEPLAY_SCHEMA_NAMES.appealDomainCorrection
+          : GAMEPLAY_SCHEMA_NAMES.domainCorrection,
         schema: ResolvedTurnSchema,
         decodeResponse: decodeResolvedTurn,
-        system: DM_SYSTEM_PROMPT,
-        prompt: correctionPrompt(originalPrompt, resolved, error),
+        system: request.kind === "appeal" ? APPEAL_SYSTEM_PROMPT : DM_SYSTEM_PROMPT,
+        prompt: turnDomainCorrectionPrompt(originalPrompt, resolved, error),
         temperature: 0.4,
       }));
       const usage = combineUsage(result.usage, corrected.usage);
+      const enforced = request.kind === "gameplay"
+        ? enforceLockedCampaignOutcome(corrected.data, check)
+        : corrected.data;
       return this.commit(
-        pending.action,
-        enforceLockedCampaignOutcome(corrected.data, check),
+        request,
+        enforced,
         check,
         { ...corrected, ...(usage ? { usage } : {}) },
       );
@@ -234,13 +320,17 @@ export class DungeonEngine implements GameEngine {
   }
 
   private async commit(
-    action: string,
+    request: CommitRequest,
     resolved: ResolvedTurn,
     check: CheckResult | undefined,
     result: StructuredResult<unknown>,
   ): Promise<TurnResult> {
     const committed: CommittedTurn = {
-      action,
+      kind: request.kind,
+      action: request.action,
+      ...(request.kind === "appeal" && request.targetTurn !== undefined
+        ? { appealTargetTurn: request.targetTurn }
+        : {}),
       resolved,
       provider: result.provider,
       model: result.model,
@@ -252,6 +342,10 @@ export class DungeonEngine implements GameEngine {
     const { state } = committedResult;
     return {
       turn: state.turn,
+      kind: request.kind,
+      ...(request.kind === "appeal" && request.targetTurn !== undefined
+        ? { appealTargetTurn: request.targetTurn }
+        : {}),
       narration: resolved.narration,
       summary: resolved.turnSummary,
       operations: committedResult.operations,

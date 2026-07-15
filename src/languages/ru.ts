@@ -1,0 +1,47 @@
+import type { LanguageDefinition } from "./definition.js";
+
+export const RUSSIAN: LanguageDefinition = {
+  nativeName: "Русский",
+  instruction: "Write new narration, dialogue, summaries, names, descriptions, and player-facing text in natural Russian. Preserve established proper nouns exactly. Keep machine IDs and operation type values unchanged.",
+  setupDefaults: {
+    premise: "Классическое начало в таверне, сразу предлагающее несколько необязательных возможностей.",
+    characterConcept: "Создай приземлённого искателя приключений с двумя полезными чертами и одной осложняющей чертой.",
+  },
+  mechanics: {
+    noModifiers: "Нет модификаторов",
+    total: "Итого",
+    difficulty: "сложность",
+    comparisonConnector: ", ",
+    outcomes: {
+      exceptional_success: "ИСКЛЮЧИТЕЛЬНЫЙ УСПЕХ",
+      success: "УСПЕХ",
+      failure: "НЕУДАЧА",
+      severe_failure: "ТЯЖЁЛАЯ НЕУДАЧА",
+    },
+  },
+  campaignLifecycle: {
+    openingAction: "Кампания начинается.",
+    openingSummary: "Кампания началась.",
+  },
+  inspection: {
+    character: "Персонаж",
+    location: "Локация",
+    storyThreads: "Сюжетные линии",
+    status: "Статус",
+    traits: "Черты",
+    conditions: "Состояния",
+    inventory: "Инвентарь",
+    establishedFacts: "Установленные факты",
+    knowledge: "Знания",
+    history: "История",
+    relationships: "Отношения",
+    features: "Особенности",
+    active: "Активные",
+    resolved: "Завершённые",
+    failed: "Проваленные",
+    none: "Нет.",
+    emptyInventory: "Пусто.",
+    noThreads: "Сюжетных линий нет.",
+  },
+  worldProfileFile: "ru.md",
+};

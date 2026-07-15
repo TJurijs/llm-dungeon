@@ -1,6 +1,7 @@
 import { structuredFailureDetails } from "./structured-error.js";
-import { classifyFailure, conciseFailure } from "./failures.js";
+import { classifyFailure } from "./failures.js";
 import type { FailureKind } from "./failures.js";
+import { structuredRepairPrompt } from "../prompts.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../types.js";
 
 export function combineUsage(
@@ -18,18 +19,6 @@ export function combineUsage(
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
   };
-}
-
-function repairPrompt(originalPrompt: string, badResult: unknown, error: unknown): string {
-  const prior = typeof badResult === "string" ? badResult : JSON.stringify(badResult);
-  return `${originalPrompt}
-
-STRUCTURED RESPONSE REPAIR
-The previous response could not be decoded into the exact requested protocol.
-Issues: ${conciseFailure(error)}
-Previous response: ${prior ?? "unavailable"}
-
-Return exactly one complete JSON value matching the enforced schema. Use only the documented field names and enum values. Do not wrap it in Markdown or mention this repair.`;
 }
 
 export interface StructuredGenerationOptions {
@@ -80,7 +69,7 @@ export class StructuredClient {
           repairs += 1;
           kind = "repair";
           const failed = structuredFailureDetails(error);
-          prompt = repairPrompt(request.prompt, failed?.parsedResponse ?? failed?.rawText ?? null, error);
+          prompt = structuredRepairPrompt(request.prompt, failed?.parsedResponse ?? failed?.rawText ?? null, error);
           continue;
         }
 

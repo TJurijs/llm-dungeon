@@ -18,7 +18,7 @@ import {
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 import { setupFixture } from "./helpers.js";
 import { attachStructuredFailure } from "../src/llm/structured-error.js";
-import { judgmentSchemaFor, type JudgeTurn, type TechnicalHealthStats } from "../src/evaluation/judge.js";
+import { judgePrompt, judgmentSchemaFor, type JudgeTurn, type TechnicalHealthStats } from "../src/evaluation/judge.js";
 import { acquireFileLock } from "../src/persistence/lock.js";
 
 class EvaluationFakeProvider implements LlmProvider {
@@ -38,7 +38,9 @@ class EvaluationFakeProvider implements LlmProvider {
     } else if (request.schemaName === "campaign_setup") {
       data = structuredClone(setupFixture);
     } else if (request.schemaName.includes("session_judgment")) {
-      const completedTurns = Number(request.prompt.match(/- Completed turns: (\d+)/)?.[1] ?? 0);
+      const turnRecords = JSON.parse(
+        request.prompt.match(/TURN RECORDS WITH LOCKED CHECKS AND COMMITTED STATE OPERATIONS\n([\s\S]*?)\n\nDETERMINISTIC MECHANICAL AUDIT/)?.[1] ?? "[]",
+      ) as Array<{ turn: number; status: string; operations?: unknown[] }>;
       data = {
         verdict: "good",
         overallScore: 8,
@@ -47,7 +49,16 @@ class EvaluationFakeProvider implements LlmProvider {
         persistenceScore: 8,
         checksScore: 8,
         technicalScore: 8,
-        turnAudits: Array.from({ length: completedTurns }, (_, index) => ({ turn: index + 1, durableConsequences: [] })),
+        turnAudits: turnRecords
+          .filter((turn) => turn.status === "completed")
+          .map((turn) => ({
+            turn: turn.turn,
+            durableConsequences: (turn.operations ?? []).map((_, operationIndex) => ({
+              consequence: `Committed operation ${operationIndex} was applied.`,
+              operationIndexes: [operationIndex],
+              persistence: "persisted",
+            })),
+          })),
         executiveSummary: "The short session remained coherent and preserved the discovered clue.",
         strengths: ["The player retained agency and received a concrete lead."],
         issues: [],
@@ -334,7 +345,7 @@ describe("self-play evaluation", () => {
     const judge = calls.find((call) => call.role === "dm" && call.prompt.includes("DETERMINISTIC CHECK-USAGE SUMMARY"));
     expect(judge?.prompt).toContain("Check rate: 100.0%");
     expect(judge?.prompt).toContain("Longest consecutive run of checked turns: 2");
-    expect(judge?.system).toContain("warning, not an automatic defect");
+    expect(judge?.system).toContain("check-rate warning is evidence for review");
   });
 
   it("uses an explicitly selected profile for a single-session run", async () => {
@@ -388,8 +399,8 @@ describe("self-play evaluation", () => {
     expect(run.manifest.sessions[0]?.profile).toBe("chaotic");
     const calls = (await readFile(path.join(run.runDir, "sessions", "session-001", "calls.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line) as { role: string; system: string });
-    expect(calls.find((call) => call.role === "player")?.system).toContain("Deliberately stress the DM");
-    expect(calls.find((call) => call.role === "dm" && call.system.includes("quality judge"))?.system).toContain("do not penalize the player behavior itself");
+    expect(calls.find((call) => call.role === "player")?.system).toContain("Follow the adversarial profile literally");
+    expect(calls.find((call) => call.role === "dm" && call.system.includes("quality judge"))?.system).toContain("judge the DM's handling rather than penalizing the supplied player behavior");
   });
 
   it("records invalid raw structured output and its real cost before correction", async () => {
@@ -618,10 +629,18 @@ describe("self-play evaluation", () => {
       persistenceScore: 10,
       checksScore: 10,
       technicalScore: 10,
-      turnAudits: [{ turn: 6, durableConsequences: [{ consequence: "Bruised shoulder", operationIndexes: [], persistence: "missing" as const }] }],
+      turnAudits: [{ turn: 6, durableConsequences: [
+        { consequence: "Bruised shoulder", operationIndexes: [], persistence: "missing" as const },
+        { consequence: "The swallowed coin left the inventory.", operationIndexes: [0], persistence: "persisted" as const },
+      ] }],
       executiveSummary: "The run was technically clean but missed an injury.",
       strengths: ["The unsupported claim was rejected."],
-      issues: [],
+      issues: [{
+        severity: "medium" as const,
+        category: "persistence" as const,
+        evidence: "The lasting shoulder injury has no operation.",
+        recommendation: "Persist the condition in the same turn.",
+      }],
       persistenceAssessment: "The injury was not persisted.",
       checkAssessment: "No check was needed.",
       sandboxAssessment: "The world remained grounded.",
@@ -639,8 +658,135 @@ describe("self-play evaluation", () => {
       verdict: "good",
       overallScore: 8,
       persistenceScore: 8,
+      turnAudits: [{ turn: 6, durableConsequences: [{
+        consequence: "Bruised shoulder",
+        operationIndexes: [],
+        persistence: "missing" as const,
+      }] }],
+    }).success).toBe(false);
+    expect(judgmentSchemaFor(turns, health).safeParse({
+      ...judgment,
+      verdict: "good",
+      overallScore: 8,
+      persistenceScore: 8,
+      turnAudits: [{ turn: 6, durableConsequences: [
+        { consequence: "Bruised shoulder", operationIndexes: [0], persistence: "missing" as const },
+        { consequence: "The swallowed coin left the inventory.", operationIndexes: [0], persistence: "persisted" as const },
+      ] }],
+    }).success).toBe(false);
+    expect(judgmentSchemaFor(turns, health).safeParse({
+      ...judgment,
+      verdict: "good",
+      overallScore: 8,
+      persistenceScore: 8,
+      turnAudits: [{ turn: 6, durableConsequences: [
+        { consequence: "The inventory operation contradicts narration.", operationIndexes: [], persistence: "contradicted" as const },
+        { consequence: "The swallowed coin left the inventory.", operationIndexes: [0], persistence: "persisted" as const },
+      ] }],
+    }).success).toBe(false);
+    expect(judgmentSchemaFor(turns, health).safeParse({
+      ...judgment,
+      verdict: "good",
+      overallScore: 8,
+      persistenceScore: 8,
       turnAudits: [],
     }).success).toBe(false);
+    expect(judgmentSchemaFor(turns, health).safeParse({
+      ...judgment,
+      verdict: "good",
+      overallScore: 8,
+      persistenceScore: 8,
+      turnAudits: [{ turn: 6, durableConsequences: [{
+        consequence: "The swallowed coin left the inventory.",
+        operationIndexes: [0],
+        persistence: "persisted" as const,
+      }] }],
+    }).success).toBe(false);
+    expect(judgmentSchemaFor(turns, health).safeParse({
+      ...judgment,
+      verdict: "good",
+      overallScore: 9,
+      persistenceScore: 9,
+      issues: [{
+        severity: "low" as const,
+        category: "continuity" as const,
+        evidence: "The prose repeats a title, but the operation persisted exactly.",
+        recommendation: "Avoid redundant formatting.",
+      }],
+      turnAudits: [{ turn: 6, durableConsequences: [{
+        consequence: "The swallowed coin left the inventory.",
+        operationIndexes: [0],
+        persistence: "persisted" as const,
+      }] }],
+    }).success).toBe(true);
+    const renderedPrompt = judgePrompt(
+      { id: "rule-challenger", instruction: "Challenge unsupported rules." },
+      "Transcript",
+      turns,
+      "Starting state",
+      "Final state",
+      health,
+    );
+    expect(renderedPrompt).toContain('"operationIndex": 0');
+    expect(renderedPrompt).toContain("operationIndex values restart at 0 for every turn");
+    expect(renderedPrompt).toContain("zero operations and zero narrated durable consequences");
+
+    const zeroOperationTurns: JudgeTurn[] = [{
+      ...turns[0]!,
+      narration: "Nothing changes beyond a brief exchange.",
+      summary: "No durable change.",
+      operations: [],
+    }];
+    const zeroOperationJudgment = {
+      ...judgment,
+      verdict: "excellent" as const,
+      overallScore: 10,
+      persistenceScore: 10,
+      issues: [],
+      turnAudits: [{ turn: 6, durableConsequences: [] }],
+    };
+    expect(judgmentSchemaFor(zeroOperationTurns, health).safeParse(zeroOperationJudgment).success).toBe(true);
+    expect(judgmentSchemaFor(zeroOperationTurns, health).safeParse({
+      ...zeroOperationJudgment,
+      turnAudits: [{ turn: 6, durableConsequences: [{
+        consequence: "No state changed.",
+        operationIndexes: [],
+        persistence: "persisted" as const,
+      }] }],
+    }).success).toBe(false);
+
+    const zeroOperationMissingJudgment = {
+      ...zeroOperationJudgment,
+      verdict: "good" as const,
+      overallScore: 8,
+      persistenceScore: 8,
+      issues: [{
+        severity: "medium" as const,
+        category: "persistence" as const,
+        evidence: "Mara narratively left, but no movement operation was committed.",
+        recommendation: "Persist the departure with move_entity.",
+      }],
+      turnAudits: [{ turn: 6, durableConsequences: [{
+        consequence: "Mara left the tavern.",
+        operationIndexes: [],
+        persistence: "missing" as const,
+      }] }],
+    };
+    expect(judgmentSchemaFor(zeroOperationTurns, health).safeParse(zeroOperationMissingJudgment).success).toBe(true);
+
+    const recoveryHeavyHealth = {
+      ...health,
+      schemaRepairCalls: 1,
+      transientRetryCalls: 1,
+      domainRepairCalls: 1,
+    };
+    expect(judgmentSchemaFor(zeroOperationTurns, recoveryHeavyHealth)
+      .safeParse(zeroOperationJudgment).success).toBe(false);
+    expect(judgmentSchemaFor(zeroOperationTurns, recoveryHeavyHealth).safeParse({
+      ...zeroOperationJudgment,
+      verdict: "good",
+      overallScore: 8,
+    }).success).toBe(true);
   });
 
   it("stops after one centralized repair attempt and never auto-resumes the pending turn", async () => {

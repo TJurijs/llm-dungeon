@@ -35,13 +35,17 @@ observable behavior and documented invariants during refactors.
 - The application and gameplay contract are V1. The npm package is private and
   intentionally has no public module exports; do not infer an API surface from
   internal TypeScript modules.
+- Administrative appeals append a new non-fiction review turn. They never
+  rewrite a committed turn, reroll, rewind, retcon, advance fictional time, end
+  a campaign, or resurrect terminal state.
 - English and Russian must remain functional and additional languages should be
   addable through the centralized registries.
 
 ## Repository map and boundaries
 
-- `src/engine.ts` orchestrates setup, pending actions, checks, correction, and
-  commit. Keep it independent from terminal and HTTP presentation.
+- `src/engine.ts` orchestrates setup, pending gameplay/appeal requests, checks,
+  correction, and commit. Keep it independent from terminal and HTTP
+  presentation.
 - `src/types.ts` contains reusable interfaces, including `GameEngine` and
   `LlmProvider`.
 - `src/llm/gameplay-protocol.ts` is the exact Gameplay Contract V1 wire
@@ -49,13 +53,29 @@ observable behavior and documented invariants during refactors.
 - `src/llm/structured-generation.ts` owns bounded transient/schema recovery;
   `src/llm/structured-error.ts` classifies structured failures.
 - `src/providers.ts` translates the shared request into Gemini/OpenRouter calls.
-- `src/prompts.ts` contains setup, adjudication, resolution, and correction
+- `src/prompts.ts` is the internal Prompt Suite V1 facade. `src/prompts/`
+  separates shared blocks, setup, gameplay, adjudication-only difficulty,
+  administrative appeal, recovery, evaluation, and connection-probe
   instructions. Avoid provider-specific story logic here.
-- `src/store.ts` owns the active/archive layout, recovery records, inspection,
-  and deterministic context selection.
+- `src/prompt-inspection.ts` renders static, read-only prompt previews with safe
+  placeholders; it must never compose live campaign context for presentation.
+- `src/language.ts` is the sole gameplay-language registry and
+  `src/languages/` owns per-language instructions, defaults, and deterministic
+  copy.
+- `src/world-profile.ts` resolves shipped native creative profiles, localized
+  user overrides, and the legacy `config/world.md` compatibility path.
+- `src/appeal.ts` parses and formats the human `:appeal` command;
+  `src/domain/appeal.ts` enforces the deterministic correction policy, and
+  `src/prompts/appeal.ts` owns both the administrative system prompt and the
+  untrusted review task prompt.
+- `src/inspection.ts` owns the player-safe Character, Location, and Story
+  threads projections. `src/cli/inspection.ts` renders those structured views
+  in the terminal; presentation surfaces must not reconstruct state from prose.
+- `src/store.ts` owns the active/archive layout, recovery records, structured
+  inspection, appeal evidence context, and deterministic gameplay context.
 - `src/persistence/markdown.ts` owns serialization and parsing of durable files.
 - `src/persistence/files.ts` owns shared atomic writes and filesystem probes;
-  `src/persistence/pending.ts` validates recoverable pending actions and commits.
+  `src/persistence/pending.ts` validates recoverable pending requests and commits.
 - `src/persistence/lock.ts` owns crash-recoverable cross-process exclusion;
   `src/persistence/replacement.ts` validates durable campaign replacement intent.
 - `src/domain/ids.ts` owns canonical names and durable ID allocation. Entity
@@ -113,8 +133,9 @@ browser code.
   A location inventory represents loose objects physically there.
 - Transfers between known owners are conserved with `transfer_item`. Do not
   model one exchange as unrelated debit and credit operations.
-- Inventory cannot become negative. A repeated abstract positive credit matching
-  the immediately preceding turn is rejected to prevent duplicated rewards.
+- Inventory cannot become negative. Duplicate-credit validation retains the
+  latest gameplay/opening ledger plus following appeal ledgers; an empty denied
+  appeal must never mask the latest gameplay credit.
 - Idempotent movement to the current authoritative location is normalized away.
 - Every entity `location` must reference a location entity.
 - Fact supersession preserves history; do not destructively erase established
@@ -126,6 +147,12 @@ browser code.
   Accepted replacement is staged before archival and guarded by durable intent
   that recovery can complete or restore.
 - Never alter an already committed turn during recovery.
+- Appeals are append-only corrections. A targeted turn supplies evidence but is
+  never rewritten; current durable state and later committed consequences
+  outrank older prose and the player's untrusted claim.
+- Appeal operations are validated atomically. They cannot roll, advance time,
+  record a major event, end a campaign, restore terminal state, or create a
+  non-item entity. A denied appeal commits no state operations.
 - A rolled check is persisted before resolution and must reuse the same natural
   roll after failure/restart.
 - Checked death/ending status is locked before the roll and applied by code. The
@@ -151,6 +178,9 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
 - Gemini intentionally receives a compatible projection of the same schema; its
   adapter omits unsupported/high-complexity annotations while local Zod limits
   remain authoritative.
+- Post-roll resolution, appeal, and domain-correction requests use the same V1
+  wire object with the provider schema additionally locking `decision` to
+  `resolved`; only adjudication and the connection probe expose the full union.
 - API keys come only from process memory, environment variables, or `.env`.
   Never print, persist, snapshot, or include them in exceptions. Do not inspect
   or reproduce the contents of the user's `.env`; checking key presence is enough.
@@ -175,6 +205,22 @@ Changing the wire format is not a casual refactor. If a change is unavoidable:
 Context retrieval is deterministic. Do not add embeddings, vector search, an
 LLM retrieval loop, or tools without explicit authorization.
 
+Prompt Suite V1 is composed from named reusable sections. The check-difficulty
+policy belongs to adjudication only and is not a separate generation;
+resolution receives the application-locked roll, outcome, and stakes. Keep
+static prompt inspection read-only and free of live campaign state and secrets.
+
+Appeals use their dedicated administrative system prompt, including for schema
+and domain repair. Do not route an appeal through gameplay narration, agency,
+check, or scene-continuation instructions.
+
+Adjudication, locked resolution, and evaluation judging share the current-state
+reconciliation policy. When a turn explicitly changes or ends an existing
+status, condition, fact, relationship, or thread state, update the corresponding
+current record while preserving superseded fact history. Reconcile only changes
+causally established by that narration or locked outcome; never infer expiry or
+clear state speculatively.
+
 The DM context includes:
 
 - campaign rules and scenario;
@@ -184,7 +230,8 @@ The DM context includes:
 - active-thread entities;
 - compact authoritative location directory;
 - active/resolved threads and major events;
-- exact last committed operations marked as already applied;
+- the latest gameplay/opening operation ledger plus every following appeal
+  ledger, all marked as already applied;
 - eight recent summaries, retaining full narration only for the latest turn.
 
 Key facts in entity Markdown are durable and must not be compacted away. Recent
@@ -253,15 +300,27 @@ and do not use destructive Git commands to manufacture a clean tree.
 ## Presentation invariants
 
 - Commander help groups commands under Game, Configuration, Evaluation,
-  Interfaces, and Future. In-game help groups inspection, recovery, and campaign
-  actions. Keep additions in the matching group.
+  Interfaces, and Future. In-game help groups inspection, appeal, recovery, and
+  campaign actions. Keep additions in the matching group.
 - Browser controls group Play/New campaign under Campaign, provider/world/
   language under Configuration, and self-play under Testing.
+- The World & DM style editor changes only the selected language's creative
+  future-campaign profile. It must not expose editing of core prompt, protocol,
+  mechanics, or state-authority rules.
+- The browser prompt inspector is read-only and renders static templates with
+  safe placeholders; never expose composed live prompts or campaign secrets.
+- Browser inspection has exactly three player-safe views: Character (including
+  inventory), Location, and Story threads. Location exposes only player-safe
+  location state; omit co-located entities and loose location inventory until
+  the domain has explicit visibility tracking. Keep transcript reconstruction
+  separate from state inspection.
+- Appeal icons only prefill a general or turn-targeted command in the action
+  field. They must never send, commit, or silently mutate state on click.
 - The browser activity log is an inspectable local audit trail, not a public API
   console. Keys remain redacted.
-- Browser draft/status/turn/journal responses are player-safe projections. Do
-  not expose setup secrets, prepared writes, raw state operations, or alternate
-  check stakes through presentation endpoints.
+- Browser draft/status/turn/transcript/inspection responses are player-safe
+  projections. Do not expose setup secrets, prepared writes, raw state
+  operations, or alternate check stakes through presentation endpoints.
 - Browser mutations require JSON and same-origin request metadata; do not weaken
   this local cross-site request protection when adding routes.
 - `llm-dungeon api` must remain visibly non-operational until a machine-facing

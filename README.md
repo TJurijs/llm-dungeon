@@ -98,6 +98,10 @@ Game
 Configuration
   llm-dungeon configure        Save provider/model configuration
   llm-dungeon language [code]  Show or set en/ru
+  llm-dungeon world show       Show the selected language's world/style profile
+  llm-dungeon world set <file> Save a Markdown profile for that language
+  llm-dungeon prompts list     List inspectable prompt phases
+  llm-dungeon prompts show <phase> Show a safe static prompt preview
 
 Evaluation
   llm-dungeon evaluate         Run bounded isolated self-play
@@ -115,15 +119,17 @@ In-game help is grouped by purpose:
 
 ```text
 Inspect
-  :character  Inspect the character
-  :inventory  Inspect authoritative inventory
-  :location   Inspect the current location
-  :threads    Inspect active/resolved situations
-  :journal    Show the eight most recent turns
+  :character  Show character state, including authoritative inventory
+  :location   Show player-safe current-location state
+  :threads    Show active, resolved, and failed story threads
+
+Appeal
+  :appeal <explanation>           Review a possible state or DM mistake
+  :appeal --turn N <explanation>  Review one specific committed turn
 
 Recovery
-  :retry      Retry an uncommitted pending action
-  :discard    Discard an uncommitted pending action
+  :retry      Retry an uncommitted action or appeal
+  :discard    Discard an uncommitted action or appeal
 
 Campaign
   :new        Archive the current campaign and begin another
@@ -131,7 +137,8 @@ Campaign
   :quit       Leave the terminal without deleting the campaign
 ```
 
-There is intentionally no undo or rewind command.
+There is intentionally no undo or rewind command. Appeals append reviewed
+corrections; they never edit an earlier turn.
 
 ## Web CLI
 
@@ -156,18 +163,27 @@ world rules, and language), and **Testing** (self-play auto-runs). It provides:
   restarts, with player-visible turn-by-turn reconstruction for older sessions;
 - tab-scoped terminal channels that keep gameplay, setup, configuration, world,
   and auto-run output separate;
-- character, inventory, location, threads, and journal views;
-- pending-turn retry/discard controls;
+- structured **Character** inspection, including inventory, conditions,
+  relationships, and known facts;
+- structured **Location** and **Story threads** inspection. Location currently
+  shows only player-safe location state; co-located entities and loose location
+  inventories stay hidden until the domain has explicit visibility tracking;
+- appeal icons beside the action field and each gameplay turn that prefill a
+  general or turn-targeted `:appeal` command without sending it;
+- pending action/appeal retry and discard controls;
 - campaign archival and creation;
 - English/Russian selection;
-- an editable future-campaign `config/world.md`;
+- a language-specific **World & DM style** editor for creative future-campaign
+  guidance;
+- a read-only prompt inspector that renders static templates with safe
+  placeholders instead of live campaign context;
 - self-play configuration, live per-session progress, reports, and transcripts;
 - a draggable output/control split remembered by the browser.
 
 Mutating browser requests require JSON and same-origin browser metadata. Draft,
-status, turn, and journal responses are player-visible projections: DM secrets,
-raw state operations, alternate check stakes, and prepared commit contents stay
-server-side.
+status, turn, transcript, and inspection responses are player-visible
+projections: DM secrets, raw state operations, alternate check stakes, and
+prepared commit contents stay server-side.
 
 The **activity log** control above the output opens the normally hidden local
 audit trail of actions performed through the UI. Keys are always redacted. A
@@ -210,6 +226,12 @@ then asks the model to narrate that result. Death can only result from an
 established lethal situation and must be locked into the failure stakes before
 the roll.
 
+The reusable check-difficulty policy is included only in the adjudication
+prompt. It first asks whether a roll is warranted, then calibrates base
+difficulty separately from actor-specific modifiers. This is a prompt section,
+not an extra generation: resolution receives only the already locked check and
+outcome.
+
 ## Persistence
 
 The active campaign is stored under `data/current/`; archived campaigns are
@@ -223,7 +245,7 @@ data/current/
   chronicle.md           Compact major-event memory
   entities/*.md          Player, NPCs, locations, items, factions, and others
   turns/*.md             Action, narration, roll, operations, and metadata
-  pending-turn.json      Crash-safe uncommitted action or prepared commit
+  pending-turn.json      Crash-safe uncommitted action/appeal or prepared commit
 data/.campaign.lock      Transient cross-process campaign mutation lock
 data/.replacement-intent.json  Crash-only replacement recovery record
 ```
@@ -239,11 +261,13 @@ State mutations use a closed `StateOperation` union. The transaction layer:
 - assigns collision-free IDs to new entities, facts, threads, and events;
 - conserves transfers between known owners;
 - prevents negative inventory;
-- treats carried items as inventory rather than person-valued locations;
+- treats carried and loose items as inventory of their person or location owner,
+  normalizing model-supplied locations on newly created items;
 - coalesces exact duplicate locations;
 - repairs only high-confidence same-transaction reference typos;
 - removes idempotent no-op movement;
-- rejects an exact repeated abstract inventory credit from the preceding turn;
+- rejects an exact repeated abstract inventory credit from the latest gameplay
+  ledger even when administrative appeals were committed afterward;
 - writes affected files through a crash-safe, idempotent pending commit;
 - serializes campaign mutations across terminal and Web processes;
 - stages replacement and records durable recovery intent before archival.
@@ -251,21 +275,48 @@ State mutations use a closed `StateOperation` union. The transaction layer:
 Normalization is deliberately conservative. The engine does not use regex or
 free-form prose heuristics to mutate world state.
 
-### Pending turns
+### Pending requests and append-only recovery
 
-An action is saved before the provider request. **Retry pending** resumes that
-exact uncommitted action and reuses a previously locked d100 roll. **Discard
-pending** removes only the uncommitted action; it never changes an already
-committed turn. A prepared filesystem commit cannot be discarded and is
-completed idempotently on recovery. Recovery validates the complete write plan
-before mutation, requires exactly the target turn log, never rewrites an older
-turn, and commits the manifest last.
+A gameplay action or administrative appeal is saved before the provider
+request. **Retry pending** resumes that exact uncommitted request, including an
+appeal's target turn and a gameplay action's previously locked d100 roll.
+**Discard pending** removes only the uncommitted request; it never changes an
+already committed turn. A prepared filesystem commit cannot be discarded and
+is completed idempotently on recovery. Recovery validates the complete write
+plan before mutation, requires exactly the new target turn log, never rewrites
+an older turn, and commits the manifest last.
+
+### Administrative appeals
+
+Appeals review persistence mistakes without replaying the fiction:
+
+```text
+:appeal <explanation>
+:appeal --turn N <explanation>
+```
+
+A targeted appeal loads the exact committed turn even when it has fallen out of
+recent context; a general appeal reviews compact recent evidence. The claim is
+untrusted, and current durable state plus later committed consequences outrank
+older prose. If evidence proves an omitted operation, the correction is
+committed as a new administrative turn. The original turn is never edited. A
+denied appeal is also recorded append-only with zero state effects.
+
+An empty denied appeal does not replace or hide the latest gameplay operation
+ledger. Duplicate-credit protection therefore still rejects a repeated abstract
+reward on the next gameplay turn.
+
+Appeals do not roll, rewind, retcon, advance fictional time, record a new major
+event, end a campaign, or resurrect a terminal entity. Deterministic policy
+guards validate the complete correction before commit. An interrupted appeal
+uses the same retry/discard and prepared-commit recovery path as gameplay.
 
 ### Context assembly and compaction
 
 Context retrieval is deterministic and remains deliberately compact. Each DM
 request includes authoritative campaign, player, current-location, related
-entity, active-thread, directory, chronicle, and last-operation state. It also
+entity, active-thread, directory, chronicle, and the latest gameplay/opening
+operation ledger plus every following appeal ledger. It also
 includes eight recent turn summaries while retaining full narration only for
 the latest turn. Durable facts remain in entity Markdown and are never replaced
 by compacted prose; recent narration is working memory, not state authority.
@@ -278,6 +329,10 @@ current source does not retain earlier wire-contract implementations.
 Provider-side schema enforcement is followed by wire validation, deterministic
 decoding into domain operations, complete transaction validation, and atomic
 commit.
+
+Adjudication exposes both legal decision branches. Once the application has
+rolled and locked an outcome, resolution, appeal, and domain-correction calls
+use the same V1 object with `decision` provider-locked to `resolved`.
 
 Gameplay Contract V1 uses bounded integer codes for fictional categories that
 could otherwise produce model aliases. Unknown fields, array wrappers, Markdown
@@ -298,11 +353,68 @@ The narration is generated before effects and the summary is generated last.
 This causal field order reduces facts appearing in state before they occur in
 the player-visible fiction.
 
+## Prompt architecture and inspection
+
+The current prompt suite is V1. `src/prompts.ts` is its stable internal facade;
+the implementation is split by responsibility under `src/prompts/`:
+
+- shared DM policy and Gameplay Contract V1 blocks;
+- campaign setup;
+- adjudication and locked-outcome resolution;
+- non-fiction administrative appeal review;
+- the adjudication-only d100 difficulty policy;
+- bounded schema repair and domain correction;
+- simulated-player evaluation and provider connection probes;
+- deterministic section rendering.
+
+Phase documents compose those reusable blocks instead of maintaining parallel
+copies. Core application rules, wire schemas, dice authority, and recovery
+bounds are not user-editable prompts.
+
+Direct and checked resolutions share one current-state reconciliation policy.
+When the current narration or locked outcome explicitly changes or ends an
+entity status, condition, fact, relationship, or story thread, the resulting
+transaction must update that current record without erasing superseded fact
+history. The same policy guides evaluation judging. It never guesses expiry or
+uses prose heuristics to clear unchanged state.
+
+Appeals use a dedicated administrative system prompt rather than the gameplay
+DM's narrative and agency instructions. Schema and domain repair for an appeal
+retain that same administrative boundary.
+
+Prompts can be inspected from the terminal without exposing live state:
+
+```bash
+npm run dev -- prompts list
+npm run dev -- prompts show adjudication
+npm run dev -- prompts show difficulty --language ru
+```
+
+The Web **Prompt inspector** provides the same read-only static previews. Both
+surfaces use safe placeholders and never render current campaign context,
+secrets, or API keys.
+
 ## World configuration and language
 
-`config/world.md` defines the default setting, tone, pacing, boundaries, and DM
-instructions. It is copied into a campaign when that campaign is created, so
-editing it affects future campaigns only.
+World and DM-style profiles contain creative guidance such as setting, tone,
+pacing, and boundaries. They cannot override the engine's protocol, mechanics,
+state authority, or safety invariants. The selected profile is copied into a
+campaign when it is created, so editing a profile affects future campaigns only.
+
+Profiles resolve in deterministic order:
+
+1. `config/worlds/<code>.md`, a language-specific user override;
+2. a user-modified legacy `config/world.md`, retained for compatibility;
+3. the shipped native default at `defaults/worlds/<code>.md`;
+4. an untouched legacy `config/world.md` only when no native default exists.
+
+Show the selected language's effective profile or save a Markdown file as its
+override:
+
+```bash
+npm run dev -- world show
+npm run dev -- world set ./my-world.md
+```
 
 Show or change language from the terminal:
 
@@ -312,9 +424,19 @@ npm run dev -- language ru
 npm run dev -- language en
 ```
 
-Language codes and LLM instructions live in `src/language.ts`; browser copy
-lives in the `UI_COPY` registry in `web/app.js`. Existing facts and history are
-not translated when the active language changes.
+Gameplay-language definitions live in `src/languages/` and are registered once
+in `src/language.ts`. To add a language:
+
+1. implement a `LanguageDefinition` in `src/languages/<code>.ts`, including its
+   model instruction, setup defaults, deterministic mechanics/lifecycle copy,
+   and world-profile filename;
+2. register it in `LANGUAGES` in `src/language.ts`;
+3. add its native creative profile under `defaults/worlds/`;
+4. optionally add translated browser chrome to `UI_COPY` in `web/app.js`.
+
+Browser labels fall back to English when optional UI copy is absent; gameplay
+still uses the registered language definition and native world profile.
+Existing facts and history are not translated when the active language changes.
 
 ## Self-play evaluation
 
@@ -399,7 +521,18 @@ src/engine.ts                       Presentation-independent game orchestration
 src/llm/gameplay-protocol.ts        Gameplay Contract V1 schema and decoder
 src/llm/structured-generation.ts   Bounded retry/repair orchestration
 src/providers.ts                    Gemini and OpenRouter adapters
-src/prompts.ts                      Setup, adjudication, and resolution prompts
+src/prompts.ts                      Internal facade for the Prompt Suite V1
+src/prompts/                        Composable setup, gameplay, difficulty,
+                                    appeal, recovery, evaluation, and probe prompts
+src/prompt-inspection.ts            Safe static prompt previews
+src/appeal.ts                       Appeal command parser and formatter
+src/domain/appeal.ts                Deterministic appeal-operation policy
+src/prompts/appeal.ts               Untrusted administrative review prompt
+src/inspection.ts                   Player-safe structured state projections
+src/cli/inspection.ts               Terminal inspection rendering
+src/language.ts                     Central gameplay-language registry
+src/languages/                      Per-language definitions and defaults
+src/world-profile.ts                Localized creative-profile resolution
 src/store.ts                        Campaign persistence and context assembly
 src/persistence/files.ts            Atomic file helpers
 src/persistence/markdown.ts         Markdown serialization/parsing
@@ -415,6 +548,7 @@ src/mechanics.ts                    Sole d100 calculation authority
 src/evaluation.ts                   Isolated self-play runner and reporting
 src/evaluation/judge.ts             Structured AI judge and persistence audits
 web/                                Browser terminal companion assets
+defaults/worlds/                    Shipped native world/style profiles
 tests/                              Deterministic regression tests
 ```
 

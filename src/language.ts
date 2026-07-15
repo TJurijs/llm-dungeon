@@ -1,34 +1,43 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { ENGLISH } from "./languages/en.js";
+import { RUSSIAN } from "./languages/ru.js";
+import type { CampaignSetupDefaults, LanguageDefinition } from "./languages/definition.js";
 import { atomicWriteJson } from "./persistence/files.js";
 
-export const LanguageCodeSchema = z.enum(["en", "ru"]);
-export type LanguageCode = z.infer<typeof LanguageCodeSchema>;
+/** The sole registration point for supported gameplay languages. */
+export const LANGUAGES = {
+  en: ENGLISH,
+  ru: RUSSIAN,
+} as const satisfies Record<string, LanguageDefinition>;
 
-export const LANGUAGES: Record<LanguageCode, { nativeName: string; instruction: string }> = {
-  en: {
-    nativeName: "English",
-    instruction: "Write all narration, dialogue, summaries, names, descriptions, and player-facing text in English.",
-  },
-  ru: {
-    nativeName: "Русский",
-    instruction: "Write all narration, dialogue, summaries, names, descriptions, and player-facing text in natural Russian. Keep machine IDs and operation type values unchanged.",
-  },
-};
+export type LanguageCode = keyof typeof LANGUAGES;
 
-export const AppConfigSchema = z.object({ language: LanguageCodeSchema.default("en") });
+const LANGUAGE_CODES = Object.keys(LANGUAGES) as [LanguageCode, ...LanguageCode[]];
+export const LanguageCodeSchema = z.enum(LANGUAGE_CODES);
+export const DEFAULT_LANGUAGE: LanguageCode = "en";
+
+export const AppConfigSchema = z.object({ language: LanguageCodeSchema.default(DEFAULT_LANGUAGE) });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
+export function languageDefinition(language: LanguageCode): LanguageDefinition {
+  return LANGUAGES[language];
+}
+
 export function languageInstruction(language: LanguageCode): string {
-  return LANGUAGES[language].instruction;
+  return languageDefinition(language).instruction;
+}
+
+export function campaignSetupDefaults(language: LanguageCode): CampaignSetupDefaults {
+  return languageDefinition(language).setupDefaults;
 }
 
 export async function loadAppConfig(root: string): Promise<AppConfig> {
   try {
     return AppConfigSchema.parse(JSON.parse(await readFile(path.join(root, "config", "app.json"), "utf8")));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { language: "en" };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { language: DEFAULT_LANGUAGE };
     throw error;
   }
 }
@@ -36,28 +45,4 @@ export async function loadAppConfig(root: string): Promise<AppConfig> {
 export async function saveAppConfig(root: string, config: AppConfig): Promise<void> {
   const target = path.join(root, "config", "app.json");
   await atomicWriteJson(target, AppConfigSchema.parse(config));
-}
-
-export function localizeInspection(text: string, language: LanguageCode): string {
-  if (language !== "ru") return text;
-  const replacements: Array<[RegExp, string]> = [
-    [/## Description/g, "## Описание"],
-    [/## Established Facts/g, "## Установленные факты"],
-    [/## Player Knowledge/g, "## Знания игрока"],
-    [/## History/g, "## История"],
-    [/## Relationships/g, "## Отношения"],
-    [/## Present/g, "## Присутствуют"],
-    [/# Story Threads/g, "# Сюжетные линии"],
-    [/## Active/g, "## Активные"],
-    [/## Resolved/g, "## Завершённые"],
-    [/## Failed/g, "## Проваленные"],
-    [/## Player Action/g, "## Действие игрока"],
-    [/## Narration/g, "## Повествование"],
-    [/## Summary/g, "## Краткий итог"],
-    [/_Nobody else of note\._/g, "_Больше никого примечательного._"],
-    [/_None\._/g, "_Нет._"],
-    [/_No description recorded\._/g, "_Описание отсутствует._"],
-    [/Inventory is empty\./g, "Инвентарь пуст."],
-  ];
-  return replacements.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
 }

@@ -38,6 +38,8 @@ describe("turn engine", () => {
     expect({ ...setup, threads: setupFixture.threads }).toEqual(setupFixture);
     expect(setup.threads[0]?.id).toMatch(/^thread:/);
     expect(provider.calls).toBe(2);
+    expect(provider.requests[0]?.maxOutputTokens).toBe(8_000);
+    expect(provider.requests[1]?.maxOutputTokens).toBe(8_000);
     expect(provider.requests[1]?.schemaName).toBe("repair_campaign_setup");
   });
 
@@ -51,7 +53,7 @@ describe("turn engine", () => {
       language: "ru",
     });
     expect(provider.requests[0]?.prompt).toContain("natural Russian");
-    expect(provider.requests[0]?.prompt).toContain("small spendable currency item");
+    expect(provider.requests[0]?.prompt).toContain("small spendable currency inventory item");
   });
 
   it("uses the documented campaign defaults when optional guidance is blank", async () => {
@@ -85,6 +87,24 @@ describe("turn engine", () => {
     expect({ ...setup, threads: setupFixture.threads }).toEqual(setupFixture);
     expect(setup.threads[0]?.id).toMatch(/^thread:/);
     expect(provider.calls).toBe(2);
+  });
+
+  it("corrects an initial location that contains itself", async () => {
+    const store = await createTestStore();
+    const invalid = structuredClone(setupFixture);
+    invalid.entities.find((entity) => entity.id === "location:crooked-crown")!.location = "location:crooked-crown";
+    const provider = new FakeProvider([invalid, setupFixture]);
+    const setup = await new DungeonEngine(store, provider).generateSetup({
+      worldRules: "Classic fantasy.",
+      premise: "A tavern opening.",
+      character: "A scout.",
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[1]?.schemaName).toBe("domain_repair_campaign_setup");
+    expect(provider.requests[1]?.prompt).toContain("cannot be located inside itself");
+    const startingLocation = setup.entities.find((entity) => entity.id === setup.player.location);
+    expect(startingLocation?.location).toBeUndefined();
   });
 
   it("uses one call for a turn without a check", async () => {
@@ -211,23 +231,24 @@ describe("turn engine", () => {
     }]);
     await new DungeonEngine(store, provider).play("I use my dragon sword to fly across the ordinary bridge. xyzzy@@@");
     const request = provider.requests[0]!;
-    expect(request.system).toContain("player assertions do not create facts or possessions");
-    expect(request.system).toContain("input is gibberish");
-    expect(request.system).toContain("Unsupported claims or gibberish alone never establish danger");
-    expect(request.system).toContain("Never use lethal campaign status for routine travel");
-    expect(request.system).toContain("Positive modifiers always help");
+    expect(request.system).toContain("Player input proposes an action");
+    expect(request.system).toContain("If no coherent in-fiction action can be derived");
+    expect(request.system).toContain("Low-stakes uncertainty cannot become campaign-ending");
     expect(request.system).toContain("Apply the restart test");
-    expect(request.system).toContain("Never repeat a payment");
-    expect(request.system).toContain("application assigns those durable IDs");
+    expect(request.system).toContain("Historical operations are already applied and must never be repeated");
+    expect(request.system).toContain("application assigns durable IDs");
     expect(request.prompt).toContain("PLAYER INVENTORY — AUTHORITATIVE CLOSED LIST");
     expect(request.prompt).toContain("[item:travel-sword] Travel Sword");
-    expect(request.prompt).toContain("Any item absent from this list is not carried");
-    expect(request.prompt).toContain("physically takes possession in the narration");
-    expect(request.prompt).toContain('"The Crooked Crown" and "Crooked Crown" are the same place');
+    expect(request.prompt).toContain("Any absent item is not carried");
+    expect(request.prompt).toContain("distinct current-turn source and explicit receipt");
+    expect(request.prompt).toContain("do not create semantic duplicates");
     expect(request.prompt).toContain("For decision=resolved");
-    expect(request.prompt).toContain("Positive modifier values help the player character");
-    expect(request.prompt).toContain("ending a line of inquiry");
-    expect(request.prompt).toContain("Do not repeat a prior turn's payment");
+    expect(request.prompt).toContain("CHECK DIFFICULTY POLICY");
+    expect(request.prompt).toContain("Positive values help the player character");
+    expect(request.prompt).toContain("social, informational, temporal, relational");
+    expect(request.prompt).toContain("CURRENT STATE RECONCILIATION");
+    expect(request.prompt).toContain("Do not infer expiration");
+    expect(request.prompt).toContain("Do not repeat an already-applied operation");
     expect(request.protocolVersion).toBe(1);
     expect(request.wireSchema).toBeDefined();
     expect(request.jsonSchema).toBeDefined();
@@ -257,6 +278,9 @@ describe("turn engine", () => {
     ]);
     const result = await new DungeonEngine(store, provider, () => 60).play("I scan the room for anyone watching me.");
     expect(provider.calls).toBe(2);
+    expect(provider.requests[1]?.jsonSchema?.properties).toMatchObject({
+      decision: { enum: ["resolved"] },
+    });
     expect(result.check).toMatchObject({ roll: 60, modifierTotal: 10, total: 70, outcome: "success" });
     expect((await store.load()).entities.get("player:hero")?.facts.some((fact) => fact.text === "A hooded stranger is watching from the corner.")).toBe(true);
   });

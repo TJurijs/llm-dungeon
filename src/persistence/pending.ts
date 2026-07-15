@@ -8,13 +8,13 @@ const UsageSchema = z.object({
   totalTokens: z.number().int().nonnegative().optional(),
 });
 
-const RequestedActionSchema = z.object({
+const RequestedGameplayActionSchema = z.object({
   kind: z.literal("action"),
   action: z.string().trim().min(1),
   phase: z.literal("requested"),
 });
 
-const RolledActionSchema = z.object({
+const RolledGameplayActionSchema = z.object({
   kind: z.literal("action"),
   action: z.string().trim().min(1),
   phase: z.literal("rolled"),
@@ -22,7 +22,19 @@ const RolledActionSchema = z.object({
   priorUsage: UsageSchema.optional(),
 });
 
-export const PendingActionSchema = z.union([RequestedActionSchema, RolledActionSchema]);
+export const PendingGameplayActionSchema = z.union([
+  RequestedGameplayActionSchema,
+  RolledGameplayActionSchema,
+]);
+
+export const PendingAppealSchema = z.object({
+  kind: z.literal("appeal"),
+  claim: z.string().trim().min(1).max(10_000),
+  targetTurn: z.number().int().positive().optional(),
+  phase: z.literal("requested"),
+});
+
+export const PendingRequestSchema = z.union([PendingGameplayActionSchema, PendingAppealSchema]);
 
 const PendingCommitSchema = z.object({
   kind: z.literal("commit"),
@@ -39,8 +51,8 @@ const PendingCommitSchema = z.object({
   { path: ["targetTurn"], message: "must immediately follow expectedPreviousTurn" },
 );
 
-export const PendingTurnSchema = z.union([PendingActionSchema, PendingCommitSchema]);
+export const PendingTurnSchema = z.union([PendingRequestSchema, PendingCommitSchema]);
 
-export type PendingAction = z.infer<typeof PendingActionSchema>;
+export type PendingRequest = z.infer<typeof PendingRequestSchema>;
 export type PendingCommit = z.infer<typeof PendingCommitSchema>;
 export type PendingTurn = z.infer<typeof PendingTurnSchema>;

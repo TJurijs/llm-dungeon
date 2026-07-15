@@ -77,7 +77,17 @@
       <section id="panel-game" class="panel active" role="tabpanel" aria-labelledby="tab-game" tabindex="0">
         <h1>Play</h1>
         <p id="game-summary" class="state-card">Loading campaign state…</p>
-        <label for="action">What do you do?</label>
+        <div class="action-label-row">
+          <label for="action">What do you do?</label>
+          <button id="appeal-generic" class="appeal-button" type="button" aria-label="Appeal a state or DM mistake" title="Prefill a general appeal" disabled>
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+              <path d="M20 11.5a8 8 0 1 1-3.1-6.32"></path>
+              <path d="M9.2 9a3 3 0 1 1 4.72 2.46c-.96.68-1.42 1.12-1.42 2.04"></path>
+              <path d="M12.5 17h.01"></path>
+              <path d="M17 3v4h4"></path>
+            </svg>
+          </button>
+        </div>
         <textarea id="action" rows="6" placeholder="I approach the hooded traveler and ask why they have been watching the door."></textarea>
         <div class="button-row">
           <button id="play" class="primary">Send action</button>
@@ -87,14 +97,23 @@
         <p class="hint">Ctrl/⌘ + Enter sends the action. Rolls and modifiers appear in the output.</p>
         <p id="pending-help" class="hint hidden"><b>Pending recovery:</b> Retry resumes the same action and locked roll. Discard removes it with no world-state change.</p>
         <h2>Inspect</h2>
-        <div class="button-grid" id="inspect-buttons">
-          <button data-view="character">Character</button>
-          <button data-view="inventory">Inventory</button>
-          <button data-view="location">Location</button>
-          <button data-view="threads">Threads</button>
-          <button data-view="journal">Journal</button>
+        <div class="inspection-switcher" id="inspect-buttons" role="group" aria-label="Inspection views">
+          <button type="button" data-view="character" aria-controls="inspection-output" aria-pressed="false">Character</button>
+          <button type="button" data-view="location" aria-controls="inspection-output" aria-pressed="false">Location</button>
+          <button type="button" data-view="threads" aria-controls="inspection-output" aria-pressed="false">Story threads</button>
         </div>
-        <button id="archive" class="danger subtle">Archive current campaign</button>
+        <section id="inspection-output" class="inspection-output" role="region" aria-label="Campaign inspection" aria-busy="false" hidden></section>
+        <div class="campaign-secondary-actions">
+          <button id="archive" class="archive-action" type="button">
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+              <path d="M4 7.5h16l-1 12H5l-1-12Z"></path>
+              <path d="M3 4.5h18v3H3z"></path>
+              <path d="M12 10v6"></path>
+              <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
+            </svg>
+            <span id="archive-label">Archive campaign…</span>
+          </button>
+        </div>
       </section>
 
       <section id="panel-campaign" class="panel" role="tabpanel" aria-labelledby="tab-campaign" tabindex="0" hidden>
@@ -205,10 +224,32 @@
       </section>
 
       <section id="panel-world" class="panel" role="tabpanel" aria-labelledby="tab-world" tabindex="0" hidden>
-        <h1>World rules</h1>
-        <p class="notice">These Markdown rules affect future campaigns. Every campaign keeps its own snapshot when created.</p>
+        <h1>World & DM style</h1>
+        <p class="notice">This creative Markdown controls setting, tone, pacing, and boundaries for future campaigns. Engine rules and protocols remain protected.</p>
+        <p id="world-profile-meta" class="hint" aria-live="polite"></p>
+        <label for="world-markdown">Creative profile Markdown</label>
         <textarea id="world-markdown" rows="28" spellcheck="false"></textarea>
-        <button id="save-world" class="primary">Save world.md</button>
+        <button id="save-world" class="primary">Save creative profile</button>
+        <h2 id="prompt-inspector-title">Prompt inspector</h2>
+        <p id="prompt-inspector-notice" class="hint">Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.</p>
+        <div class="prompt-inspector-controls">
+          <label for="prompt-phase">Prompt phase</label>
+          <select id="prompt-phase">
+            <option value="dm-system">DM system</option>
+            <option value="setup">Campaign setup</option>
+            <option value="adjudication">Turn adjudication</option>
+            <option value="difficulty">Check difficulty</option>
+            <option value="resolution">Locked resolution</option>
+            <option value="appeal">Appeal review</option>
+            <option value="schema-repair">Schema repair</option>
+            <option value="domain-correction">Domain correction</option>
+            <option value="simulated-player">Simulated player</option>
+            <option value="judge">Evaluation judge</option>
+            <option value="connection-probe">Provider probe</option>
+          </select>
+          <button id="show-prompt" type="button">Show prompt</button>
+        </div>
+        <pre id="prompt-preview" class="prompt-preview" tabindex="0">Choose a phase to inspect its static template.</pre>
       </section>
     </aside>
   </main>

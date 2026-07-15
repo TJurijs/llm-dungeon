@@ -8,12 +8,12 @@ import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import { StateStore } from "../store.js";
 import { atomicWriteJson } from "../persistence/files.js";
 import type { LlmProvider } from "../types.js";
+import { resolveWorldProfile, saveWorldProfile, type ResolvedWorldProfile } from "../world-profile.js";
 import { takePrompt } from "./prompt.js";
 
 interface CliProjectPaths {
   root: string;
   providerConfig: string;
-  worldConfig: string;
   dataRoot: string;
   evaluationsRoot: string;
 }
@@ -23,7 +23,6 @@ function projectPaths(root: string): CliProjectPaths {
   return {
     root: resolvedRoot,
     providerConfig: path.join(resolvedRoot, "config", "provider.json"),
-    worldConfig: path.join(resolvedRoot, "config", "world.md"),
     dataRoot: path.join(resolvedRoot, "data"),
     evaluationsRoot: path.join(resolvedRoot, "evaluations"),
   };
@@ -106,6 +105,14 @@ export class CliProjectContext {
     await saveAppConfig(this.paths.root, { language });
     const store = new StateStore(this.paths.dataRoot);
     if (await store.hasCurrentGame()) await store.setLanguage(language);
+  }
+
+  async worldProfile(language?: LanguageCode): Promise<ResolvedWorldProfile> {
+    return resolveWorldProfile(this.paths.root, language ?? await this.language());
+  }
+
+  async saveWorldProfile(markdown: string, language?: LanguageCode): Promise<string> {
+    return saveWorldProfile(this.paths.root, language ?? await this.language(), markdown);
   }
 }
 

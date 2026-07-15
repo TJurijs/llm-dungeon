@@ -11,15 +11,34 @@ let polling = false;
 let preferredRunId = null;
 let locale = "en";
 let gameLanguage = "en";
+let uiLanguageInitialized = false;
 let profileSelectionOrder = [];
 let providerCompatibility = null;
+let languageCatalog = [];
+let activeInspectionView = null;
+let currentInspection = null;
+let inspectionRequestSequence = 0;
+let inspectionCampaignKey = null;
+let actionAvailable = false;
 const COMMAND_STORAGE_KEY = "llm-dungeon:web-cli-command-log";
 const TERMINAL_STORAGE_PREFIX = "llm-dungeon:web-cli-terminal:";
 const TERMINAL_MAX_ENTRIES = 300;
 const TERMINAL_MAX_TEXT = 50_000;
 const TERMINAL_MAX_STORAGE = 750_000;
 const TERMINAL_CHANNELS = new Set(["game", "campaign", "provider", "evaluations", "world"]);
-const LEGACY_JOURNAL_DUMP_TITLES = new Set([
+const PLAYER_ACTION_TITLES = new Set(["YOU", "ВЫ"]);
+const LEGACY_INSPECTION_TITLES = new Set([
+  "CHARACTER",
+  "INVENTORY",
+  "LOCATION",
+  "THREADS",
+  "STORY THREADS",
+  "JOURNAL",
+  "ПЕРСОНАЖ",
+  "ИНВЕНТАРЬ",
+  "ЛОКАЦИЯ",
+  "СЮЖЕТНЫЕ ЛИНИИ",
+  "ЖУРНАЛ",
   "RECENT JOURNAL — RESTORED",
   "НЕДАВНИЙ ЖУРНАЛ — ВОССТАНОВЛЕН",
 ]);
@@ -32,11 +51,15 @@ const UI_COPY = {
     controlRoom: "web-cli", output: "TERMINAL OUTPUT", clear: "clear", language: "Language", commands: "activity log", close: "close",
     commandTitle: "Activity log", commandHint: "A local audit trail of actions performed through this interface. API keys are always redacted.", activityCloseLabel: "Close activity log", copy: "Copy", clearLog: "Clear activity", noCommands: "No activity recorded yet.", copied: "Copied", online: "WEB-CLI ONLINE",
     campaignGroup: "Campaign", configurationGroup: "Configuration", testingGroup: "Testing",
-    game: "Play", newCampaign: "New campaign", providerKey: "Provider & key", autoRuns: "Auto-runs", worldRules: "World rules",
+    game: "Play", newCampaign: "New campaign", providerKey: "Provider & key", autoRuns: "Auto-runs", worldRules: "World & style",
     play: "Play", whatDo: "What do you do?", send: "Send action", retry: "Retry pending", discard: "Discard pending",
     sendHint: "Ctrl/⌘ + Enter sends the action. Rolls and modifiers appear in the output.",
-    pendingHint: "Pending recovery: Retry resumes the same action and locked roll. Discard removes it with no world-state change.",
-    inspect: "Inspect", character: "Character", inventory: "Inventory", location: "Location", threads: "Threads", journal: "Journal", archive: "Archive current campaign",
+    pendingHint: "Pending recovery: Retry resumes the same action or appeal, including any locked roll. Discard removes it with no world-state change.",
+    inspect: "Inspect", character: "Character", location: "Location", threads: "Story threads", archive: "Archive campaign…",
+    appealGenericLabel: "Appeal a state or DM mistake", appealGenericTitle: "Prefill a general appeal; nothing is sent yet", appealTurnLabel: "Appeal turn {turn}", appealTurnTitle: "Prefill an appeal for turn {turn}; nothing is sent yet", appealHeading: "APPEAL",
+    inspectionViewsAria: "Inspection views", inspectionRegionAria: "Campaign inspection", inspectionLoading: "Loading campaign state…", inspectionLoadFailed: "Could not load campaign state.",
+    descriptionHeading: "Description", traitsHeading: "Traits", conditionsHeading: "Conditions", inventoryHeading: "Inventory", featuresHeading: "Features", factsHeading: "Facts", knowledgeHeading: "Player knowledge", historyHeading: "History", relationshipsHeading: "Relationships", knownDetailsHeading: "Known details", activeThreadsHeading: "Active", resolvedThreadsHeading: "Resolved", failedThreadsHeading: "Failed", noDescription: "No description recorded.", emptyList: "None.",
+    archiveConfirm: "Archive the current campaign? This cannot be undone or resumed.", archivingCampaign: "Archiving campaign…", campaignArchived: "CAMPAIGN ARCHIVED", campaignArchivedBody: "You can now create a new campaign.",
     premise: "Premise / scenario (optional)", characterConcept: "Character concept (optional)",
     generate: "Generate preview", archiveExisting: "Archive the current campaign if one exists", accept: "Accept & begin", regenerate: "Regenerate",
     provider: "Provider", googleRecommended: "Google — recommended", openrouter: "OpenRouter", model: "Model ID", recommended: "recommended", showModelOptions: "Show model options", noModelMatches: "No preset matches. Your entered model ID will be used.", temperature: "Temperature", maxTokens: "Max output tokens", endpoint: "Endpoint override (optional)", apiKey: "API key (leave blank to keep current key)", saveConfig: "Save config", test: "Test connection",
@@ -45,7 +68,10 @@ const UI_COPY = {
     schemaRequired: "Structured output required", schemaUntested: "The selected model must accept both campaign-setup and Gameplay Contract V1 schemas. Run Test connection after changing provider or model.", schemaRule: "Unsupported models fail closed; the game never falls back to unrestricted JSON.",
     schemaFullTitle: "Compatible · setup and gameplay schemas enforced", schemaFullDetail: "The provider accepted the campaign-setup schema and exact Gameplay Contract V1 wire schema; no degraded fallback is used.", schemaFailedTitle: "Incompatible · required schema rejected", schemaFailedDetail: "This provider/model cannot pass every schema required to create and play a campaign.", openrouterSchemaRequirement: "The selected model route supports strict response_format=json_schema.", geminiSchemaRequirement: "The selected Gemini model accepts both provider-enforced schemas.", playerSchemaHint: "A player-model override must also support schema-constrained JSON output.", connectionSchemaOk: "CONNECTION + REQUIRED SCHEMAS OK",
     selfPlay: "Self-play auto-runs", cost: "Cost ceiling ($)", sessions: "Sessions", turnsSession: "Turns / session", concurrency: "Parallel sessions", playerProfile: "Player profile pool", profileHint: "Select one or more. Sessions rotate through profiles in the order you select them.", playerModel: "Simulated-player model (optional override)", startRun: "Start bounded auto-run", artifacts: "Run artifacts", run: "Run", report: "Show report", resume: "Resume run", regenReport: "Regenerate report", session: "Session", transcript: "Transcript", aiEvaluation: "AI evaluation",
-    worldNotice: "These Markdown rules affect future campaigns. Every campaign keeps its own snapshot when created.", saveWorld: "Save world.md", working: "Working…",
+    worldNotice: "This creative Markdown controls setting, tone, pacing, and boundaries for future campaigns. Engine rules and protocols remain protected.", worldProfileMarkdown: "Creative profile Markdown", saveWorld: "Save creative profile", working: "Working…",
+    promptInspector: "Prompt inspector", promptNotice: "Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.", promptPhase: "Prompt phase", showPrompt: "Show prompt", promptChoose: "Choose a phase to inspect its static template.",
+    phaseDmSystem: "DM system", phaseSetup: "Campaign setup", phaseAdjudication: "Turn adjudication", phaseDifficulty: "Check difficulty", phaseResolution: "Locked resolution", phaseAppeal: "Appeal review", phaseSchemaRepair: "Schema repair", phaseDomainCorrection: "Domain correction", phaseSimulatedPlayer: "Simulated player", phaseJudge: "Evaluation judge", phaseConnectionProbe: "Provider probe",
+    profileDefault: "built-in native default", profileLocalized: "language-specific override", profileLegacy: "legacy custom profile", defaultPrefix: "Default",
     noCampaign: "No current campaign. Create one in the New campaign panel.", pendingAvailable: "pending action available", none: "none",
     providerMissing: "provider: not configured", noKey: "no key", campaignNone: "campaign: none", evaluationIdle: "evaluation: idle",
     autoUses: "Auto-runs use the saved provider; completed sessions are judged by the same DM model", configureAuto: "Configure and save a provider before starting an auto-run.",
@@ -53,17 +79,26 @@ const UI_COPY = {
     changed: "LANGUAGE CHANGED", changedBody: "The selected language now applies to the interface where translated and to new campaign narration.",
     actionPlaceholder: "I approach the hooded traveler and ask why they have been watching the door.", premisePlaceholder: "Default: A classical opening in a tavern, with immediate but optional possibilities.", characterPlaceholder: "Default: A grounded adventurer with two useful traits and one complicating trait.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — recommended",
     endpointPlaceholder: "Use provider default", keyPlaceholder: "Session-only key", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", campaignEnded: "CAMPAIGN ENDED",
+    controlPanelsAria: "Control panels", languageAria: "Game and interface language", selectedProfilesAria: "Selected player profiles",
+    campaignNoun: "campaign", turnNoun: "turn", turnHeading: "TURN", statusNoun: "status", statusHeading: "Status", evaluationNoun: "evaluation", defaultPlayer: "Default player",
+    selectPlayerProfileError: "Select at least one player profile", selectProfiles: "Select profiles…", selectProfileError: "Select at least one profile.", everySession: "Every session", rotationOrder: "Rotation order",
+    autoRunHeading: "AUTO-RUN", profileHeading: "Profile", openingHeading: "OPENING", turnFailedHeading: "TURN FAILED", unknownTechnicalFailure: "Unknown technical failure", changingLanguage: "Changing language…",
+    connectionEnforcementLabel: "Enforcement", connectionEnforcementMode: "campaign setup + exact Gameplay Contract V1 machine-code schema + local domain validation", connectionSafetyLabel: "Safety", connectionSafetyMode: "unrestricted fallback intentionally disabled (fail closed)",
     splitLabel: "Resize terminal and controls", splitTitle: "Drag to resize · Double-click to reset",
   },
   ru: {
     controlRoom: "web-cli", output: "ВЫВОД ТЕРМИНАЛА", clear: "очистить", language: "Язык", commands: "журнал действий", close: "закрыть",
     commandTitle: "Журнал действий", commandHint: "Локальный журнал действий, выполненных через этот интерфейс. Ключи API всегда скрыты.", activityCloseLabel: "Закрыть журнал действий", copy: "Копировать", clearLog: "Очистить действия", noCommands: "Действий пока нет.", copied: "Скопировано", online: "WEB-CLI ГОТОВ",
     campaignGroup: "Кампания", configurationGroup: "Настройки", testingGroup: "Тестирование",
-    game: "Играть", newCampaign: "Новая кампания", providerKey: "Провайдер и ключ", autoRuns: "Автопрогоны", worldRules: "Правила мира",
+    game: "Играть", newCampaign: "Новая кампания", providerKey: "Провайдер и ключ", autoRuns: "Автопрогоны", worldRules: "Мир и стиль",
     play: "Играть", whatDo: "Что вы делаете?", send: "Отправить действие", retry: "Повторить ожидающее", discard: "Отменить ожидающее",
     sendHint: "Ctrl/⌘ + Enter отправляет действие. Броски и модификаторы появятся в выводе.",
-    pendingHint: "Восстановление: повтор продолжает то же действие с сохранённым броском. Отмена удаляет его, не меняя мир.",
-    inspect: "Просмотр", character: "Персонаж", inventory: "Инвентарь", location: "Локация", threads: "Сюжетные линии", journal: "Журнал", archive: "Архивировать текущую кампанию",
+    pendingHint: "Восстановление: повтор продолжает то же действие или апелляцию, включая сохранённый бросок. Отмена удаляет запрос, не меняя мир.",
+    inspect: "Просмотр", character: "Персонаж", location: "Локация", threads: "Сюжетные линии", archive: "Архивировать кампанию…",
+    appealGenericLabel: "Оспорить состояние игры или ошибку мастера", appealGenericTitle: "Вставить общую апелляцию; ничего не отправляется", appealTurnLabel: "Оспорить ход {turn}", appealTurnTitle: "Вставить апелляцию на ход {turn}; ничего не отправляется", appealHeading: "АПЕЛЛЯЦИЯ",
+    inspectionViewsAria: "Разделы состояния", inspectionRegionAria: "Состояние кампании", inspectionLoading: "Загружаю состояние кампании…", inspectionLoadFailed: "Не удалось загрузить состояние кампании.",
+    descriptionHeading: "Описание", traitsHeading: "Черты", conditionsHeading: "Состояния", inventoryHeading: "Инвентарь", featuresHeading: "Особенности", factsHeading: "Факты", knowledgeHeading: "Знания игрока", historyHeading: "История", relationshipsHeading: "Отношения", knownDetailsHeading: "Известные сведения", activeThreadsHeading: "Активные", resolvedThreadsHeading: "Завершённые", failedThreadsHeading: "Проваленные", noDescription: "Описание отсутствует.", emptyList: "Нет.",
+    archiveConfirm: "Архивировать текущую кампанию? Это нельзя отменить, и кампанию нельзя продолжить.", archivingCampaign: "Архивирую кампанию…", campaignArchived: "КАМПАНИЯ АРХИВИРОВАНА", campaignArchivedBody: "Теперь можно создать новую кампанию.",
     premise: "Завязка / сценарий (необязательно)", characterConcept: "Концепция персонажа (необязательно)",
     generate: "Создать предпросмотр", archiveExisting: "Архивировать текущую кампанию, если она существует", accept: "Принять и начать", regenerate: "Создать заново",
     provider: "Провайдер", googleRecommended: "Google — рекомендуется", openrouter: "OpenRouter", model: "ID модели", recommended: "рекомендуется", showModelOptions: "Показать варианты моделей", noModelMatches: "Подходящих вариантов нет. Будет использован введённый ID модели.", temperature: "Температура", maxTokens: "Макс. токенов ответа", endpoint: "Адрес API (необязательно)", apiKey: "Ключ API (оставьте пустым, чтобы сохранить текущий)", saveConfig: "Сохранить", test: "Проверить соединение",
@@ -72,7 +107,10 @@ const UI_COPY = {
     schemaRequired: "Требуется структурированный вывод", schemaUntested: "Выбранная модель должна принять схемы создания кампании и Gameplay Contract V1. После смены провайдера или модели запустите проверку.", schemaRule: "Неподдерживаемые модели отклоняются; игра никогда не переходит к JSON без ограничений.",
     schemaFullTitle: "Совместимо · схемы создания и игры применяются", schemaFullDetail: "Провайдер принял схему создания кампании и точную схему Gameplay Contract V1; ослабленный резервный режим не используется.", schemaFailedTitle: "Несовместимо · обязательная схема отклонена", schemaFailedDetail: "Эта комбинация провайдера и модели не прошла все проверки, необходимые для создания и игры кампании.", openrouterSchemaRequirement: "Выбранный маршрут модели поддерживает строгий response_format=json_schema.", geminiSchemaRequirement: "Выбранная модель Gemini принимает обе схемы, заданные провайдеру.", playerSchemaHint: "Переопределённая модель игрока также должна поддерживать JSON с ограничением схемой.", connectionSchemaOk: "СОЕДИНЕНИЕ И ОБЯЗАТЕЛЬНЫЕ СХЕМЫ В ПОРЯДКЕ",
     selfPlay: "Автоматические тестовые игры", cost: "Лимит стоимости ($)", sessions: "Сессии", turnsSession: "Ходов в сессии", concurrency: "Параллельные сессии", playerProfile: "Набор профилей игрока", profileHint: "Выберите один или несколько. Сессии чередуют профили в порядке выбора.", playerModel: "Модель игрока (необязательная замена)", startRun: "Запустить ограниченный автопрогон", artifacts: "Материалы прогонов", run: "Прогон", report: "Показать отчёт", resume: "Продолжить прогон", regenReport: "Обновить отчёт", session: "Сессия", transcript: "Транскрипт", aiEvaluation: "Оценка ИИ",
-    worldNotice: "Эти Markdown-правила действуют на будущие кампании. При создании каждая кампания сохраняет свою копию.", saveWorld: "Сохранить world.md", working: "Работаю…",
+    worldNotice: "Этот творческий Markdown задаёт мир, тон, темп и границы будущих кампаний. Правила движка и протоколы защищены от изменений.", worldProfileMarkdown: "Markdown творческого профиля", saveWorld: "Сохранить творческий профиль", working: "Работаю…",
+    promptInspector: "Инспектор промптов", promptNotice: "Статические шаблоны только для чтения с безопасными заполнителями. Контекст и секреты текущей кампании здесь не раскрываются.", promptPhase: "Этап промпта", showPrompt: "Показать промпт", promptChoose: "Выберите этап для просмотра статического шаблона.",
+    phaseDmSystem: "Системный промпт мастера", phaseSetup: "Создание кампании", phaseAdjudication: "Решение по ходу", phaseDifficulty: "Сложность проверки", phaseResolution: "Разрешение броска", phaseAppeal: "Рассмотрение апелляции", phaseSchemaRepair: "Исправление схемы", phaseDomainCorrection: "Исправление состояния", phaseSimulatedPlayer: "Симуляция игрока", phaseJudge: "Судья автопрогона", phaseConnectionProbe: "Проверка провайдера",
+    profileDefault: "встроенный профиль", profileLocalized: "языковая настройка", profileLegacy: "старый пользовательский профиль", defaultPrefix: "По умолчанию",
     noCampaign: "Текущей кампании нет. Создайте её на вкладке «Новая кампания».", pendingAvailable: "есть ожидающее действие", none: "нет",
     providerMissing: "провайдер: не настроен", noKey: "нет ключа", campaignNone: "кампания: нет", evaluationIdle: "автопрогон: не запущен",
     autoUses: "Автопрогоны используют сохранённого провайдера; завершённые сессии оценивает та же модель мастера", configureAuto: "Настройте и сохраните провайдера перед запуском.",
@@ -80,6 +118,11 @@ const UI_COPY = {
     changed: "ЯЗЫК ИЗМЕНЁН", changedBody: "Язык интерфейса и текущей кампании обновлён. Новое повествование будет на русском.",
     actionPlaceholder: "Я подхожу к путнику в капюшоне и спрашиваю, почему он следит за дверью.", premisePlaceholder: "По умолчанию: классическое начало в таверне с немедленными, но необязательными возможностями.", characterPlaceholder: "По умолчанию: приземлённый искатель приключений с двумя полезными и одной осложняющей чертой.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — рекомендуется",
     endpointPlaceholder: "Адрес провайдера по умолчанию", keyPlaceholder: "Ключ только для этой сессии", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
+    controlPanelsAria: "Панели управления", languageAria: "Язык игры и интерфейса", selectedProfilesAria: "Выбранные профили игрока",
+    campaignNoun: "кампания", turnNoun: "ход", turnHeading: "ХОД", statusNoun: "статус", statusHeading: "Статус", evaluationNoun: "автопрогон", defaultPlayer: "Игрок по умолчанию",
+    selectPlayerProfileError: "Выберите хотя бы один профиль игрока", selectProfiles: "Выберите профили…", selectProfileError: "Выберите хотя бы один профиль.", everySession: "Каждая сессия", rotationOrder: "Порядок ротации",
+    autoRunHeading: "АВТОПРОГОН", profileHeading: "Профиль", openingHeading: "НАЧАЛО", turnFailedHeading: "СБОЙ ХОДА", unknownTechnicalFailure: "Неизвестная техническая ошибка", changingLanguage: "Меняю язык…",
+    connectionEnforcementLabel: "Применение схем", connectionEnforcementMode: "схема создания кампании + точная Gameplay Contract V1 с машинными кодами + локальная проверка домена", connectionSafetyLabel: "Безопасность", connectionSafetyMode: "неограниченный резервный режим намеренно отключён (ошибка вместо ослабления схемы)",
     splitLabel: "Изменить размер терминала и панели", splitTitle: "Перетащите для изменения · Двойной щелчок сбрасывает размер",
   },
 };
@@ -90,11 +133,17 @@ const STATIC_TARGETS = {
   "#tab-group-campaign-label": "campaignGroup", "#tab-group-configuration-label": "configurationGroup", "#tab-group-testing-label": "testingGroup",
   '[data-panel="game"]': "game", '[data-panel="campaign"]': "newCampaign", '[data-panel="provider"]': "providerKey", '[data-panel="evaluations"]': "autoRuns", '[data-panel="world"]': "worldRules",
   "#panel-game h1": "play", 'label[for="action"]': "whatDo", "#play": "send", "#retry": "retry", "#discard": "discard", "#panel-game .hint:not(#pending-help)": "sendHint", "#pending-help": "pendingHint", "#panel-game h2": "inspect",
-  '[data-view="character"]': "character", '[data-view="inventory"]': "inventory", '[data-view="location"]': "location", '[data-view="threads"]': "threads", '[data-view="journal"]': "journal", "#archive": "archive",
+  '[data-view="character"]': "character", '[data-view="location"]': "location", '[data-view="threads"]': "threads", "#archive-label": "archive",
   "#panel-campaign h1": "newCampaign", 'label[for="premise"]': "premise", 'label[for="character"]': "characterConcept", "#generate-campaign": "generate", ".check span": "archiveExisting", "#confirm-campaign": "accept", "#regenerate-campaign": "regenerate",
   "#panel-provider h1": "providerKey", "#panel-provider .notice": "keyNotice", 'label[for="provider"]': "provider", '#provider option[value="gemini"]': "googleRecommended", '#provider option[value="openrouter"]': "openrouter", 'label[for="model"]': "model", 'label[for="temperature"]': "temperature", 'label[for="max-tokens"]': "maxTokens", 'label[for="endpoint"]': "endpoint", 'label[for="api-key"]': "apiKey", "#save-provider": "saveConfig", "#test-provider": "test", "#player-model-schema-hint": "playerSchemaHint",
   "#panel-evaluations h1": "selfPlay", 'label[for="max-cost"]': "cost", 'label[for="sessions"]': "sessions", 'label[for="turns"]': "turnsSession", 'label[for="concurrency"]': "concurrency", "#profile-control legend": "playerProfile", "#profile-help": "profileHint", 'label[for="player-model"]': "playerModel", "#start-evaluation": "startRun", "#panel-evaluations h2": "artifacts", 'label[for="run-select"]': "run", "#show-report": "report", "#resume-run": "resume", "#regenerate-report": "regenReport", 'label[for="session-select"]': "session", "#show-transcript": "transcript", "#show-evaluation": "aiEvaluation",
-  "#panel-world h1": "worldRules", "#panel-world .notice": "worldNotice", "#save-world": "saveWorld", "#busy b": "working",
+  "#panel-world h1": "worldRules", "#panel-world .notice": "worldNotice", 'label[for="world-markdown"]': "worldProfileMarkdown", "#save-world": "saveWorld", "#prompt-inspector-title": "promptInspector", "#prompt-inspector-notice": "promptNotice", 'label[for="prompt-phase"]': "promptPhase", "#show-prompt": "showPrompt", "#busy b": "working",
+};
+
+const PROMPT_PHASE_COPY = {
+  "dm-system": "phaseDmSystem", setup: "phaseSetup", adjudication: "phaseAdjudication", difficulty: "phaseDifficulty",
+  resolution: "phaseResolution", appeal: "phaseAppeal", "schema-repair": "phaseSchemaRepair", "domain-correction": "phaseDomainCorrection",
+  "simulated-player": "phaseSimulatedPlayer", judge: "phaseJudge", "connection-probe": "phaseConnectionProbe",
 };
 
 function t(key) { return UI_COPY[locale]?.[key] ?? UI_COPY.en[key] ?? key; }
@@ -264,6 +313,7 @@ function initializeModelPickers() {
 
 function syncLanguageOptions(languages) {
   if (!Array.isArray(languages) || !languages.length) return;
+  languageCatalog = languages;
   const select = $("#language-select");
   const current = gameLanguage;
   const expected = languages.map(({ code, name }) => `${code}\u0000${name}`).join("\u0001");
@@ -277,11 +327,30 @@ function syncLanguageOptions(languages) {
     }));
   }
   select.value = current;
+  refreshSetupPlaceholders();
+}
+
+function refreshSetupPlaceholders() {
+  const languageMetadata = languageCatalog.find((item) => item.code === gameLanguage);
+  $("#premise").placeholder = languageMetadata?.setupDefaults?.premise
+    ? `${t("defaultPrefix")}: ${languageMetadata.setupDefaults.premise}`
+    : t("premisePlaceholder");
+  $("#character").placeholder = languageMetadata?.setupDefaults?.characterConcept
+    ? `${t("defaultPrefix")}: ${languageMetadata.setupDefaults.characterConcept}`
+    : t("characterPlaceholder");
+}
+
+function clearCurrentDraft() {
+  currentDraft = null;
+  $("#draft-controls").classList.add("hidden");
 }
 
 function applyUiLanguage(language, { resetTerminal = false } = {}) {
+  const languageChanged = uiLanguageInitialized && language !== gameLanguage;
+  if (languageChanged) clearCurrentDraft();
   gameLanguage = language;
   locale = UI_COPY[language] ? language : "en";
+  uiLanguageInitialized = true;
   document.documentElement.lang = locale;
   $("#language-select").value = gameLanguage;
   for (const [selector, key] of Object.entries(STATIC_TARGETS)) {
@@ -289,8 +358,7 @@ function applyUiLanguage(language, { resetTerminal = false } = {}) {
     if (element) element.textContent = t(key);
   }
   $("#action").placeholder = t("actionPlaceholder");
-  $("#premise").placeholder = t("premisePlaceholder");
-  $("#character").placeholder = t("characterPlaceholder");
+  refreshSetupPlaceholders();
   $("#player-model").placeholder = t("playerModelPlaceholder");
   for (const root of $$('[data-model-picker]')) {
     root.querySelector(".model-picker-toggle").setAttribute("aria-label", t("showModelOptions"));
@@ -299,16 +367,24 @@ function applyUiLanguage(language, { resetTerminal = false } = {}) {
   $("#endpoint").placeholder = t("endpointPlaceholder");
   $("#api-key").placeholder = t("keyPlaceholder");
   renderModelGuidance();
-  $(".tabs").setAttribute("aria-label", locale === "ru" ? "Панели управления" : "Control panels");
+  $(".tabs").setAttribute("aria-label", t("controlPanelsAria"));
   $("#command-log-close").setAttribute("aria-label", t("activityCloseLabel"));
-  $("#language-select").setAttribute("aria-label", locale === "ru" ? "Язык игры и интерфейса" : "Game and interface language");
-  $("#profile-selection-summary").setAttribute("aria-label", locale === "ru" ? "Выбранные профили игрока" : "Selected player profiles");
+  $("#language-select").setAttribute("aria-label", t("languageAria"));
+  $("#profile-selection-summary").setAttribute("aria-label", t("selectedProfilesAria"));
+  $("#inspect-buttons").setAttribute("aria-label", t("inspectionViewsAria"));
+  $("#inspection-output").setAttribute("aria-label", t("inspectionRegionAria"));
+  updateAppealControlLabels();
   workspaceResizer.setAttribute("aria-label", t("splitLabel"));
   workspaceResizer.title = t("splitTitle");
+  for (const option of $("#prompt-phase").options) {
+    option.textContent = t(PROMPT_PHASE_COPY[option.value]);
+  }
+  if ($("#prompt-preview").dataset.loaded !== "true") $("#prompt-preview").textContent = t("promptChoose");
   document.title = "llm-dungeon web-cli";
   syncProfilePool();
   renderCommandLog();
   renderProviderCompatibility();
+  if (currentInspection) renderInspection(currentInspection);
   if (resetTerminal) setTerminalReady();
 }
 
@@ -339,12 +415,33 @@ function normalizedTerminalEntry(value, fallbackChannel = "game") {
   if (!value || typeof value !== "object") return null;
   const mode = ["normal", "success", "error"].includes(value.mode) ? value.mode : "normal";
   const channel = TERMINAL_CHANNELS.has(value.channel) ? value.channel : fallbackChannel;
+  const kind = ["opening", "gameplay", "appeal"].includes(value.kind) ? value.kind : undefined;
+  const turn = Number.isSafeInteger(value.turn) && value.turn >= 0 ? value.turn : undefined;
+  const appealTargetTurn = Number.isSafeInteger(value.appealTargetTurn) && value.appealTargetTurn >= 1
+    ? value.appealTargetTurn
+    : undefined;
   return {
     title: String(value.title ?? "").slice(0, 500),
     text: String(value.text ?? "").slice(0, TERMINAL_MAX_TEXT),
     mode,
     channel,
+    ...(kind ? { kind } : {}),
+    ...(turn !== undefined ? { turn } : {}),
+    ...(appealTargetTurn !== undefined ? { appealTargetTurn } : {}),
   };
+}
+
+function withLegacyGameTurnMetadata(entry) {
+  if (!entry || entry.channel !== "game" || entry.kind) return entry;
+  if (["CAMPAIGN BEGINS — ", "КАМПАНИЯ НАЧИНАЕТСЯ — ", "НАЧАЛО КАМПАНИИ — "]
+    .some((prefix) => entry.title.startsWith(prefix))) {
+    return { ...entry, kind: "opening", turn: 0 };
+  }
+  const match = entry.title.match(/^DUNGEON MASTER — TURN ([1-9]\d*)$/)
+    ?? entry.title.match(/^МАСТЕР ПОДЗЕМЕЛИЙ — ХОД ([1-9]\d*)$/);
+  if (!match) return entry;
+  const turn = Number(match[1]);
+  return Number.isSafeInteger(turn) ? { ...entry, kind: "gameplay", turn } : entry;
 }
 
 function isLegacyEvaluationTranscriptEntry(entry) {
@@ -352,11 +449,15 @@ function isLegacyEvaluationTranscriptEntry(entry) {
     && entry.text.trimStart().startsWith("# Self-Play Transcript:");
 }
 
+function isLegacyInspectionEntry(entry) {
+  return entry.channel === "game" && LEGACY_INSPECTION_TITLES.has(entry.title);
+}
+
 function migratedTerminalEntries(values) {
   let evaluationOpening = false;
   let evaluationTurn = false;
   return values.map((value) => {
-    if (TERMINAL_CHANNELS.has(value?.channel)) return normalizedTerminalEntry(value);
+    if (TERMINAL_CHANNELS.has(value?.channel)) return withLegacyGameTurnMetadata(normalizedTerminalEntry(value));
     const entry = normalizedTerminalEntry(value);
     if (!entry) return null;
     const title = entry.title;
@@ -392,8 +493,40 @@ function migratedTerminalEntries(values) {
     } else if (title === "WORLD RULES SAVED") {
       channel = "world";
     }
-    return { ...entry, channel };
+    return withLegacyGameTurnMetadata({ ...entry, channel });
   }).filter(Boolean);
+}
+
+function appealCopy(key, turn) {
+  return t(key).replace("{turn}", String(turn));
+}
+
+function setAppealButtonCopy(button, turn) {
+  const label = turn === undefined ? t("appealGenericLabel") : appealCopy("appealTurnLabel", turn);
+  const title = turn === undefined ? t("appealGenericTitle") : appealCopy("appealTurnTitle", turn);
+  button.setAttribute("aria-label", label);
+  button.title = title;
+}
+
+function updateAppealControlLabels() {
+  setAppealButtonCopy($("#appeal-generic"));
+  $$('[data-appeal-turn]').forEach((button) => setAppealButtonCopy(button, Number(button.dataset.appealTurn)));
+}
+
+function updateAppealAvailability() {
+  $("#appeal-generic").disabled = !actionAvailable;
+  $$('[data-appeal-turn]').forEach((button) => { button.disabled = !actionAvailable; });
+}
+
+function createTurnAppealButton(turn) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "appeal-button terminal-appeal-button";
+  button.dataset.appealTurn = String(turn);
+  button.append($("#appeal-generic svg").cloneNode(true));
+  button.disabled = !actionAvailable;
+  setAppealButtonCopy(button, turn);
+  return button;
 }
 
 function appendTerminalEntry(entry) {
@@ -409,6 +542,9 @@ function appendTerminalEntry(entry) {
   const titleElement = document.createElement("strong");
   titleElement.textContent = entry.title;
   heading.append(markerElement, titleElement);
+  if (entry.channel === "game" && entry.kind === "gameplay" && Number.isSafeInteger(entry.turn) && entry.turn > 0) {
+    heading.append(createTurnAppealButton(entry.turn));
+  }
   const body = document.createElement("pre");
   body.textContent = entry.text;
   section.append(heading, body);
@@ -437,10 +573,10 @@ function renderTerminalChannel(channel = currentTerminalChannel()) {
 function persistTerminalHistory() {
   if (terminalCampaignId === undefined) return;
   let entries = terminalHistory.slice(-TERMINAL_MAX_ENTRIES);
-  let serialized = JSON.stringify({ version: 2, entries });
+  let serialized = JSON.stringify({ version: 3, entries });
   while (entries.length > 1 && serialized.length > TERMINAL_MAX_STORAGE) {
     entries = entries.slice(1);
-    serialized = JSON.stringify({ version: 2, entries });
+    serialized = JSON.stringify({ version: 3, entries });
   }
   terminalHistory = entries;
   try { localStorage.setItem(terminalStorageKey(terminalCampaignId), serialized); } catch { /* Storage can be disabled or full. */ }
@@ -449,44 +585,81 @@ function persistTerminalHistory() {
 function readTerminalHistory(campaignId) {
   try {
     const raw = localStorage.getItem(terminalStorageKey(campaignId));
-    if (raw === null) return { found: false, entries: [] };
+    if (raw === null) return { entries: [], migrated: false };
     const parsed = JSON.parse(raw);
-    const values = Array.isArray(parsed) ? parsed : [1, 2].includes(parsed?.version) ? parsed.entries : [];
+    const legacyArray = Array.isArray(parsed);
+    const version = legacyArray ? 0 : parsed?.version;
+    if (!legacyArray && ![1, 2, 3].includes(version)) {
+      return { entries: [], migrated: false };
+    }
+    const values = legacyArray ? parsed : parsed.entries;
     const entries = Array.isArray(values)
       ? migratedTerminalEntries(values).slice(-TERMINAL_MAX_ENTRIES)
       : [];
-    const visibleEntries = entries.filter((entry) => !isLegacyEvaluationTranscriptEntry(entry));
-    if (entries.some((entry) => LEGACY_JOURNAL_DUMP_TITLES.has(entry.title))) {
-      return { found: false, entries: [] };
-    }
-    return { found: true, entries: visibleEntries };
+    const visibleEntries = entries.filter((entry) => !isLegacyEvaluationTranscriptEntry(entry) && !isLegacyInspectionEntry(entry));
+    return {
+      entries: visibleEntries,
+      migrated: legacyArray || version !== 3 || visibleEntries.length !== entries.length,
+    };
   } catch {
-    return { found: false, entries: [] };
+    return { entries: [], migrated: false };
   }
 }
 
-async function switchTerminalCampaign(campaign) {
-  const campaignId = campaign?.campaignId ?? null;
-  if (terminalCampaignId === campaignId) return;
-  const restored = readTerminalHistory(campaignId);
-  terminalCampaignId = campaignId;
-  terminalHistory = restored.entries;
-  renderTerminalChannel();
+function committedTerminalTurns(entries) {
+  return new Set(entries
+    .filter((entry) => entry.channel === "game"
+      && ["opening", "gameplay", "appeal"].includes(entry.kind)
+      && Number.isSafeInteger(entry.turn)
+      && entry.turn >= 0)
+    .map((entry) => entry.turn));
+}
 
-  // Browser transcripts created before this feature cannot exist in local
-  // storage. Reconstruct the authoritative recent player-visible turns once,
-  // then persist the same alternating terminal entries used during live play.
-  if (campaign && campaign.turn > 0 && !restored.found) {
+function hasUnpairedPlayerAction(action) {
+  let latestCommittedIndex = -1;
+  for (let index = terminalHistory.length - 1; index >= 0; index -= 1) {
+    const entry = terminalHistory[index];
+    if (entry.channel === "game" && entry.kind && Number.isSafeInteger(entry.turn)) {
+      latestCommittedIndex = index;
+      break;
+    }
+  }
+  return terminalHistory.slice(latestCommittedIndex + 1).some((entry) =>
+    entry.channel === "game" && PLAYER_ACTION_TITLES.has(entry.title) && entry.text === action);
+}
+
+async function switchTerminalCampaign(campaign, { openingNarration } = {}) {
+  const campaignId = campaign?.campaignId ?? null;
+  if (terminalCampaignId !== campaignId) {
+    resetInspection();
+    const restored = readTerminalHistory(campaignId);
+    terminalCampaignId = campaignId;
+    terminalHistory = restored.entries;
+    if (restored.migrated) persistTerminalHistory();
+    renderTerminalChannel();
+  }
+
+  // Reconcile the browser-only presentation cache with authoritative committed
+  // turns. This also repairs the crash window where a player action reached the
+  // server and committed, but the browser closed before persisting the reply.
+  const committedTurns = committedTerminalTurns(terminalHistory);
+  if (campaign?.turn === 0 && openingNarration && !committedTurns.has(0)) {
+    print(`CAMPAIGN BEGINS — ${campaign.title}`, openingNarration, "success", "game", { kind: "opening", turn: 0 });
+    committedTurns.add(0);
+  }
+  if (campaign && !committedTurns.has(campaign.turn)) {
     try {
       const body = await api("/api/game/transcript");
       for (const turn of body.turns) {
-        if (turn.turn === 0) {
-          print(`CAMPAIGN BEGINS — ${campaign.title}`, turn.narration, "success", "game");
+        if (committedTurns.has(turn.turn)) continue;
+        if (turn.kind === "opening" || turn.turn === 0) {
+          print(`CAMPAIGN BEGINS — ${campaign.title}`, turn.narration, "success", "game", { kind: "opening", turn: 0 });
+          committedTurns.add(turn.turn);
           continue;
         }
-        print(t("you"), turn.action, "normal", "game");
-        if (turn.checkText) print(t("check"), turn.checkText, "normal", "game");
-        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success", "game");
+        if (!hasUnpairedPlayerAction(turn.action)) print(t("you"), turn.action, "normal", "game");
+        printCommittedResponse(turn);
+        committedTurns.add(turn.turn);
       }
     } catch { /* Status and normal play remain available if transcript restoration is temporarily busy. */ }
   }
@@ -622,8 +795,8 @@ async function api(url, options = {}) {
   return body;
 }
 
-function print(title, text, mode = "normal", channel = currentTerminalChannel()) {
-  const entry = normalizedTerminalEntry({ title, text, mode, channel });
+function print(title, text, mode = "normal", channel = currentTerminalChannel(), metadata = {}) {
+  const entry = normalizedTerminalEntry({ title, text, mode, channel, ...metadata });
   if (!entry) return;
   terminalHistory.push(entry);
   persistTerminalHistory();
@@ -637,13 +810,277 @@ function error(error, channel = currentTerminalChannel()) {
   print("ERROR", error instanceof Error ? error.message : String(error), "error", channel);
 }
 
-async function work(label, operation) {
-  const channel = currentTerminalChannel();
+async function work(label, operation, errorChannel) {
+  const channel = errorChannel ?? currentTerminalChannel();
   busy.querySelector("b").textContent = label;
   busy.classList.remove("hidden");
   try { return await operation(); }
   catch (caught) { error(caught, channel); return undefined; }
   finally { busy.classList.add("hidden"); await refreshStatus().catch(() => {}); }
+}
+
+function inspectionElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function inspectionValues(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()) : [];
+}
+
+function appendInspectionSection(parent, heading, values, { chips = false } = {}) {
+  const section = inspectionElement("section", "inspection-section");
+  section.append(inspectionElement("h4", "", heading));
+  const items = inspectionValues(values);
+  if (!items.length) {
+    section.append(inspectionElement("p", "inspection-empty", t("emptyList")));
+  } else {
+    const list = inspectionElement("ul", chips ? "inspection-chip-list" : "inspection-text-list");
+    for (const value of items) list.append(inspectionElement("li", chips ? "inspection-chip" : "", value));
+    section.append(list);
+  }
+  parent.append(section);
+}
+
+function createInspectionHeader(inspection) {
+  const header = inspectionElement("header", "inspection-card-header");
+  header.append(inspectionElement("h3", "", inspection.name));
+  header.append(inspectionElement("span", "inspection-status", inspection.status));
+  return header;
+}
+
+function appendDescription(parent, description) {
+  const section = inspectionElement("section", "inspection-section");
+  section.append(inspectionElement("h4", "", t("descriptionHeading")));
+  section.append(inspectionElement("p", "inspection-description", description || t("noDescription")));
+  parent.append(section);
+}
+
+function appendInventory(parent, heading, inventory) {
+  const section = inspectionElement("section", "inspection-section inspection-inventory");
+  section.append(inspectionElement("h4", "", heading));
+  const items = Array.isArray(inventory) ? inventory : [];
+  if (!items.length) {
+    section.append(inspectionElement("p", "inspection-empty", t("emptyList")));
+    parent.append(section);
+    return;
+  }
+  const list = inspectionElement("ul", "inspection-item-list");
+  for (const item of items) {
+    const row = inspectionElement("li", "inspection-item");
+    const itemHeader = inspectionElement("div", "inspection-item-header");
+    itemHeader.append(inspectionElement("strong", "", item.name));
+    itemHeader.append(inspectionElement("span", "inspection-quantity", `× ${item.quantity}`));
+    row.append(itemHeader);
+    if (item.status) row.append(inspectionElement("small", "inspection-item-status", item.status));
+    if (item.description) row.append(inspectionElement("p", "", item.description));
+    list.append(row);
+  }
+  section.append(list);
+  parent.append(section);
+}
+
+function appendKnownDetails(parent, facts) {
+  const groups = [
+    ["factsHeading", facts?.established],
+    ["knowledgeHeading", facts?.knowledge],
+    ["historyHeading", facts?.history],
+  ];
+  const count = groups.reduce((sum, [, values]) => sum + inspectionValues(values).length, 0);
+  const details = inspectionElement("details", "inspection-details");
+  details.append(inspectionElement("summary", "", `${t("knownDetailsHeading")} (${count})`));
+  for (const [headingKey, values] of groups) appendInspectionSection(details, t(headingKey), values);
+  parent.append(details);
+}
+
+function appendRelationships(parent, relationships) {
+  const values = Array.isArray(relationships)
+    ? relationships.map((relationship) => `${relationship.name} — ${relationship.summary}`)
+    : [];
+  appendInspectionSection(parent, t("relationshipsHeading"), values);
+}
+
+function renderCharacterInspection(inspection) {
+  const card = inspectionElement("article", "inspection-card");
+  card.append(createInspectionHeader(inspection));
+  appendDescription(card, inspection.description);
+  const grid = inspectionElement("div", "inspection-grid");
+  appendInspectionSection(grid, t("traitsHeading"), inspection.traits, { chips: true });
+  appendInspectionSection(grid, t("conditionsHeading"), inspection.conditions, { chips: true });
+  card.append(grid);
+  appendInventory(card, t("inventoryHeading"), inspection.inventory);
+  appendRelationships(card, inspection.relationships);
+  appendKnownDetails(card, inspection.facts);
+  return card;
+}
+
+function renderLocationInspection(inspection) {
+  const card = inspectionElement("article", "inspection-card");
+  card.append(createInspectionHeader(inspection));
+  appendDescription(card, inspection.description);
+  const grid = inspectionElement("div", "inspection-grid");
+  appendInspectionSection(grid, t("featuresHeading"), inspection.features, { chips: true });
+  appendInspectionSection(grid, t("conditionsHeading"), inspection.conditions, { chips: true });
+  card.append(grid);
+  appendKnownDetails(card, inspection.facts);
+  return card;
+}
+
+function createThreadList(threads) {
+  const list = inspectionElement("ul", "inspection-thread-list");
+  if (!threads.length) {
+    list.append(inspectionElement("li", "inspection-empty", t("emptyList")));
+    return list;
+  }
+  for (const thread of threads) {
+    const item = inspectionElement("li", "inspection-thread");
+    item.append(inspectionElement("strong", "", thread.title));
+    item.append(inspectionElement("p", "", thread.summary));
+    list.append(item);
+  }
+  return list;
+}
+
+function renderThreadsInspection(inspection) {
+  const card = inspectionElement("article", "inspection-card inspection-threads");
+  card.append(inspectionElement("h3", "", t("threads")));
+  const threads = Array.isArray(inspection.threads) ? inspection.threads : [];
+  const groups = [
+    ["active", "activeThreadsHeading", false],
+    ["resolved", "resolvedThreadsHeading", true],
+    ["failed", "failedThreadsHeading", true],
+  ];
+  for (const [statusValue, headingKey, collapsed] of groups) {
+    const matching = threads.filter((thread) => thread.status === statusValue);
+    if (collapsed) {
+      const details = inspectionElement("details", "inspection-details inspection-thread-group");
+      details.append(inspectionElement("summary", "", `${t(headingKey)} (${matching.length})`));
+      details.append(createThreadList(matching));
+      card.append(details);
+    } else {
+      const section = inspectionElement("section", "inspection-section inspection-thread-group");
+      section.append(inspectionElement("h4", "", `${t(headingKey)} (${matching.length})`));
+      section.append(createThreadList(matching));
+      card.append(section);
+    }
+  }
+  return card;
+}
+
+function selectInspectionView(view) {
+  $$("#inspect-buttons button").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  });
+}
+
+function showInspectionMessage(message, mode = "status") {
+  const output = $("#inspection-output");
+  output.hidden = false;
+  const text = inspectionElement("p", `inspection-message ${mode}`, message);
+  if (mode === "status") text.setAttribute("role", "status");
+  output.replaceChildren(text);
+}
+
+function renderInspection(inspection) {
+  const output = $("#inspection-output");
+  currentInspection = inspection;
+  activeInspectionView = inspection.view;
+  selectInspectionView(inspection.view);
+  let card;
+  if (inspection.view === "character") card = renderCharacterInspection(inspection);
+  else if (inspection.view === "location") card = renderLocationInspection(inspection);
+  else if (inspection.view === "threads") card = renderThreadsInspection(inspection);
+  else {
+    showInspectionMessage(t("inspectionLoadFailed"), "error");
+    return;
+  }
+  output.hidden = false;
+  output.replaceChildren(card);
+}
+
+function resetInspection() {
+  inspectionRequestSequence += 1;
+  activeInspectionView = null;
+  currentInspection = null;
+  inspectionCampaignKey = null;
+  selectInspectionView(null);
+  const output = $("#inspection-output");
+  output.setAttribute("aria-busy", "false");
+  output.replaceChildren();
+  output.hidden = true;
+}
+
+function campaignInspectionStateKey(campaign) {
+  return campaign ? `${campaign.campaignId}:${campaign.turn}:${campaign.updatedAt ?? ""}` : null;
+}
+
+async function refreshInspectionAfterCommit(state) {
+  inspectionCampaignKey = campaignInspectionStateKey(state);
+  if (activeInspectionView) {
+    await loadInspection(activeInspectionView, { record: false, showLoading: false });
+  }
+}
+
+async function loadInspection(view, { record = true, showLoading = true } = {}) {
+  const requestId = ++inspectionRequestSequence;
+  if (currentInspection?.view !== view) currentInspection = null;
+  activeInspectionView = view;
+  selectInspectionView(view);
+  const output = $("#inspection-output");
+  output.setAttribute("aria-busy", "true");
+  if (showLoading || !currentInspection || currentInspection.view !== view) {
+    showInspectionMessage(t("inspectionLoading"));
+  }
+  if (record) recordCommand(`:${view}`);
+  try {
+    const body = await api(`/api/game/inspect?view=${encodeURIComponent(view)}`);
+    if (requestId !== inspectionRequestSequence || activeInspectionView !== view) return;
+    if (!body.inspection || body.inspection.view !== view) throw new Error(t("inspectionLoadFailed"));
+    renderInspection(body.inspection);
+  } catch (caught) {
+    if (requestId !== inspectionRequestSequence || activeInspectionView !== view) return;
+    const detail = caught instanceof Error ? caught.message : String(caught);
+    const message = detail === t("inspectionLoadFailed")
+      ? detail
+      : `${t("inspectionLoadFailed")} ${detail}`.trim();
+    showInspectionMessage(message, "error");
+  } finally {
+    if (requestId === inspectionRequestSequence) output.setAttribute("aria-busy", "false");
+  }
+}
+
+function prefillAppeal(turn) {
+  const input = $("#action");
+  const prefix = turn === undefined ? ":appeal " : `:appeal --turn ${turn} `;
+  const existing = input.value.trim();
+  const appeal = existing.match(/^:appeal(?:\s+--turn\s+\d+)?(?:\s+([\s\S]*))?$/);
+  const claim = (appeal ? appeal[1] ?? "" : existing).trim();
+  input.value = claim ? `${prefix}${claim}` : prefix;
+  input.focus({ preventScroll: false });
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function printCommittedResponse(result) {
+  if (result.checkText) print(t("check"), result.checkText, "normal", "game");
+  const kind = result.kind === "appeal" ? "appeal" : "gameplay";
+  if (kind === "appeal") {
+    const hasTarget = Number.isSafeInteger(result.appealTargetTurn) && result.appealTargetTurn >= 1;
+    const title = hasTarget
+      ? `${t("appealHeading")} — ${t("turnHeading")} ${result.appealTargetTurn}`
+      : t("appealHeading");
+    print(title, result.narration, "success", "game", {
+      kind,
+      turn: result.turn,
+      ...(hasTarget ? { appealTargetTurn: result.appealTargetTurn } : {}),
+    });
+    return;
+  }
+  print(`${t("dm")} — ${t("turnHeading")} ${result.turn}`, result.narration, "success", "game", {
+    kind,
+    turn: result.turn,
+  });
 }
 
 function setStatus(element, text, kind) {
@@ -700,34 +1137,47 @@ async function refreshStatus() {
       setStatus($("#provider-status"), `${providerLabel(provider.provider)}: ${displayModelId(provider.provider, provider.model)}${hasKey ? "" : ` · ${t("noKey")}`}`, hasKey ? "ok" : "bad");
     }
     $("#evaluation-provider").textContent = provider
-      ? `${t("autoUses")}: ${providerLabel(provider.provider)}/${displayModelId(provider.provider, provider.model)}. ${locale === "ru" ? "Игрок по умолчанию" : "Default player"}: google/gemini-3.1-flash-lite.`
+      ? `${t("autoUses")}: ${providerLabel(provider.provider)}/${displayModelId(provider.provider, provider.model)}. ${t("defaultPlayer")}: google/gemini-3.1-flash-lite.`
       : t("configureAuto");
     const campaign = status.game.campaign;
+    const previousInspectionCampaignKey = inspectionCampaignKey;
     await switchTerminalCampaign(campaign);
+    const nextInspectionCampaignKey = campaignInspectionStateKey(campaign);
+    const shouldRefreshInspection = Boolean(
+      activeInspectionView
+      && previousInspectionCampaignKey
+      && previousInspectionCampaignKey !== nextInspectionCampaignKey,
+    );
+    inspectionCampaignKey = nextInspectionCampaignKey;
     setStatus(
       $("#campaign-status"),
-      campaign ? `${locale === "ru" ? "кампания" : "campaign"}: ${campaign.title} · ${locale === "ru" ? "ход" : "turn"} ${campaign.turn} · ${campaign.status}` : t("campaignNone"),
+      campaign ? `${t("campaignNoun")}: ${campaign.title} · ${t("turnNoun")} ${campaign.turn} · ${campaign.status}` : t("campaignNone"),
       campaign?.status === "active" ? "ok" : campaign ? "warn" : "",
     );
     $("#game-summary").textContent = campaign
-      ? `${campaign.title} — ${locale === "ru" ? "ход" : "turn"} ${campaign.turn}, ${campaign.timeLabel}, ${locale === "ru" ? "статус" : "status"}: ${campaign.status}${status.game.pending ? ` · ${t("pendingAvailable")}` : ""}`
+      ? `${campaign.title} — ${t("turnNoun")} ${campaign.turn}, ${campaign.timeLabel}, ${t("statusNoun")}: ${campaign.status}${status.game.pending ? ` · ${t("pendingAvailable")}` : ""}`
       : t("noCampaign");
     const gameBusy = Boolean(status.game.busy);
     const hasGame = Boolean(status.game.exists);
     const canPlay = hasGame && campaign?.status === "active" && !status.game.pending && !gameBusy;
-    const hasPendingAction = status.game.pending?.kind === "action";
+    actionAvailable = canPlay;
+    const hasPendingRequest = status.game.pending?.kind === "action" || status.game.pending?.kind === "appeal";
     $("#action").disabled = !canPlay;
     $("#play").disabled = !canPlay;
-    $("#retry").disabled = !hasPendingAction || gameBusy;
-    $("#discard").disabled = !hasPendingAction || gameBusy;
-    $("#pending-help").classList.toggle("hidden", !hasPendingAction);
+    $("#retry").disabled = !hasPendingRequest || gameBusy;
+    $("#discard").disabled = !hasPendingRequest || gameBusy;
+    $("#pending-help").classList.toggle("hidden", !hasPendingRequest);
     $("#archive").disabled = !hasGame || gameBusy;
     $$("#inspect-buttons button").forEach((button) => { button.disabled = !hasGame || gameBusy; });
+    updateAppealAvailability();
     $("#archive-on-confirm").disabled = !hasGame;
     if (!hasGame) $("#archive-on-confirm").checked = false;
+    if (shouldRefreshInspection && hasGame) {
+      await loadInspection(activeInspectionView, { record: false, showLoading: false });
+    }
     const task = status.evaluationTask;
     const taskFailed = task && (task.status === "failed" || task.status === "completed_with_failures");
-    setStatus($("#task-status"), task ? `${locale === "ru" ? "автопрогон" : "evaluation"}: ${task.status} · ${task.runId}` : t("evaluationIdle"), task?.status === "running" ? "warn" : taskFailed ? "bad" : task ? "ok" : "");
+    setStatus($("#task-status"), task ? `${t("evaluationNoun")}: ${task.status} · ${task.runId}` : t("evaluationIdle"), task?.status === "running" ? "warn" : taskFailed ? "bad" : task ? "ok" : "");
     if (task?.status === "running") {
       $("#start-evaluation").disabled = true;
       renderTask(task);
@@ -865,7 +1315,31 @@ async function saveProvider() {
 }
 
 async function loadWorld() {
-  $("#world-markdown").value = (await api("/api/config/world")).markdown;
+  const requestedLanguage = gameLanguage;
+  const body = await api(`/api/config/world?language=${encodeURIComponent(requestedLanguage)}`);
+  if (requestedLanguage !== gameLanguage || body.language !== requestedLanguage) return;
+  $("#world-markdown").value = body.markdown;
+  const sourceLabels = {
+    default: t("profileDefault"),
+    localized_override: t("profileLocalized"),
+    legacy_override: t("profileLegacy"),
+  };
+  $("#world-profile-meta").textContent = `${body.language} · ${sourceLabels[body.source] || body.source}`;
+}
+
+async function loadPromptPreview() {
+  const phase = $("#prompt-phase").value;
+  const requestedLanguage = gameLanguage;
+  const body = await api(`/api/config/prompts?phase=${encodeURIComponent(phase)}&language=${encodeURIComponent(requestedLanguage)}`);
+  if (requestedLanguage !== gameLanguage || phase !== $("#prompt-phase").value) return;
+  const output = [
+    `PROMPT SUITE V${body.version} · ${body.phase}`,
+    `SECTIONS: ${body.sections.join(", ") || "none"}`,
+    ...(body.system ? [`\n=== SYSTEM ===\n${body.system}`] : []),
+    ...(body.prompt ? [`\n=== TASK ===\n${body.prompt}`] : []),
+  ];
+  $("#prompt-preview").textContent = output.join("\n");
+  $("#prompt-preview").dataset.loaded = "true";
 }
 
 async function generateCampaign() {
@@ -892,8 +1366,7 @@ async function confirmCampaign() {
     method: "POST",
     body: JSON.stringify({ draftId: currentDraft.draftId, archiveCurrent: $("#archive-on-confirm").checked }),
   });
-  await switchTerminalCampaign(body.state);
-  print(`CAMPAIGN BEGINS — ${body.state.title}`, body.openingNarration, "success", "game");
+  await switchTerminalCampaign(body.state, { openingNarration: body.openingNarration });
   currentDraft = null;
   $("#draft-controls").classList.add("hidden");
   showPanel("game");
@@ -902,31 +1375,29 @@ async function confirmCampaign() {
 async function play() {
   const action = $("#action").value.trim();
   if (!action) throw new Error("Enter an action first");
+  actionAvailable = false;
+  $("#action").disabled = true;
+  $("#play").disabled = true;
+  updateAppealAvailability();
   recordCommand(`> ${action}`);
   print(t("you"), action, "normal", "game");
   $("#action").value = "";
   const result = await api("/api/game/play", { method: "POST", body: JSON.stringify({ action }) });
-  if (result.checkText) print(t("check"), result.checkText, "normal", "game");
-  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success", "game");
-  if (result.state.status !== "active") print(t("campaignEnded"), `${locale === "ru" ? "Статус" : "Status"}: ${result.state.status}`, "error", "game");
+  printCommittedResponse(result);
+  await refreshInspectionAfterCommit(result.state);
+  if (result.state.status !== "active") print(t("campaignEnded"), `${t("statusHeading")}: ${result.state.status}`, "error", "game");
 }
 
 async function retry() {
   recordCommand(":retry");
   const result = await api("/api/game/retry", { method: "POST", body: "{}" });
-  if (result.checkText) print(t("check"), result.checkText, "normal", "game");
-  print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${result.turn}`, result.narration, "success", "game");
-}
-
-async function inspect(view) {
-  recordCommand(`:${view}`);
-  const body = await api(`/api/game/inspect?view=${encodeURIComponent(view)}`);
-  print(view.toUpperCase(), body.text, "normal", "game");
+  printCommittedResponse(result);
+  await refreshInspectionAfterCommit(result.state);
 }
 
 function runPayload() {
   const playerProfiles = selectedProfileIds();
-  if (!playerProfiles.length) throw new Error(locale === "ru" ? "Выберите хотя бы один профиль игрока" : "Select at least one player profile");
+  if (!playerProfiles.length) throw new Error(t("selectPlayerProfileError"));
   return {
     sessions: Number($("#sessions").value),
     turns: Number($("#turns").value),
@@ -957,16 +1428,16 @@ function syncProfilePool(changedInput) {
   const selected = selectedProfileIds();
   const labels = selected.map((id) => $(`#profile-pool input[value="${id}"]`)?.closest("label")?.querySelector("b")?.textContent ?? id);
   const selectionField = $("#profile-selection-summary");
-  selectionField.textContent = labels.length ? labels.join(", ") : (locale === "ru" ? "Выберите профили…" : "Select profiles…");
+  selectionField.textContent = labels.length ? labels.join(", ") : t("selectProfiles");
   selectionField.title = labels.join(" → ");
   selectionField.classList.toggle("error", selected.length === 0);
   const order = $("#profile-order");
   order.classList.toggle("error", selected.length === 0);
   order.textContent = selected.length === 0
-    ? (locale === "ru" ? "Выберите хотя бы один профиль." : "Select at least one profile.")
+    ? t("selectProfileError")
     : selected.length === 1
-      ? `${locale === "ru" ? "Каждая сессия" : "Every session"}: ${labels[0]}`
-      : `${locale === "ru" ? "Порядок ротации" : "Rotation order"}: ${labels.join(" → ")}`;
+      ? `${t("everySession")}: ${labels[0]}`
+      : `${t("rotationOrder")}: ${labels.join(" → ")}`;
   $("#start-evaluation").disabled = status?.evaluationTask?.status === "running" || selected.length === 0;
 }
 
@@ -1036,25 +1507,25 @@ async function artifact(kind) {
   if (kind === "transcript" && body.presentation) {
     const transcript = body.presentation;
     print(
-      `${locale === "ru" ? "АВТОПРОГОН" : "AUTO-RUN"} — ${sessionId}`,
-      `${locale === "ru" ? "Профиль" : "Profile"}: ${transcript.profile}`,
+      `${t("autoRunHeading")} — ${sessionId}`,
+      `${t("profileHeading")}: ${transcript.profile}`,
       "normal",
       "evaluations",
     );
     if (transcript.opening) {
-      print(`${t("dm")} — ${locale === "ru" ? "НАЧАЛО" : "OPENING"}`, transcript.opening, "success", "evaluations");
+      print(`${t("dm")} — ${t("openingHeading")}`, transcript.opening, "success", "evaluations");
     }
     for (const turn of transcript.turns) {
       const approach = String(turn.approach || "").replaceAll("_", " ").toUpperCase();
       print(`${t("you")}${approach ? ` — ${approach}` : ""}`, turn.action, "normal", "evaluations");
       if (turn.checkText) print(t("check"), turn.checkText, "normal", "evaluations");
       if (turn.narration) {
-        print(`${t("dm")} — ${locale === "ru" ? "ХОД" : "TURN"} ${turn.turn}`, turn.narration, "success", "evaluations");
+        print(`${t("dm")} — ${t("turnHeading")} ${turn.turn}`, turn.narration, "success", "evaluations");
       }
       if (turn.status === "failed") {
         print(
-          `${locale === "ru" ? "СБОЙ ХОДА" : "TURN FAILED"} ${turn.turn}`,
-          turn.error || (locale === "ru" ? "Неизвестная техническая ошибка" : "Unknown technical failure"),
+          `${t("turnFailedHeading")} ${turn.turn}`,
+          turn.error || t("unknownTechnicalFailure"),
           "error",
           "evaluations",
         );
@@ -1065,8 +1536,7 @@ async function artifact(kind) {
   print(`${kind.toUpperCase()} — ${run.runId}${sessionId ? ` / ${sessionId}` : ""}`, body.text, "normal", "evaluations");
 }
 
-$("#language-select").addEventListener("change", () => work(locale === "ru" ? "Меняю язык…" : "Changing language…", async () => {
-  const outputChannel = currentTerminalChannel();
+$("#language-select").addEventListener("change", () => work(t("changingLanguage"), async () => {
   const language = $("#language-select").value;
   recordCommand(`llm-dungeon language ${language}`);
   await api("/api/config/language", {
@@ -1074,8 +1544,9 @@ $("#language-select").addEventListener("change", () => work(locale === "ru" ? "�
     body: JSON.stringify({ language, applyToCurrent: true }),
   });
   applyUiLanguage(language);
-  print(t("changed"), t("changedBody"), "success", outputChannel);
-}));
+  if (currentTerminalChannel() === "world") await loadWorld();
+  print(t("changed"), t("changedBody"), "success", "world");
+}, "world"));
 panelTabs().forEach((button) => {
   button.addEventListener("click", () => showPanel(button.dataset.panel));
   button.addEventListener("keydown", handleTabKeydown);
@@ -1094,13 +1565,12 @@ $("#test-provider").addEventListener("click", () => work("Testing provider…", 
     const body = await api("/api/config/provider/test", { method: "POST", body: JSON.stringify(payload) });
     providerCompatibility = { status: "ok", provider: body.provider, model: body.model, ...body.structuredOutput };
     renderProviderCompatibility();
-    const mode = locale === "ru"
-      ? "схема создания кампании + точная Gameplay Contract V1 с машинными кодами + локальная проверка домена"
-      : "campaign setup + exact Gameplay Contract V1 machine-code schema + local domain validation";
-    const safety = locale === "ru"
-      ? "неограниченный резервный режим намеренно отключён (ошибка вместо ослабления схемы)"
-      : "unrestricted fallback intentionally disabled (fail closed)";
-    print(t("connectionSchemaOk"), `${body.provider}/${body.model}\nEnforcement: ${mode}\nSafety: ${safety}`, "success", "provider");
+    print(
+      t("connectionSchemaOk"),
+      `${body.provider}/${body.model}\n${t("connectionEnforcementLabel")}: ${t("connectionEnforcementMode")}\n${t("connectionSafetyLabel")}: ${t("connectionSafetyMode")}`,
+      "success",
+      "provider",
+    );
   } catch (caught) {
     providerCompatibility = { status: "failed", error: caught instanceof Error ? caught.message : String(caught) };
     renderProviderCompatibility();
@@ -1113,11 +1583,14 @@ $("#provider").addEventListener("change", () => {
 });
 $("#model").addEventListener("input", () => { invalidateProviderCompatibility(); renderModelGuidance(); });
 $("#endpoint").addEventListener("input", invalidateProviderCompatibility);
-$("#save-world").addEventListener("click", () => work("Saving world rules…", async () => {
-  recordCommand("world.save config/world.md");
-  await api("/api/config/world", { method: "PUT", body: JSON.stringify({ markdown: $("#world-markdown").value }) });
-  print("WORLD RULES SAVED", "Changes will apply to future campaigns.", "success", "world");
+$("#save-world").addEventListener("click", () => work("Saving world and style…", async () => {
+  const language = gameLanguage;
+  recordCommand(`world.set --language ${language}`);
+  await api("/api/config/world", { method: "PUT", body: JSON.stringify({ language, markdown: $("#world-markdown").value }) });
+  await loadWorld();
+  print("WORLD & STYLE SAVED", "Changes will apply to future campaigns.", "success", "world");
 }));
+$("#show-prompt").addEventListener("click", () => work("Loading prompt template…", loadPromptPreview));
 $("#generate-campaign").addEventListener("click", () => work("Generating campaign…", generateCampaign));
 $("#regenerate-campaign").addEventListener("click", () => work("Regenerating campaign…", generateCampaign));
 $("#confirm-campaign").addEventListener("click", () => work("Creating campaign…", confirmCampaign));
@@ -1128,17 +1601,24 @@ $("#discard").addEventListener("click", () => work("Discarding pending turn…",
   await api("/api/game/discard", { method: "POST", body: "{}" }); print("PENDING TURN", "Discarded without changing campaign state.", "success", "game");
 }));
 $("#archive").addEventListener("click", () => {
-  if (!confirm("Archive the current campaign? This cannot be undone or resumed.")) return;
+  if (!confirm(t("archiveConfirm"))) return;
   recordCommand("campaign.archive");
-  work("Archiving campaign…", async () => {
+  work(t("archivingCampaign"), async () => {
     await api("/api/game/archive", { method: "POST", body: "{}" });
     await switchTerminalCampaign(null);
-    print("CAMPAIGN ARCHIVED", "You can now create a new campaign.", "success", "game");
+    print(t("campaignArchived"), t("campaignArchivedBody"), "success", "game");
   });
 });
 $("#inspect-buttons").addEventListener("click", (event) => {
-  const view = event.target.dataset?.view;
-  if (view) work(`Loading ${view}…`, () => inspect(view));
+  const button = event.target instanceof Element ? event.target.closest("button[data-view]") : null;
+  if (button?.dataset.view) loadInspection(button.dataset.view);
+});
+$("#appeal-generic").addEventListener("click", () => prefillAppeal());
+terminal.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-appeal-turn]") : null;
+  if (!button || button.disabled) return;
+  const turn = Number(button.dataset.appealTurn);
+  if (Number.isSafeInteger(turn) && turn > 0) prefillAppeal(turn);
 });
 $("#action").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); work("The dungeon master considers the world…", play); }

@@ -124,7 +124,7 @@ export class EvaluationCli {
 
   async run(options: EvaluateOptions): Promise<void> {
     const config = await this.config(options);
-    const worldRules = await readFile(this.project.paths.worldConfig, "utf8");
+    const worldRules = (await this.project.worldProfile(config.language)).markdown;
     p.intro("Self-play evaluation");
     p.log.info(`${config.sessions} sessions × up to ${config.turns} turns; ${config.concurrency ?? 3} parallel workers; hard cost ceiling $${config.maxCostUsd.toFixed(2)}`);
     const renderer = new EvaluationProgressRenderer();

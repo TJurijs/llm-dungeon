@@ -164,6 +164,60 @@ async function json(base: string, route: string, method = "GET", body?: unknown)
 }
 
 describe("web-cli server", () => {
+  it("publishes registry-driven language metadata for future presentation clients", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root);
+
+    const status = await json(base, "/api/status");
+    expect(status.languages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "en",
+        name: "English",
+        setupDefaults: expect.objectContaining({ premise: expect.any(String), characterConcept: expect.any(String) }),
+      }),
+      expect.objectContaining({
+        code: "ru",
+        name: "Русский",
+        setupDefaults: expect.objectContaining({ premise: expect.stringMatching(/[А-Яа-яЁё]/) }),
+      }),
+    ]));
+  });
+
+  it("stores language-specific world guidance without rewriting the legacy profile", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root);
+    const legacyPath = path.join(root, "config", "world.md");
+    const legacy = await readFile(legacyPath, "utf8");
+
+    await json(base, "/api/config/world", "PUT", {
+      language: "ru",
+      markdown: "# Русский стиль\n",
+    });
+
+    expect(await readFile(path.join(root, "config", "worlds", "ru.md"), "utf8")).toBe("# Русский стиль\n");
+    expect(await readFile(legacyPath, "utf8")).toBe(legacy);
+    expect(await json(base, "/api/config/world?language=ru")).toMatchObject({
+      language: "ru",
+      markdown: "# Русский стиль\n",
+      source: "localized_override",
+    });
+    expect((await json(base, "/api/config/world?language=en")).markdown).toBe(legacy);
+  });
+
+  it("exposes static prompt templates without live campaign context or hidden state", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, { GEMINI_API_KEY: "test-key" });
+    const draft = await json(base, "/api/campaign/draft", "POST", { premise: "A tavern.", character: "A scout." });
+    await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
+
+    const preview = await json(base, "/api/config/prompts?phase=adjudication&language=en");
+    expect(preview).toMatchObject({ phase: "adjudication", version: 1, containsLiveCampaignData: false });
+    expect(preview.sections).toContain("check-difficulty");
+    expect(preview.prompt).toContain("AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime");
+    expect(JSON.stringify(preview)).not.toContain("Mara suspects the watch captain takes bribes.");
+    expect(JSON.stringify(preview)).not.toContain("Schema enforcement verified.");
+  });
+
   it("persists language selection and applies it to new and current campaigns", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root, { GEMINI_API_KEY: "test-key" });
@@ -392,7 +446,54 @@ describe("web-cli server", () => {
     expect(JSON.stringify(status)).not.toContain(privateAction);
   });
 
-  it("returns only player-visible turn and journal fields", async () => {
+  it("reports pending appeal metadata without exposing its claim", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, { GEMINI_API_KEY: "test-key" });
+    const draft = await json(base, "/api/campaign/draft", "POST", { premise: "A tavern.", character: "A scout." });
+    await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
+    const privateClaim = "The private appeal explanation must not appear in status.";
+    await writeFile(path.join(root, "data", "current", "pending-turn.json"), JSON.stringify({
+      kind: "appeal",
+      claim: privateClaim,
+      targetTurn: 1,
+      phase: "requested",
+    }), "utf8");
+
+    const status = await json(base, "/api/status");
+    expect(status.game.pending).toEqual({ kind: "appeal", phase: "requested", targetTurn: 1 });
+    expect(JSON.stringify(status)).not.toContain(privateClaim);
+  });
+
+  it("routes explicit appeal syntax through an administrative commit", async () => {
+    const root = await fixtureRoot();
+    const requests: string[] = [];
+    const server = createDungeonWebServer({
+      root,
+      environment: { GEMINI_API_KEY: "test-key" },
+      providerFactory: (config) => new WebFakeProvider(config.model, (request) => requests.push(request.schemaName)),
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const draft = await json(base, "/api/campaign/draft", "POST", { premise: "A tavern.", character: "A scout." });
+    await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
+    await json(base, "/api/game/play", "POST", { action: "I greet Mara." });
+
+    const appeal = await json(base, "/api/game/play", "POST", {
+      action: ":appeal --turn 1 The greeting changed no state; please verify that is correct.",
+    });
+    expect(appeal).toMatchObject({ kind: "appeal", appealTargetTurn: 1, turn: 2, checkText: null });
+    expect(requests.at(-1)).toBe("appeal_resolution_v1");
+    const transcript = await json(base, "/api/game/transcript");
+    expect(transcript.turns.at(-1)).toMatchObject({
+      kind: "appeal",
+      appealTargetTurn: 1,
+      action: ":appeal --turn 1 The greeting changed no state; please verify that is correct.",
+    });
+  });
+
+  it("returns only player-visible turn, transcript, and structured inspection fields", async () => {
     const root = await fixtureRoot();
     const server = createDungeonWebServer({
       root,
@@ -410,21 +511,36 @@ describe("web-cli server", () => {
     await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
 
     const turn = await json(base, "/api/game/play", "POST", { action: "I investigate Mara's story." });
+    expect(turn.kind).toBe("gameplay");
     expect(turn.checkText).toContain("Investigation: d100 =");
     expect(turn).not.toHaveProperty("check");
     expect(turn).not.toHaveProperty("operations");
     expect(JSON.stringify(turn)).not.toContain(PRIVATE_CHECK_STAKE);
     expect(JSON.stringify(turn)).not.toContain(PRIVATE_OPERATION_FACT);
 
-    const journal = await json(base, "/api/game/inspect?view=journal");
-    expect(journal.text).toContain("Mara gives you a guarded but useful answer.");
-    expect(journal.text).not.toContain(PRIVATE_CHECK_STAKE);
-    expect(journal.text).not.toContain(PRIVATE_OPERATION_FACT);
-    expect(journal.text).not.toContain("State Operations");
+    const character = await json(base, "/api/game/inspect?view=character");
+    expect(character.inspection).toMatchObject({ view: "character", name: "Arlen Vale" });
+    expect(JSON.stringify(character)).not.toContain(PRIVATE_CHECK_STAKE);
+    expect(JSON.stringify(character)).not.toContain(PRIVATE_OPERATION_FACT);
+    expect(JSON.stringify(character)).not.toContain("State Operations");
+    expect(JSON.stringify(character)).not.toContain("player:hero");
+
+    const location = await json(base, "/api/game/inspect?view=location");
+    expect(location.inspection).toMatchObject({ view: "location", name: "The Crooked Crown" });
+    expect(location.inspection).not.toHaveProperty("present");
+    expect(location.inspection).not.toHaveProperty("inventory");
+    expect(JSON.stringify(location)).not.toContain("Mara Venn");
+
+    for (const removed of ["inventory", "journal"]) {
+      const response = await fetch(`${base}/api/game/inspect?view=${removed}`);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "Invalid inspection view" });
+    }
 
     const transcript = await json(base, "/api/game/transcript");
     expect(transcript.turns.at(-1)).toMatchObject({
       turn: 1,
+      kind: "gameplay",
       action: "I investigate Mara's story.",
       narration: "Mara gives you a guarded but useful answer.",
       checkText: expect.stringContaining("Investigation: d100 ="),
@@ -446,7 +562,10 @@ describe("web-cli server", () => {
     const turn = await json(base, "/api/game/play", "POST", { action: "I greet the innkeeper." });
     expect(turn.turn).toBe(1);
     expect(turn.narration).toContain("old bridge");
-    expect((await json(base, "/api/game/inspect?view=journal")).text).toContain("I greet the innkeeper");
+    expect((await json(base, "/api/game/transcript")).turns.at(-1)).toMatchObject({
+      action: "I greet the innkeeper.",
+      kind: "gameplay",
+    });
 
     const started = await json(base, "/api/evaluations/start", "POST", {
       sessions: 1,

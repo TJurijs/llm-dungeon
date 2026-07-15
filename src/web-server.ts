@@ -20,6 +20,7 @@ import {
 } from "./evaluation.js";
 import { CheckResultSchema, formatCheck } from "./mechanics.js";
 import { LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
+import { inspectPrompt, PROMPT_PHASES } from "./prompt-inspection.js";
 import { createProvider, loadProviderConfig } from "./providers.js";
 import { ProviderConfigSchema, SetupResultSchema, TurnDecisionSchema, type ProviderConfig, type SetupResult } from "./schemas.js";
 import {
@@ -29,10 +30,13 @@ import {
   gameplayRequest,
 } from "./llm/gameplay-protocol.js";
 import { StateStore } from "./store.js";
-import { atomicWriteJson, atomicWriteText } from "./persistence/files.js";
+import { atomicWriteJson } from "./persistence/files.js";
 import { combineUsage } from "./llm/structured-generation.js";
+import { CONNECTION_GAMEPLAY_PROMPT, CONNECTION_SETUP_PROBE, CONNECTION_SYSTEM_PROMPT, connectionSetupPrompt } from "./prompts/connection.js";
 import type { PendingTurn } from "./persistence/pending.js";
 import type { LlmProvider, StateView, TurnResult } from "./types.js";
+import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
+import { parseAppealCommand } from "./appeal.js";
 
 type ProviderFactory = (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
 
@@ -92,7 +96,7 @@ const EvaluationTranscriptTurnSchema = z.object({
 });
 
 const SAFE_ARTIFACT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const STATE_VIEWS: StateView[] = ["character", "inventory", "location", "threads", "journal"];
+const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
 
 function asError(error: unknown): string {
   if (error instanceof z.ZodError) return error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ");
@@ -177,6 +181,13 @@ function rejectUnsafeMutation(request: IncomingMessage, response: ServerResponse
 function pendingStatus(pending: PendingTurn | undefined): unknown {
   if (!pending) return null;
   if (pending.kind === "commit") return { kind: "commit" };
+  if (pending.kind === "appeal") {
+    return {
+      kind: "appeal",
+      phase: pending.phase,
+      ...(pending.targetTurn === undefined ? {} : { targetTurn: pending.targetTurn }),
+    };
+  }
   return {
     kind: "action",
     phase: pending.phase,
@@ -200,6 +211,8 @@ function setupPreview(setup: SetupResult): unknown {
 function playerTurnResponse(result: TurnResult): unknown {
   return {
     turn: result.turn,
+    kind: result.kind,
+    ...(result.appealTargetTurn === undefined ? {} : { appealTargetTurn: result.appealTargetTurn }),
     narration: result.narration,
     summary: result.summary,
     state: result.state,
@@ -218,7 +231,6 @@ function configuredCost(
 
 export class DungeonWebController {
   readonly providerConfigPath: string;
-  readonly worldConfigPath: string;
   readonly dataRoot: string;
   readonly evaluationsRoot: string;
   readonly webRoot: string;
@@ -235,7 +247,6 @@ export class DungeonWebController {
 
   constructor(readonly root: string, options: Omit<WebServerOptions, "root"> = {}) {
     this.providerConfigPath = path.join(root, "config", "provider.json");
-    this.worldConfigPath = path.join(root, "config", "world.md");
     this.dataRoot = path.join(root, "data");
     this.evaluationsRoot = path.join(root, "evaluations");
     this.webRoot = path.join(root, "web");
@@ -424,7 +435,11 @@ export class DungeonWebController {
       }
       sendJson(response, 200, {
         language: (await loadAppConfig(this.root)).language,
-        languages: Object.entries(LANGUAGES).map(([code, value]) => ({ code, name: value.nativeName })),
+        languages: Object.entries(LANGUAGES).map(([code, value]) => ({
+          code,
+          name: value.nativeName,
+          setupDefaults: value.setupDefaults,
+        })),
         config: config ?? null,
         keyStatus: this.keyStatus(),
         game: { exists: hasGame, busy: this.gameBusy, campaign: campaign ?? null, pending: pending ?? null },
@@ -507,47 +522,11 @@ export class DungeonWebController {
         environment[keyName] = body.apiKey;
       }
       const provider = this.providerFactory(config, environment);
-      const setupProbe: SetupResult = {
-        campaignTitle: "Schema Probe",
-        scenarioMarkdown: "Schema enforcement verified.",
-        openingNarration: "You stand in a quiet room, ready to act.",
-        timeLabel: "Noon",
-        player: {
-          id: "player:hero",
-          kind: "person",
-          name: "Probe Hero",
-          status: "active",
-          location: "location:probe-room",
-          tags: [],
-          description: "A test adventurer.",
-          establishedFacts: [],
-          secrets: [],
-          playerKnowledge: [],
-          traits: [],
-          conditions: [],
-          inventory: [],
-        },
-        entities: [{
-          id: "location:probe-room",
-          kind: "location",
-          name: "Probe Room",
-          status: "active",
-          tags: [],
-          description: "A test location.",
-          establishedFacts: [],
-          secrets: [],
-          playerKnowledge: [],
-          traits: [],
-          conditions: [],
-          inventory: [],
-        }],
-        threads: [],
-      };
       const setupResult = await provider.generateStructured({
         schemaName: "connection_campaign_setup",
         schema: SetupResultSchema,
-        system: "Return the requested structured response exactly. This is a provider compatibility test; do not add commentary.",
-        prompt: `Return exactly this campaign setup object: ${JSON.stringify(setupProbe)}`,
+        system: CONNECTION_SYSTEM_PROMPT,
+        prompt: connectionSetupPrompt(CONNECTION_SETUP_PROBE),
         temperature: 0,
         maxOutputTokens: 2000,
       });
@@ -555,8 +534,8 @@ export class DungeonWebController {
         schemaName: GAMEPLAY_SCHEMA_NAMES.connectionProbe,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured response exactly. This is a provider compatibility test; do not add commentary.",
-        prompt: `Return decision=resolved, narration and summary set to "Schema enforcement verified.", effects=[], modifiers=[], every other string empty, difficulty=0, and failureCampaignStatus=none. Include every schema field exactly once and never use null.`,
+        system: CONNECTION_SYSTEM_PROMPT,
+        prompt: CONNECTION_GAMEPLAY_PROMPT,
         temperature: 0,
         maxOutputTokens: 2000,
       }));
@@ -582,14 +561,29 @@ export class DungeonWebController {
     }
 
     if (url.pathname === "/api/config/world" && method === "GET") {
-      sendJson(response, 200, { markdown: await readFile(this.worldConfigPath, "utf8") });
+      const configured = (await loadAppConfig(this.root)).language;
+      const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
+      const profile = await resolveWorldProfile(this.root, language);
+      sendJson(response, 200, { language, markdown: profile.markdown, source: profile.source });
       return;
     }
 
     if (url.pathname === "/api/config/world" && method === "PUT") {
-      const body = z.object({ markdown: z.string().min(1).max(500_000) }).parse(await readJsonBody(request));
-      await atomicWriteText(this.worldConfigPath, body.markdown);
-      sendJson(response, 200, { saved: true });
+      const body = z.object({
+        language: LanguageCodeSchema.optional(),
+        markdown: z.string().min(1).max(500_000),
+      }).parse(await readJsonBody(request));
+      const language = body.language ?? (await loadAppConfig(this.root)).language;
+      await saveWorldProfile(this.root, language, body.markdown);
+      sendJson(response, 200, { saved: true, language, source: "localized_override" });
+      return;
+    }
+
+    if (url.pathname === "/api/config/prompts" && method === "GET") {
+      const phase = z.enum(PROMPT_PHASES).parse(url.searchParams.get("phase") ?? "dm-system");
+      const configured = (await loadAppConfig(this.root)).language;
+      const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
+      sendJson(response, 200, inspectPrompt(phase, language));
       return;
     }
 
@@ -597,7 +591,7 @@ export class DungeonWebController {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
       const language = (await loadAppConfig(this.root)).language;
       const draft = await this.withGameLock(async () => {
-        const worldRules = await readFile(this.worldConfigPath, "utf8");
+        const worldRules = (await resolveWorldProfile(this.root, language)).markdown;
         const engine = await this.engine();
         const setup = await engine.generateSetup({ ...body, language, worldRules });
         return { setup, language, worldRules };
@@ -631,7 +625,9 @@ export class DungeonWebController {
       const body = z.object({ action: z.string().trim().min(1).max(10_000) }).parse(await readJsonBody(request));
       const result = await this.withGameLock(async () => {
         await this.currentStore();
-        return (await this.engine()).play(body.action);
+        const engine = await this.engine();
+        const appeal = parseAppealCommand(body.action);
+        return appeal ? engine.appeal(appeal) : engine.play(body.action);
       });
       sendJson(response, 200, playerTurnResponse(result));
       return;
@@ -667,11 +663,11 @@ export class DungeonWebController {
     if (url.pathname === "/api/game/inspect" && method === "GET") {
       const view = url.searchParams.get("view") as StateView | null;
       if (!view || !STATE_VIEWS.includes(view)) throw new Error("Invalid inspection view");
-      const text = await this.withGameLock(async () => {
+      const inspection = await this.withGameLock(async () => {
         await this.currentStore();
         return (await this.engine()).inspect(view);
       });
-      sendJson(response, 200, { view, text });
+      sendJson(response, 200, { inspection });
       return;
     }
 
@@ -695,7 +691,7 @@ export class DungeonWebController {
       const environment = this.effectiveEnvironment();
       const dm = this.providerFactory(config.dm.config, environment);
       const player = this.providerFactory(config.player.config, environment);
-      const worldRules = await readFile(this.worldConfigPath, "utf8");
+      const worldRules = (await resolveWorldProfile(this.root, config.language)).markdown;
       const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
       const task: BackgroundTask = { id: randomUUID(), kind: "evaluation", runId, status: "running", startedAt: new Date().toISOString(), logs: [], sessionProgress: {} };
       this.launchTask(task, async (progress) => {

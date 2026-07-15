@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { CheckSpecSchema, type CheckSpec } from "./schemas.js";
-import type { LanguageCode } from "./language.js";
+import { DEFAULT_LANGUAGE, languageDefinition, type LanguageCode } from "./language.js";
 
 export type RollD100 = () => number;
 
@@ -57,21 +57,17 @@ export const CheckResultSchema: z.ZodType<CheckResult> = z.object({
   }
 });
 
-export function formatCheck(result: CheckResult, language: LanguageCode = "en"): string {
+export function formatCheck(result: CheckResult, language: LanguageCode = DEFAULT_LANGUAGE): string {
+  const copy = languageDefinition(language).mechanics;
   const modifierLines = result.spec.modifiers.length
     ? result.spec.modifiers
         .map((modifier) => `  ${modifier.value >= 0 ? "+" : ""}${modifier.value} ${modifier.label}`)
         .join("\n")
-    : language === "ru" ? "  Нет модификаторов" : "  No modifiers";
-  const outcomes: Record<CheckResult["outcome"], string> = language === "ru"
-    ? { exceptional_success: "ИСКЛЮЧИТЕЛЬНЫЙ УСПЕХ", success: "УСПЕХ", failure: "НЕУДАЧА", severe_failure: "ТЯЖЁЛАЯ НЕУДАЧА" }
-    : { exceptional_success: "EXCEPTIONAL SUCCESS", success: "SUCCESS", failure: "FAILURE", severe_failure: "SEVERE FAILURE" };
-  const label = outcomes[result.outcome];
+    : `  ${copy.noModifiers}`;
+  const label = copy.outcomes[result.outcome];
   return [
     `${result.spec.name}: d100 = ${result.roll}`,
     modifierLines,
-    language === "ru"
-      ? `Итого ${result.total}, сложность ${result.spec.difficulty} — ${label}`
-      : `Total ${result.total} vs difficulty ${result.spec.difficulty} — ${label}`,
+    `${copy.total} ${result.total}${copy.comparisonConnector}${copy.difficulty} ${result.spec.difficulty} — ${label}`,
   ].join("\n");
 }

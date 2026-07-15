@@ -17,7 +17,9 @@ export const GAMEPLAY_PROTOCOL_VERSION = 1 as const;
 export const GAMEPLAY_SCHEMA_NAMES = {
   decision: "turn_decision_v1",
   resolution: "turn_resolution_v1",
+  appealResolution: "appeal_resolution_v1",
   domainCorrection: "domain_repair_turn_resolution_v1",
+  appealDomainCorrection: "domain_repair_appeal_resolution_v1",
   connectionProbe: "connection_gameplay_contract_v1",
 } as const;
 
@@ -108,6 +110,11 @@ export const WireTurnSchema = z.object({
   failureCampaignStatus: z.enum(["none", "dead", "ended"]),
 }).strict();
 
+/** Provider-facing subset for phases where the application already owns the outcome. */
+export const WireResolvedTurnSchema = WireTurnSchema.extend({
+  decision: z.literal("resolved"),
+}).strict();
+
 export type WireTurn = z.infer<typeof WireTurnSchema>;
 type WireEffect = z.infer<typeof WireEffectSchema>;
 
@@ -146,7 +153,10 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
           lifecycleCode: { type: "integer", minimum: 0, maximum: 4 },
           name: { type: "string" },
           status: { type: "string" },
-          text: { type: "string" },
+          text: {
+            type: "string",
+            description: "Effect-dependent text. It must be nonempty whenever the selected effect uses text; for advance_time it is the required new end-of-turn time label.",
+          },
           quantity: { type: "integer" },
           tags: { type: "array", items: { type: "string" } },
           references: { type: "array", items: { type: "string" } },
@@ -177,6 +187,14 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+export const RESOLVED_GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
+  ...GAMEPLAY_WIRE_JSON_SCHEMA,
+  properties: {
+    ...(GAMEPLAY_WIRE_JSON_SCHEMA.properties as Record<string, unknown>),
+    decision: { type: "string", enum: ["resolved"] },
+  },
+};
+
 export function gameplayRequest<T>(
   request: Omit<StructuredRequest<T>, "wireSchema" | "jsonSchema" | "protocolVersion">,
 ): StructuredRequest<T> {
@@ -184,6 +202,17 @@ export function gameplayRequest<T>(
     ...request,
     wireSchema: WireTurnSchema,
     jsonSchema: GAMEPLAY_WIRE_JSON_SCHEMA,
+    protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+  };
+}
+
+export function resolvedGameplayRequest<T>(
+  request: Omit<StructuredRequest<T>, "wireSchema" | "jsonSchema" | "protocolVersion">,
+): StructuredRequest<T> {
+  return {
+    ...request,
+    wireSchema: WireResolvedTurnSchema,
+    jsonSchema: RESOLVED_GAMEPLAY_WIRE_JSON_SCHEMA,
     protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
   };
 }

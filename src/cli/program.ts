@@ -1,7 +1,10 @@
 import * as p from "@clack/prompts";
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { APPLICATION_VERSION } from "../version.js";
 import { LANGUAGES, LanguageCodeSchema } from "../language.js";
+import { inspectPrompt, PROMPT_PHASES, type PromptPhase } from "../prompt-inspection.js";
 import { terminalBanner, terminalHeading, terminalStyle } from "../terminal-style.js";
 import {
   EvaluationCli,
@@ -51,6 +54,58 @@ export function createCliProgram(project: CliProjectContext): Command {
       const language = LanguageCodeSchema.parse(value.toLowerCase());
       await project.setLanguage(language);
       p.log.success(`Language set to ${language}. New narration will use it from the next turn.`);
+    });
+
+  const world = program
+    .command("world")
+    .description("Inspect or edit language-specific world and DM-style guidance")
+    .helpGroup("Configuration");
+
+  world
+    .command("show")
+    .description("Print the selected language's world and style profile")
+    .action(async () => {
+      const profile = await project.worldProfile();
+      console.log(`${terminalHeading("World and DM style", profile.source)}\n\n${profile.markdown}`);
+    });
+
+  world
+    .command("set <file>")
+    .description("Replace the selected language's world and style profile from a Markdown file")
+    .action(async (file: string) => {
+      const source = path.resolve(project.paths.root, file);
+      const markdown = await readFile(source, "utf8");
+      if (!markdown.trim()) throw new Error("World and style guidance cannot be empty");
+      const target = await project.saveWorldProfile(markdown);
+      p.log.success(`Saved ${path.relative(project.paths.root, target)}. It will apply to future campaigns.`);
+    });
+
+  const prompts = program
+    .command("prompts")
+    .description("Inspect the current prompt suite without exposing live campaign secrets")
+    .helpGroup("Configuration");
+
+  prompts
+    .command("list")
+    .description("List inspectable prompt phases")
+    .action(() => console.log(PROMPT_PHASES.join("\n")));
+
+  prompts
+    .command("show <phase>")
+    .description("Render a static prompt preview with safe placeholders")
+    .option("--language <code>", `preview language (${Object.keys(LANGUAGES).join(", ")})`)
+    .action(async (phaseValue: string, options: { language?: string }) => {
+      if (!PROMPT_PHASES.includes(phaseValue as PromptPhase)) {
+        throw new Error(`Unknown prompt phase. Use one of: ${PROMPT_PHASES.join(", ")}`);
+      }
+      const language = options.language
+        ? LanguageCodeSchema.parse(options.language.toLowerCase())
+        : await project.language();
+      const preview = inspectPrompt(phaseValue as PromptPhase, language);
+      console.log(terminalBanner(`Prompt suite V${preview.version}`));
+      console.log(`${terminalHeading("Phase", preview.phase)}\nSections: ${preview.sections.join(", ") || "none"}`);
+      if (preview.system) console.log(`\n${terminalHeading("System prompt")}\n\n${preview.system}`);
+      if (preview.prompt) console.log(`\n${terminalHeading("Task prompt")}\n\n${preview.prompt}`);
     });
 
   program

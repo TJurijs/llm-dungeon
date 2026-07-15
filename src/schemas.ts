@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LanguageCodeSchema } from "./language.js";
+import { DEFAULT_LANGUAGE, LanguageCodeSchema } from "./language.js";
 
 export const SafeIdSchema = z
   .string()
@@ -62,7 +62,9 @@ export const EntitySchema = z.object({
   location: SafeIdSchema.optional(),
   tags: z.array(z.string().min(1)).default([]),
   updatedTurn: z.number().int().nonnegative(),
-  description: z.string().default(""),
+  description: z.string()
+    .describe("Stable enduring appearance or nature only; never current placement, ownership, activity, mood, or temporary condition.")
+    .default(""),
   traits: z.array(z.string().min(1)).default([]),
   conditions: z.array(z.string().min(1)).default([]),
   inventory: z.array(InventoryEntrySchema).default([]),
@@ -94,7 +96,7 @@ export const ManifestSchema = z.object({
   currentLocationId: SafeIdSchema,
   elapsedMinutes: z.number().int().nonnegative(),
   timeLabel: z.string().min(1),
-  language: LanguageCodeSchema.default("en"),
+  language: LanguageCodeSchema.default(DEFAULT_LANGUAGE),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -290,7 +292,9 @@ const InitialEntitySchema = z.object({
   kind: EntityKindSchema,
   name: z.string().min(1),
   status: z.string().min(1).default("active"),
-  location: SafeIdSchema.optional(),
+  location: SafeIdSchema
+    .describe("Optional physical containment by a different included location ID. Never use the entity's own ID; omit it for a top-level location; location-parent chains must be acyclic.")
+    .optional(),
   tags: z.array(z.string().min(1)).default([]),
   description: z.string().default(""),
   establishedFacts: z.array(z.string().min(1)).default([]),

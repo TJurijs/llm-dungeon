@@ -8,4 +8,6 @@ evaluations/runs/
 work/
 config/app.json
 config/provider.json
+config/world.md
+config/worlds/
 *.log

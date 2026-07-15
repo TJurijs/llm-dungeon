@@ -295,8 +295,12 @@ function coalesceDuplicateLocationCreates(
   return StateOperationSchema.array().parse(retained.map((operation) => remapEntityReferences(operation, references)));
 }
 
-/** Inventory ownership outranks a model-supplied person ID in an item's location field. */
-function normalizeCarriedItemLocations(
+/**
+ * A newly created item's model-supplied location expresses its first owner.
+ * Inventory is authoritative for both carried and loose objects, so normalize
+ * that exact reference into ownership instead of retaining a parallel location.
+ */
+function normalizeCreatedItemOwnership(
   operations: StateOperation[],
   entities: Map<string, Entity>,
 ): StateOperation[] {
@@ -318,9 +322,8 @@ function normalizeCarriedItemLocations(
   return StateOperationSchema.array().parse(operations.flatMap((operation): StateOperation[] => {
     if (operation.type !== "create_entity" || operation.entity.kind !== "item" || !operation.entity.location) return [operation];
     const owners = inventoryOwners.get(operation.entity.id);
-    const suppliedDestinationKind = entityKinds.get(operation.entity.location);
-    if (!owners?.size && suppliedDestinationKind === "location") return [operation];
-    if (!owners?.size && suppliedDestinationKind === undefined) return [operation];
+    const suppliedOwnerKind = entityKinds.get(operation.entity.location);
+    if (suppliedOwnerKind === undefined) return [operation];
     const { location: _location, ...entity } = operation.entity;
     if (owners?.size) return [{ ...operation, entity }];
     return [
@@ -482,7 +485,7 @@ function assertNoRepeatedAbstractInventoryCredit(
     const fingerprint = `${operation.ownerId}\u0000${operation.itemId}\u0000${operation.quantityDelta}`;
     if (previousCredits.has(fingerprint)) {
       throw new Error(
-        `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} on the immediately preceding turn. `
+        `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} in the latest gameplay/appeal operation-ledger window. `
         + "If this turn only handles, pockets, counts, or stows that existing inventory, remove the operation. A genuinely new receipt must be represented by a distinct current-turn source, preferably transfer_item from its owner.",
       );
     }
@@ -500,7 +503,7 @@ function prepareOperations(
   const validated = StateOperationSchema.array().parse(operations);
   const nearMisses = normalizeNearMissCreatedEntityReferences(validated, entities);
   const coalesced = coalesceDuplicateLocationCreates(nearMisses, entities);
-  const physical = normalizeCarriedItemLocations(coalesced, entities);
+  const physical = normalizeCreatedItemOwnership(coalesced, entities);
   const referenced = normalizeReferences(
     assignGeneratedIds(physical, turn, entities, threads, chronicle),
     entities,

@@ -4,14 +4,16 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as p from "@clack/prompts";
 import type { DungeonEngine } from "../engine.js";
+import { parseAppealCommand } from "../appeal.js";
 import type { LanguageCode } from "../language.js";
 import { formatCheck } from "../mechanics.js";
-import { DEFAULT_CAMPAIGN_PREMISE, DEFAULT_CHARACTER_CONCEPT } from "../prompts.js";
+import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
 import { terminalBanner, terminalHeading, terminalPrompt, terminalRule, terminalStyle } from "../terminal-style.js";
 import type { StateView, TurnResult } from "../types.js";
 import type { CliProjectContext } from "./project-context.js";
 import { takePrompt } from "./prompt.js";
+import { inspectionTitle, renderInspection } from "./inspection.js";
 
 interface SetupSeeds {
   premise: string;
@@ -26,20 +28,20 @@ interface AcceptedSetupDraft {
 
 const INSPECTION_COMMANDS = new Map<string, StateView>([
   [":character", "character"],
-  [":inventory", "inventory"],
   [":location", "location"],
   [":threads", "threads"],
-  [":journal", "journal"],
 ]);
 
 const HELP = `Commands:
 
 Inspect
   :character  Show player-visible character state
-  :inventory  Show carried items
   :location   Show the current location and notable occupants
   :threads    Show active and completed story threads
-  :journal    Show the eight most recent turns
+
+Appeal
+  :appeal <explanation>             Ask the DM to review a state inconsistency
+  :appeal --turn N <explanation>    Review a specific committed turn
 
 Recovery
   :retry      Retry an uncommitted action (reusing a locked roll)
@@ -79,17 +81,18 @@ export class HumanGameCli {
     return readFile(path.resolve(this.project.paths.root, trimmed.slice(1)), "utf8");
   }
 
-  private async gatherSetupSeeds(): Promise<SetupSeeds> {
+  private async gatherSetupSeeds(language: LanguageCode): Promise<SetupSeeds> {
+    const defaults = campaignSetupDefaults(language);
     const premiseRaw = takePrompt(
       await p.text({
         message: "Premise / scenario (optional; text or @Markdown path)",
-        placeholder: `Default: ${DEFAULT_CAMPAIGN_PREMISE}`,
+        placeholder: `Default: ${defaults.premise}`,
       }),
     );
     const characterRaw = takePrompt(
       await p.text({
         message: "Character concept (optional; text or @Markdown path)",
-        placeholder: `Default: ${DEFAULT_CHARACTER_CONCEPT}`,
+        placeholder: `Default: ${defaults.characterConcept}`,
       }),
     );
     return {
@@ -110,9 +113,9 @@ export class HumanGameCli {
   }
 
   private async acceptedSetupDraft(engine: DungeonEngine): Promise<AcceptedSetupDraft> {
-    const worldRules = await readFile(this.project.paths.worldConfig, "utf8");
     const language = await this.project.language();
-    let seeds = await this.gatherSetupSeeds();
+    const worldRules = (await this.project.worldProfile(language)).markdown;
+    let seeds = await this.gatherSetupSeeds(language);
     for (;;) {
       const spin = p.spinner();
       spin.start("Creating the campaign...");
@@ -136,7 +139,7 @@ export class HumanGameCli {
         }),
       );
       if (choice === "accept") return { setup, worldRules, language };
-      if (choice === "edit") seeds = await this.gatherSetupSeeds();
+      if (choice === "edit") seeds = await this.gatherSetupSeeds(language);
     }
   }
 
@@ -151,6 +154,14 @@ export class HumanGameCli {
 
   private printTurn(result: TurnResult): void {
     console.log();
+    if (result.kind === "appeal") {
+      const target = result.appealTargetTurn === undefined ? "general" : `turn ${result.appealTargetTurn}`;
+      console.log(terminalHeading(`Appeal ${result.turn}`, target));
+      console.log();
+      console.log(result.narration.trim());
+      console.log(`\n${terminalRule()}\n`);
+      return;
+    }
     if (result.check) {
       console.log(`${terminalHeading("D100 check", result.check.spec.name)}\n${terminalStyle.blue(formatCheck(result.check, result.state.language))}\n`);
     }
@@ -171,9 +182,12 @@ export class HumanGameCli {
       p.log.success("Recovered an interrupted committed turn.");
       return true;
     }
+    const pendingDescription = pending.kind === "appeal"
+      ? `appeal${pending.targetTurn === undefined ? "" : ` for turn ${pending.targetTurn}`}`
+      : `action: “${pending.action}”`;
     const choice = takePrompt(
       await p.select({
-        message: `An uncommitted action was found: “${pending.action}”`,
+        message: `An uncommitted ${pendingDescription} was found.`,
         options: [
           { value: "retry", label: "Retry it", ...(pending.phase === "rolled" ? { hint: "reuses the locked roll" } : {}) },
           { value: "discard", label: "Discard it", hint: "no committed state will be changed" },
@@ -216,8 +230,8 @@ export class HumanGameCli {
         }
         const inspection = INSPECTION_COMMANDS.get(action);
         if (inspection) {
-          const heading = inspection[0]!.toUpperCase() + inspection.slice(1);
-          console.log(`\n${terminalHeading(heading)}\n\n${await engine.inspect(inspection)}\n`);
+          const state = await engine.inspect(inspection);
+          console.log(`\n${terminalHeading(inspectionTitle(state))}\n\n${renderInspection(state)}\n`);
           continue;
         }
         if (action === ":retry") {
@@ -235,8 +249,8 @@ export class HumanGameCli {
         }
         if (action === ":discard") {
           const pending = await engine.getPendingTurn();
-          if (pending?.kind !== "action") {
-            p.log.info("There is no uncommitted action to discard.");
+          if (!pending || pending.kind === "commit") {
+            p.log.info("There is no uncommitted action or appeal to discard.");
           } else {
             await engine.discardPendingTurn();
             p.log.success("Pending action discarded; world state was not changed.");
@@ -253,6 +267,29 @@ export class HumanGameCli {
           if (confirmed) await this.setupNewGame(engine, true);
           continue;
         }
+        let appeal: ReturnType<typeof parseAppealCommand>;
+        try {
+          appeal = parseAppealCommand(action);
+        } catch (error) {
+          p.log.error(error instanceof Error ? error.message : String(error));
+          continue;
+        }
+        if (appeal) {
+          const spin = p.spinner();
+          spin.start("The dungeon master reviews the committed record...");
+          try {
+            const result = await engine.appeal(appeal);
+            spin.stop("Appeal committed.");
+            this.printTurn(result);
+          } catch (error) {
+            spin.stop("The appeal was not committed.");
+            p.log.error(error instanceof Error ? error.message : String(error));
+            if ((await engine.getPendingTurn())?.kind === "appeal") {
+              console.log("Use :retry to retry the pending appeal.\n");
+            }
+          }
+          continue;
+        }
         if (action.startsWith(":")) {
           console.log("Unknown command. Type :help.\n");
           continue;
@@ -266,8 +303,9 @@ export class HumanGameCli {
         } catch (error) {
           spin.stop("The turn was not committed.");
           p.log.error(error instanceof Error ? error.message : String(error));
-          if ((await engine.getPendingTurn())?.kind === "action") {
-            console.log("Use :retry to retry the pending action.\n");
+          const pending = await engine.getPendingTurn();
+          if (pending?.kind === "action" || pending?.kind === "appeal") {
+            console.log("Use :retry to retry the pending request.\n");
           }
         }
       }

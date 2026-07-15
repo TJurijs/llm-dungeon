@@ -5,8 +5,11 @@ import { TurnDecisionSchema } from "../src/schemas.js";
 import {
   GAMEPLAY_PROTOCOL_VERSION,
   GAMEPLAY_WIRE_JSON_SCHEMA,
+  RESOLVED_GAMEPLAY_WIRE_JSON_SCHEMA,
+  WireResolvedTurnSchema,
   WireTurnSchema,
   decodeTurnDecision,
+  resolvedGameplayRequest,
 } from "../src/llm/gameplay-protocol.js";
 import { GenerationFailure } from "../src/llm/failures.js";
 import { structuredFailureDetails } from "../src/llm/structured-error.js";
@@ -62,6 +65,22 @@ const gameplayRequest = {
 };
 
 describe("provider adapters", () => {
+  it("locks provider schemas to resolved responses after the application rolls", () => {
+    const request = resolvedGameplayRequest({
+      schemaName: "turn_resolution_v1",
+      schema: TurnDecisionSchema,
+      decodeResponse: decodeTurnDecision,
+      system: "system",
+      prompt: "prompt",
+    });
+
+    expect(request.wireSchema).toBe(WireResolvedTurnSchema);
+    expect(request.jsonSchema).toEqual(RESOLVED_GAMEPLAY_WIRE_JSON_SCHEMA);
+    expect((request.jsonSchema?.properties as Record<string, any>).decision.enum).toEqual(["resolved"]);
+    expect(request.wireSchema?.safeParse({ ...resolvedWire(), decision: "check_required" }).success).toBe(false);
+    expect(request.wireSchema?.safeParse(resolvedWire()).success).toBe(true);
+  });
+
   it.each([
     ["OpenRouter", (apiKey: string, fetchMock: typeof fetch) =>
       new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
@@ -182,6 +201,7 @@ describe("provider adapters", () => {
       const schema = body.response_format.json_schema.schema;
       expect(schema).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA);
       expect(schema.properties.effects.items.required).toContain("references");
+      expect(schema.properties.effects.items.properties.text.description).toContain("advance_time");
       expect(schema.properties.effects).not.toHaveProperty("maxItems");
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(resolvedWire([
         effect({

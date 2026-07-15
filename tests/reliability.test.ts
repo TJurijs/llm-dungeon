@@ -153,7 +153,9 @@ describe("V1 reliability boundaries", () => {
 
     const selfNested = structuredClone(setupFixture);
     selfNested.entities.find((entity) => entity.id === "location:crooked-crown")!.location = "location:crooked-crown";
+    selfNested.entities.find((entity) => entity.id === "item:travel-sword")!.location = "location:crooked-crown";
     expect(() => validateInitialSetup(selfNested)).toThrow(/cannot be located inside itself/);
+    expect(() => validateInitialSetup(selfNested)).toThrow(/must not also have a world location/);
   });
 
   it("canonicalizes non-Latin names distinctly and maps every safe ID to one filename", () => {

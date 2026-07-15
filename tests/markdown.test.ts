@@ -6,7 +6,6 @@ import {
   parsePlayerVisibleTurn,
   parseTurnOperations,
   renderEntity,
-  renderTurnForInspection,
   renderTurnLog,
 } from "../src/persistence/markdown.js";
 import type { Entity } from "../src/schemas.js";
@@ -203,7 +202,7 @@ describe("Markdown persistence codec", () => {
     expect(parseTurnOperations(oldLog)).toEqual([]);
   });
 
-  it("renders journal history without exposing provider metadata or secret operations", () => {
+  it("decodes player-visible history without exposing provider metadata or secret operations", () => {
     const secret = "Mara privately suspects the captain.";
     const alternateStake = "A hidden lethal branch the player never reached.";
     const log = renderTurnLog(3, turnFixture({
@@ -233,27 +232,43 @@ describe("Markdown persistence codec", () => {
       }, 70),
     }));
 
-    const journal = renderTurnForInspection(log);
     const transcript = parsePlayerVisibleTurn(log);
-    expect(journal).toContain("I ask Mara about the road.");
-    expect(journal).toContain("Mara answers cautiously.");
-    expect(journal).toContain("Mara gave a guarded answer.");
-    expect(journal).not.toContain(secret);
-    expect(journal).not.toContain("State Operations");
-    expect(journal).not.toContain("private-provider");
-    expect(journal).not.toContain("private-model");
-    expect(journal).not.toContain("inputTokens");
-    expect(journal).toContain("Notice: d100 = 70");
-    expect(journal).not.toContain(alternateStake);
-    expect(journal).not.toContain("failureCampaignStatus");
+    const russianTranscript = parsePlayerVisibleTurn(log, "ru");
     expect(transcript).toEqual({
       turn: 3,
+      kind: "gameplay",
       action: "I ask Mara about the road.",
       narration: "Mara answers cautiously.",
       summary: "Mara gave a guarded answer.",
       checkText: expect.stringContaining("Notice: d100 = 70"),
     });
+    expect(russianTranscript.checkText).toContain("сложность");
     expect(JSON.stringify(transcript)).not.toContain(secret);
     expect(JSON.stringify(transcript)).not.toContain(alternateStake);
+    expect(JSON.stringify(transcript)).not.toContain("private-provider");
+    expect(JSON.stringify(transcript)).not.toContain("private-model");
+    expect(JSON.stringify(transcript)).not.toContain("inputTokens");
+    expect(JSON.stringify(transcript)).not.toContain("State Operations");
+  });
+
+  it("persists appeal metadata and labels it as administrative context", () => {
+    const log = renderTurnLog(4, turnFixture({
+      kind: "appeal",
+      appealTargetTurn: 2,
+      action: ":appeal --turn 2 The key was narrated but not recorded.",
+      resolved: {
+        narration: "The appeal is upheld and the missing key is recorded.",
+        turnSummary: "Appeal upheld: the key was added.",
+        operations: [],
+      },
+    }));
+
+    expect(parsePlayerVisibleTurn(log)).toMatchObject({
+      turn: 4,
+      kind: "appeal",
+      appealTargetTurn: 2,
+    });
+    expect(compactTurnHistory([log])).toContain("Administrative Appeal 4");
+    expect(compactTurnHistory([log])).toContain("does not advance in-world time");
   });
 });

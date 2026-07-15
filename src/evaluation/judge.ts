@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { languageInstruction, type LanguageCode } from "../language.js";
+import { CHECK_DIFFICULTY_POLICY, CURRENT_STATE_RECONCILIATION } from "../prompts.js";
 import { buildMechanicalAudit, type AuditedTurn } from "./audit.js";
 
 export const SessionJudgmentSchema = z.object({
@@ -75,28 +76,53 @@ export function judgmentSchemaFor(
         message: `must contain exactly one audit for each completed turn: ${expected.join(", ") || "none"}`,
       });
     }
-    for (const audit of judgment.turnAudits) {
+    for (const [auditIndex, audit] of judgment.turnAudits.entries()) {
       const operationCount = operationsByTurn.get(audit.turn);
       if (operationCount === undefined) continue;
       for (const [index, consequence] of audit.durableConsequences.entries()) {
-        if (consequence.persistence === "persisted" && consequence.operationIndexes.length === 0) {
+        if (consequence.persistence !== "missing" && consequence.operationIndexes.length === 0) {
           ctx.addIssue({
             code: "custom",
-            path: ["turnAudits", audit.turn, "durableConsequences", index, "operationIndexes"],
-            message: "a persisted consequence must cite at least one committed operation index",
+            path: ["turnAudits", auditIndex, "durableConsequences", index, "operationIndexes"],
+            message: `a ${consequence.persistence} consequence must cite at least one committed operation index`,
+          });
+        }
+        if (consequence.persistence === "missing" && consequence.operationIndexes.length > 0) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["turnAudits", auditIndex, "durableConsequences", index, "operationIndexes"],
+            message: "a missing consequence cannot cite a committed operation index",
           });
         }
         if (consequence.operationIndexes.some((operationIndex) => operationIndex >= operationCount)) {
           ctx.addIssue({
             code: "custom",
-            path: ["turnAudits", audit.turn, "durableConsequences", index, "operationIndexes"],
+            path: ["turnAudits", auditIndex, "durableConsequences", index, "operationIndexes"],
             message: `operation index must be between 0 and ${Math.max(operationCount - 1, 0)} for turn ${audit.turn}`,
           });
         }
       }
+      const coveredOperations = new Set(
+        audit.durableConsequences.flatMap((consequence) =>
+          consequence.persistence === "missing" ? [] : consequence.operationIndexes),
+      );
+      const omittedOperations = Array.from(
+        { length: operationCount },
+        (_, operationIndex) => operationIndex,
+      ).filter((operationIndex) => !coveredOperations.has(operationIndex));
+      if (omittedOperations.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["turnAudits", auditIndex, "durableConsequences"],
+          message: `must audit every committed operation index for turn ${audit.turn}; missing ${omittedOperations.join(", ")}`,
+        });
+      }
     }
     const hasPersistenceDefect = judgment.turnAudits.some((audit) =>
       audit.durableConsequences.some((consequence) => consequence.persistence !== "persisted"));
+    const hasStateIssue = judgment.issues.some((issue) =>
+      issue.category === "persistence" || issue.category === "continuity");
+    const hasPersistenceIssue = judgment.issues.some((issue) => issue.category === "persistence");
     if (hasPersistenceDefect && (judgment.persistenceScore > 8 || judgment.overallScore > 8 || judgment.verdict === "excellent")) {
       ctx.addIssue({
         code: "custom",
@@ -104,7 +130,24 @@ export function judgmentSchemaFor(
         message: "missing or contradicted durable consequences cap persistence and overall scores at 8 and forbid an excellent verdict",
       });
     }
-    const highTechnicalFailure = technicalHealth.dmFailureRate >= 0.25 || technicalHealth.schemaRepairCalls >= 3;
+    if (hasPersistenceDefect && !hasStateIssue) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["issues"],
+        message: "missing or contradicted durable consequences require a persistence or continuity issue",
+      });
+    }
+    if (hasPersistenceIssue && !hasPersistenceDefect) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["turnAudits"],
+        message: "every persistence issue must also appear as a missing or contradicted turn-audit consequence",
+      });
+    }
+    const recoveryCalls = technicalHealth.schemaRepairCalls
+      + technicalHealth.transientRetryCalls
+      + technicalHealth.domainRepairCalls;
+    const highTechnicalFailure = technicalHealth.dmFailureRate >= 0.25 || recoveryCalls >= 3;
     if (highTechnicalFailure && (judgment.overallScore > 8 || judgment.verdict === "excellent")) {
       ctx.addIssue({ code: "custom", path: ["overallScore"], message: "technical failures cap overall score at 8 and forbid an excellent verdict" });
     }
@@ -117,24 +160,50 @@ export function judgmentSchemaFor(
 export function judgeSystemPrompt(language: LanguageCode): string {
   return `You are an exacting quality judge for an LLM-driven persistent fantasy sandbox game.
 
-Evaluate the completed game; do not continue its fiction. Inspect the entire transcript, every check and state operation,
-and both the authoritative starting and final persistent states. Identify continuity errors, forgotten consequences, unsupported possessions, stale locations,
-NPC inconsistencies, secret leaks, excessive or unfair checks, loss of player agency, weak sandbox behavior, pacing problems,
-and repetitive prose. Cite concrete turn numbers in evidence. Distinguish actual defects from intentional setbacks or character death.
-Routine movement, visible observation, ordinary unopposed conversation, and unsupported or unintelligible claims should normally resolve without checks.
-A check rate above 50% is a warning, not an automatic defect: assess whether established danger or opposition justified each checked turn.
-Helpful circumstances must have positive modifiers and hindering circumstances must have negative modifiers; report any reversal.
-For adversarial profiles such as chaotic, do not penalize the player behavior itself. Judge whether the DM handles gibberish,
-nonsensical actions, contradictions, and unsupported possessions gracefully without inventing intent, items, success, or arbitrary punishment.
-Gibberish or unsupported claims alone must not manufacture danger, hostility, injury, time pressure, checks, or lethal escalation.
-Committed transactions have already passed deterministic reference, conservation, and nonnegative-inventory validation.
-Never claim that starting inventory was missing without checking the authoritative starting state and mechanical audit.
-Compare every narrated outcome with that turn's committed operations. If an NPC's refusal, trust, hostility, ban, promise, cooperation, or durable intention would matter after restart but has no matching operation, report a persistence defect.
-Audit every completed turn separately before scoring. Include even turns with no durable consequences. A bruise, chipped or broken teeth, bleeding, a fracture, poisoning, exhaustion, a swallowed harmful object, a lasting social response, movement, inventory change, or time passage is durable when the narration says it persists beyond the immediate sentence. Treat every end-of-turn location boundary crossing as durable even if the character returns on the following turn; verify that turn's operations, not only the final campaign location.
-For every persisted consequence, cite the zero-based index of its matching operation in that turn. Mark it missing when no operation preserves it, and contradicted when the operations preserve a different outcome.
-Technical retries and failed structured calls are part of product quality even when recovery succeeds. Always mention nonzero failures in a technical issue.
-If at least 25% of gameplay DM calls failed or three or more repair/retry calls were required, the verdict cannot be excellent and the overall score cannot exceed 8. If at least 50% failed, the score cannot exceed 6.
-Give actionable engineering or prompt recommendations, not advice to the fictional player.
+Evaluate the completed game; do not continue its fiction.
+
+AUDIT POLICY
+- Compare the complete transcript and each turn's operations with the authoritative starting and final states.
+- Identify continuity, persistence, ownership, location, NPC, secrecy, agency, sandbox, pacing, prose, check-calibration, and technical defects. Distinguish defects from intentional fictional setbacks.
+- Player assertions and incoherent input do not establish facts or danger. For adversarial profiles, judge the DM's handling rather than penalizing the supplied player behavior.
+- Preserve grammatical scope when auditing agency: asking whether a later action is possible, proposing a plan, or seeking advice does not authorize the DM to perform that later action for the player.
+- For each completed turn, first perform a narration-to-state pass: enumerate every durable consequence in the action and narration even when no matching operation exists. Include movement or containment; item ownership, payments, losses, and loose objects; information recorded in durable items; statuses, conditions, facts, knowledge, relationships, commitments, thread progress, and time.
+- Then perform an operations-to-narration pass: inspect every committed operation index, verify that narration caused it and final state reflects it, and cite that index in at least one turn-audit consequence. Never omit an operation from the audit.
+- Operation indexes restart at 0 inside each turn. Use only the explicit operationIndex shown beside that turn's operation; never use a running index across the session.
+- Finally perform a current-record pass: compare each affected entity's starting and final location, inventory, item state, status, conditions, current facts or intentions, relationships, and threads with the narrated end state. Flag mutually inconsistent fields and stale markers even when every emitted operation was valid.
+- Treat descriptions as stable identity text. Flag a description that encodes mutable placement, ownership, activity, mood, or temporary condition and later contradicts authoritative state.
+- Apply the restart test to every narrated consequence: if it should affect a future turn, require an appropriate committed operation in that same turn. Do not infer persistence from a summary or from a vaguely related operation; compare the material meaning.
+- Require each consequence on its authoritative record: physical changes on the affected entity or location, ownership in inventory, learned information in player knowledge, and recorded content on the durable item. A player-knowledge fact does not persist objective world damage or item state.
+- Compare persisted information at the same evidentiary strength: flag a clue, inference, rumor, or witness report rewritten as direct observation or proven causation.
+- Check that new location parents represent actual physical containment, and that thread updates retain still-relevant objectives, participants, sources, places, objects, discoveries, constraints, and commitments instead of replacing history with only the newest event. Treat thread references as durable retrieval links rather than latest-scene cast lists.
+- Inventory is conserved between known owners. If narration identifies both owners, require transfer_item; a one-sided change_inventory debit is not a persisted transfer. An owned item becoming loose must transfer to its location.
+- Never invent an item's disposition to excuse an operation. If narration says an item is handed over, retained, damaged, consumed, held by someone, or left loose, require final ownership and item state to match exactly; absence of an explicit disposal is not consumption.
+- An item explicitly put down, thrown, or left behind is loose at the containing location unless narration establishes another owner; it must not remain in the prior owner's inventory.
+- If narration says a person takes, pockets, carries, or keeps an item, require that person—not the surrounding location—to own it at turn end. After any transfer, audit current facts, secrets, intentions, statuses, and relationships for stale claims that the former owner still carries or controls it.
+- An offered or intended exchange is not a completed transfer. When an item is used, depleted, damaged, opened, or otherwise changed, audit its own final state as well as its quantity and owner.
+- Reconstruct current state in turn order. When a resolved outcome explicitly changes or ends an existing state marker, require the corresponding reconciliation and flag stale current statuses, conditions, facts, relationships, or threads.
+- Audit scene-wide state: if a fight, alarm, closure, restraint, pursuit, or other active situation ends, flag locations and entities whose status, condition, intention, secret, or current fact still says it is ongoing or expresses a now-contradicted motive.
+- Compare narration and effects exactly for kind, severity, subject, and body location; a related but different wound, action, or participant is contradicted rather than persisted.
+- Compare status with the entity's final narrated activity, major injuries or conditions, and social situation; flag stale interaction or activity labels, including healthy/intact/safe labels contradicted by current conditions. Require every time increment to be supported by narrated action, travel, recovery, or waiting.
+- For every resolved or failed thread, inspect its related entities for current markers that still describe the former problem, and inspect the resulting scene for a new unresolved danger, custody, accusation, obligation, pursuit, or lead that requires an active thread.
+- Before a thread resolves, require its final summary and references to include any new central participant, source, place, object, or conclusion established by the resolving turn; the lifecycle operation alone does not update retrieval links.
+- Treat record_major_event as reserved for irreversible or campaign-shaping developments; flag routine tactical exchanges or incremental thread beats recorded as major events.
+- Audit every completed turn, including turns with no durable changes. A persisted or contradicted consequence must cite at least one matching zero-based operation index; a missing consequence must cite none. Mark missing or contradicted effects explicitly.
+- A turn with no committed operations and no narrated durable consequence still needs its turnAudits entry, but durableConsequences must be an empty array. Do not invent a "nothing changed" consequence and label it persisted with no operation index.
+- Audit every starting active thread independently against the entire session. Do not let progress on one thread stand in for another, and flag a final thread that loses or replaces its original question, actionable discoveries, or still-relevant retrieval references without a narrated resolution.
+- Committed transactions already passed deterministic structural checks. Verify claims against starting state and the mechanical audit before reporting a defect.
+- A check-rate warning is evidence for review, not an automatic gameplay defect. Judge every action—not only emitted checks—against current resistance or danger and meaningful branching. Flag a directly resolved action when a consequential uncertain outcome such as an opposed physical attempt should have used the shared check. For emitted checks, also audit the calibration below, sign-correct and actually used modifiers, capability-bounded stakes, and proportionate consequences.
+- Reject modifiers based on an irrelevant skill or on a circumstance contradicted by newer current state. Treat an outcome that only natural 100 can reach after modifiers as impossible rather than meaningfully uncertain.
+- Technical retries and failed structured calls remain product-quality defects even when recovery succeeds. Always report nonzero technical failures.
+- Before returning, make scores and verdict consistent with the audit: any missing or contradicted durable consequence requires a persistence or state-continuity issue, caps persistenceScore and overallScore at 8, and forbids verdict=excellent. A purely narrative or formatting continuity issue may coexist with correctly persisted operations; do not falsely mark an operation contradicted merely to report it.
+- If at least 25% of gameplay DM calls failed or at least three repair/retry calls were required, the verdict cannot be excellent and overall score cannot exceed 8. At least 50% failure caps overall score at 6.
+- Give actionable engineering or prompt recommendations, never advice to the fictional player.
+
+${CURRENT_STATE_RECONCILIATION.title}
+${CURRENT_STATE_RECONCILIATION.content}
+
+${CHECK_DIFFICULTY_POLICY.title}
+${CHECK_DIFFICULTY_POLICY.content}
 
 ${languageInstruction(language)}`;
 }
@@ -167,7 +236,10 @@ export function judgePrompt(
   finalState: string,
   technicalHealth: TechnicalHealthStats,
 ): string {
-  const mechanicalTurns = turns.map(({ narration: _narration, summary: _summary, ...turn }) => turn);
+  const mechanicalTurns = turns.map((turn) => ({
+    ...turn,
+    operations: turn.operations?.map((operation, operationIndex) => ({ operationIndex, operation })),
+  }));
   const checkUsage = checkUsageStats(turns);
   const mechanicalAudit = buildMechanicalAudit(turns);
   return `PLAYER PROFILE
@@ -208,7 +280,9 @@ ${startingState}
 FINAL PERSISTENT DM STATE
 ${finalState}
 
-Compare starting state, committed operations, the mechanical audit, and final state before making continuity claims.
+Compare each action and narration directly with its committed operations, then compare the reconstructed result with final state. The operationIndex values restart at 0 for every turn; cite only the explicit per-turn values shown above. Every committed operation index must appear in at least one turnAudits consequence. A narrated durable consequence with no matching operation must still appear and be marked missing; a conflicting operation or final record must be marked contradicted. Every persistence issue, and every continuity issue caused by a durable state mismatch, must also appear in the relevant turn audit as missing or contradicted. A prose or formatting continuity issue does not make an otherwise correct committed operation contradicted.
+For a completed turn with zero operations and zero narrated durable consequences, return that turn's durableConsequences as []. A description that nothing changed is not a persisted consequence and must not be represented with an empty operationIndexes list.
+Before emitting the response, run a final consistency pass: if any turn audit is missing or contradicted, include the matching issue, set persistenceScore and overallScore to at most 8, and do not return verdict=excellent.
 Return exactly one turnAudits entry for every completed turn, then a rigorous structured evaluation with separate 1–10 scores for narrative, agency, persistence, checks, and technical reliability, followed by an overall 1–10 score.`;
 }
 

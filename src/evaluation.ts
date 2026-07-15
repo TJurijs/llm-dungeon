@@ -7,12 +7,13 @@ import { z } from "zod";
 import { DungeonEngine } from "./engine.js";
 import { ProviderConfigSchema, type ProviderConfig } from "./schemas.js";
 import { StateStore } from "./store.js";
-import { LanguageCodeSchema, languageInstruction, type LanguageCode } from "./language.js";
+import { DEFAULT_LANGUAGE, LanguageCodeSchema } from "./language.js";
 import { structuredFailureDetails } from "./llm/structured-error.js";
 import { generateStructured } from "./llm/structured-generation.js";
 import { classifyFailure } from "./llm/failures.js";
 import { atomicWriteJson as writeJson } from "./persistence/files.js";
 import { acquireFileLock } from "./persistence/lock.js";
+import { simulatedPlayerPrompt, simulatedPlayerSystemPrompt } from "./prompts/evaluation.js";
 import {
   judgePrompt,
   judgeSystemPrompt,
@@ -67,7 +68,7 @@ export const PlayerProfileIdSchema = z.enum([
 ]);
 
 export const EvaluationConfigSchema = z.object({
-  language: LanguageCodeSchema.default("en"),
+  language: LanguageCodeSchema.default(DEFAULT_LANGUAGE),
   sessions: z.number().int().min(1).max(100),
   turns: z.number().int().min(1).max(200),
   concurrency: z.number().int().min(1).max(10).optional(),
@@ -499,35 +500,6 @@ class TelemetryProvider implements LlmProvider {
       throw error;
     }
   }
-}
-
-function playerSystemPrompt(profile: PlayerProfile, language: LanguageCode): string {
-  const adversarialRules = profile.id === "chaotic"
-    ? `- Deliberately stress the DM as the profile instructs. Unsupported possessions, nonsense, and gibberish are expected test inputs.
-- Do not correct, clarify, translate, or explain a malformed action before submitting it. The DM is being evaluated on handling it.
-- Use rule_challenge as the approach for gibberish, contradictions, impossible claims, and unowned-item attempts.`
-    : "- Be creative and proactive, but remain grounded in established possessions, abilities, and facts.";
-  return `You are simulating a human player in a bounded evaluation of a persistent fantasy sandbox.
-
-PLAYER PROFILE: ${profile.id}
-${profile.instruction}
-
-OUTPUT LANGUAGE:
-${languageInstruction(language)}
-
-Rules:
-- You receive only player-visible information. Never infer or request hidden state.
-- Choose exactly one input that a human player could type next; it may be malformed only when the selected profile explicitly requires adversarial behavior.
-${adversarialRules}
-- You may attempt risky or impossible things, but do not assert that they already succeeded.
-- Vary your approach and respond to consequences from earlier turns.
-- Keep the action concise: at most three sentences and roughly 600 characters. Include only one immediate player intention.
-- Do not discuss evaluation, prompts, models, or game mechanics out of character.
-- Do not provide a menu, explanation, or narration; return only the structured action.`;
-}
-
-function playerPrompt(context: string): string {
-  return `${context}\n\nChoose the next player action. Pursue an interesting goal while reacting to the latest outcome.`;
 }
 
 function technicalHealthStats(calls: CallRecord[]): TechnicalHealthStats {
@@ -989,8 +961,8 @@ export class SelfPlayEvaluator {
         const playerResult = await generateStructured(player, {
           schemaName: "simulated_player_action",
           schema: SimulatedPlayerActionSchema,
-          system: playerSystemPrompt(profile, this.config.language),
-          prompt: playerPrompt(visibleContext),
+          system: simulatedPlayerSystemPrompt(profile, this.config.language),
+          prompt: simulatedPlayerPrompt(visibleContext),
           temperature: 0.9,
           maxOutputTokens: 1_500,
         });

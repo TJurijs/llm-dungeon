@@ -60,10 +60,68 @@ export interface SetupGenerationInput {
   language?: LanguageCode;
 }
 
-export type StateView = "character" | "inventory" | "location" | "threads" | "journal";
+export type StateView = "character" | "location" | "threads";
+
+export type TurnKind = "opening" | "gameplay" | "appeal";
+
+export interface AppealInput {
+  claim: string;
+  targetTurn?: number;
+}
+
+export interface InspectionFacts {
+  established: string[];
+  knowledge: string[];
+  history: string[];
+}
+
+export interface InspectionInventoryItem {
+  name: string;
+  quantity: number;
+  status: string;
+  description: string;
+}
+
+export interface CharacterInspection {
+  view: "character";
+  language: LanguageCode;
+  name: string;
+  description: string;
+  status: string;
+  traits: string[];
+  conditions: string[];
+  inventory: InspectionInventoryItem[];
+  facts: InspectionFacts;
+  relationships: Array<{ name: string; summary: string }>;
+}
+
+export interface LocationInspection {
+  view: "location";
+  language: LanguageCode;
+  name: string;
+  description: string;
+  status: string;
+  features: string[];
+  conditions: string[];
+  facts: InspectionFacts;
+}
+
+export interface ThreadsInspection {
+  view: "threads";
+  language: LanguageCode;
+  threads: Array<{
+    title: string;
+    summary: string;
+    status: "active" | "resolved" | "failed";
+  }>;
+}
+
+export type PlayerStateInspection = CharacterInspection | LocationInspection | ThreadsInspection;
 
 export interface TurnResult {
   turn: number;
+  kind: Exclude<TurnKind, "opening">;
+  appealTargetTurn?: number;
   narration: string;
   summary: string;
   operations: StateOperation[];
@@ -73,6 +131,8 @@ export interface TurnResult {
 
 export interface PlayerVisibleTurn {
   turn: number;
+  kind: TurnKind;
+  appealTargetTurn?: number;
   action: string;
   narration: string;
   summary: string;
@@ -85,7 +145,8 @@ export interface GameEngine {
   createGame(input: NewGameInput): Promise<GameState>;
   replaceGame(input: NewGameInput): Promise<GameState>;
   play(action: string): Promise<TurnResult>;
-  inspect(view: StateView): Promise<string>;
+  appeal(input: AppealInput): Promise<TurnResult>;
+  inspect(view: StateView): Promise<PlayerStateInspection>;
   recentTranscript(limit?: number): Promise<PlayerVisibleTurn[]>;
   getPendingTurn(): Promise<PendingTurn | undefined>;
   resumePendingTurn(): Promise<TurnResult>;
@@ -95,6 +156,8 @@ export interface GameEngine {
 }
 
 export interface CommittedTurn {
+  kind?: TurnKind;
+  appealTargetTurn?: number;
   action: string;
   resolved: ResolvedTurn;
   check?: CheckResult;

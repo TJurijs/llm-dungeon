@@ -25,7 +25,11 @@ describe("Markdown state store", () => {
 
     await store.setLanguage("ru");
     expect((await store.load()).manifest.language).toBe("ru");
-    expect(await store.inspect("character")).toContain("## Описание");
+    expect(await store.inspect("character")).toMatchObject({
+      view: "character",
+      language: "ru",
+      name: "Arlen Vale",
+    });
     expect(await store.buildContext()).toContain("natural Russian");
   });
 
@@ -67,8 +71,17 @@ describe("Markdown state store", () => {
     expect(reloaded.entities.get("player:hero")?.inventory).toContainEqual({ entityId: letter?.id, quantity: 1 });
     expect(letter?.location).toBeUndefined();
     expect(reloaded.entities.get("player:hero")?.conditions).toContain("watched by a hooded stranger");
-    expect(await store.inspect("inventory")).toContain("Sealed Letter");
-    expect(await store.inspect("location")).not.toContain("watch captain takes bribes");
+    const character = await store.inspect("character");
+    expect(character.view).toBe("character");
+    if (character.view !== "character") throw new Error("Expected character inspection");
+    expect(character.inventory).toContainEqual(expect.objectContaining({ name: "Sealed Letter", quantity: 1 }));
+    expect(JSON.stringify(character)).not.toContain("item:sealed-letter");
+    expect(JSON.stringify(character)).not.toContain("contentCodec");
+    const location = await store.inspect("location");
+    expect(JSON.stringify(location)).not.toContain("watch captain takes bribes");
+    expect(JSON.stringify(location)).not.toContain("Mara Venn");
+    expect(location).not.toHaveProperty("present");
+    expect(location).not.toHaveProperty("inventory");
     expect(await store.buildContext()).toContain("watch captain takes bribes");
   });
 
@@ -90,6 +103,40 @@ describe("Markdown state store", () => {
     const lantern = [...loaded.entities.values()].find((entity) => entity.name === "Lantern")!;
     expect(lantern.location).toBeUndefined();
     expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({ entityId: lantern.id, quantity: 1 });
+  });
+
+  it("turns a new loose item's location into location inventory ownership", async () => {
+    const store = await createTestStore();
+    await store.commitTurn({
+      action: "I find a pry tool on the tavern floor.",
+      resolved: {
+        narration: "A pry tool lies loose on the tavern floor.",
+        turnSummary: "A loose pry tool was found.",
+        operations: [{
+          type: "create_entity",
+          entity: {
+            id: "item:pry-tool",
+            kind: "item",
+            name: "Pry Tool",
+            status: "loose",
+            location: "location:crooked-crown",
+            tags: ["tool"],
+            description: "A short iron levering tool.",
+            establishedFacts: [],
+            secrets: [],
+            playerKnowledge: [],
+          },
+        }],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const loaded = await store.load();
+    const tool = [...loaded.entities.values()].find((entity) => entity.name === "Pry Tool")!;
+    expect(tool.location).toBeUndefined();
+    expect(loaded.entities.get("location:crooked-crown")?.inventory)
+      .toContainEqual({ entityId: tool.id, quantity: 1 });
   });
 
   it("commits nothing when an operation is invalid", async () => {
