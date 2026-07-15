@@ -5,12 +5,11 @@ import type { Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DungeonEngine } from "./engine.js";
+import { probeProviderConnection } from "./connection-probe.js";
 import { loadProjectEnv } from "./env.js";
 import {
-  defaultPlayerConfig,
-  EvaluationConfigSchema,
+  buildEvaluationConfig as createEvaluationConfig,
   generateEvaluationReport,
-  inferModelCost,
   PlayerProfileIdSchema,
   readEvaluationManifest,
   SelfPlayEvaluator,
@@ -18,25 +17,22 @@ import {
   type EvaluationManifest,
   type EvaluationProgressEvent,
 } from "./evaluation.js";
-import { CheckResultSchema, formatCheck } from "./mechanics.js";
 import { LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
 import { inspectPrompt, PROMPT_PHASES } from "./prompt-inspection.js";
 import { createProvider, loadProviderConfig } from "./providers.js";
-import { ProviderConfigSchema, SetupResultSchema, TurnDecisionSchema, type ProviderConfig, type SetupResult } from "./schemas.js";
-import {
-  GAMEPLAY_PROTOCOL_VERSION,
-  GAMEPLAY_SCHEMA_NAMES,
-  decodeTurnDecision,
-  gameplayRequest,
-} from "./llm/gameplay-protocol.js";
+import { ProviderConfigSchema, type ProviderConfig, type SetupResult } from "./schemas.js";
 import { StateStore } from "./store.js";
 import { atomicWriteJson } from "./persistence/files.js";
-import { combineUsage } from "./llm/structured-generation.js";
-import { CONNECTION_GAMEPLAY_PROMPT, CONNECTION_SETUP_PROBE, CONNECTION_SYSTEM_PROMPT, connectionSetupPrompt } from "./prompts/connection.js";
-import type { PendingTurn } from "./persistence/pending.js";
-import type { LlmProvider, StateView, TurnResult } from "./types.js";
+import type { LlmProvider, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { parseAppealCommand } from "./appeal.js";
+import {
+  assertSafeId,
+  evaluationArtifactPath,
+  evaluationTranscriptPresentation,
+} from "./web/evaluation-artifacts.js";
+import { asError, readJsonBody, rejectUnsafeMutation, sendJson } from "./web/http.js";
+import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
 type ProviderFactory = (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
 
@@ -85,149 +81,7 @@ const EvaluationRequestSchema = z.object({
   playerModel: z.string().trim().min(1).optional(),
 });
 
-const EvaluationTranscriptTurnSchema = z.object({
-  turn: z.number().int().positive(),
-  action: z.string(),
-  approach: z.string(),
-  narration: z.string().optional(),
-  check: CheckResultSchema.optional(),
-  status: z.enum(["completed", "failed"]),
-  error: z.string().optional(),
-});
-
-const SAFE_ARTIFACT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
-
-function asError(error: unknown): string {
-  if (error instanceof z.ZodError) return error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ");
-  return error instanceof Error ? error.message : String(error);
-}
-
-function assertSafeId(value: string, label: string): string {
-  if (!SAFE_ARTIFACT_ID.test(value)) throw new Error(`Invalid ${label}`);
-  return value;
-}
-
-function transcriptOpening(markdown: string): string {
-  const heading = "## Opening";
-  const start = markdown.indexOf(heading);
-  if (start < 0) return "";
-  const contentStart = start + heading.length;
-  const nextTurn = markdown.indexOf("\n## Turn ", contentStart);
-  return markdown.slice(contentStart, nextTurn < 0 ? undefined : nextTurn).trim();
-}
-
-function parseEvaluationTurns(jsonLines: string): Array<z.infer<typeof EvaluationTranscriptTurnSchema>> {
-  return jsonLines
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line, index) => {
-      try {
-        return EvaluationTranscriptTurnSchema.parse(JSON.parse(line));
-      } catch (error) {
-        throw new Error(`Invalid evaluation turn record ${index + 1}: ${asError(error)}`);
-      }
-    });
-}
-
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > 1_000_000) throw new Error("Request body exceeds 1 MB");
-    chunks.push(buffer);
-  }
-  if (!chunks.length) return {};
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new Error("Request body must be valid JSON");
-  }
-}
-
-function sendJson(response: ServerResponse, status: number, value: unknown): void {
-  response.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-  });
-  response.end(JSON.stringify(value));
-}
-
-function rejectUnsafeMutation(request: IncomingMessage, response: ServerResponse): boolean {
-  const method = request.method ?? "GET";
-  if (method !== "POST" && method !== "PUT") return false;
-  const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType !== "application/json") {
-    sendJson(response, 415, { error: "Mutating requests require Content-Type: application/json" });
-    return true;
-  }
-  const fetchSite = request.headers["sec-fetch-site"];
-  if (fetchSite === "cross-site") {
-    sendJson(response, 403, { error: "Cross-site requests are not allowed" });
-    return true;
-  }
-  const origin = request.headers.origin;
-  const host = request.headers.host;
-  if (origin && (!host || origin !== `http://${host}`)) {
-    sendJson(response, 403, { error: "Foreign request origins are not allowed" });
-    return true;
-  }
-  return false;
-}
-
-function pendingStatus(pending: PendingTurn | undefined): unknown {
-  if (!pending) return null;
-  if (pending.kind === "commit") return { kind: "commit" };
-  if (pending.kind === "appeal") {
-    return {
-      kind: "appeal",
-      phase: pending.phase,
-      ...(pending.targetTurn === undefined ? {} : { targetTurn: pending.targetTurn }),
-    };
-  }
-  return {
-    kind: "action",
-    phase: pending.phase,
-    lockedRoll: pending.phase === "rolled",
-  };
-}
-
-function setupPreview(setup: SetupResult): unknown {
-  return {
-    campaignTitle: setup.campaignTitle,
-    scenarioMarkdown: setup.scenarioMarkdown,
-    openingNarration: setup.openingNarration,
-    player: {
-      name: setup.player.name,
-      description: setup.player.description,
-      traits: setup.player.traits,
-    },
-  };
-}
-
-function playerTurnResponse(result: TurnResult): unknown {
-  return {
-    turn: result.turn,
-    kind: result.kind,
-    ...(result.appealTargetTurn === undefined ? {} : { appealTargetTurn: result.appealTargetTurn }),
-    narration: result.narration,
-    summary: result.summary,
-    state: result.state,
-    checkText: result.check ? formatCheck(result.check, result.state.language) : null,
-  };
-}
-
-function configuredCost(
-  config: ProviderConfig,
-  label: string,
-): { inputPerMillion: number; outputPerMillion: number } {
-  const inferred = inferModelCost(config);
-  if (!inferred) throw new Error(`No built-in pricing for ${label} model ${config.model}; select a supported model for auto-runs`);
-  return inferred;
-}
 
 export class DungeonWebController {
   readonly providerConfigPath: string;
@@ -301,23 +155,15 @@ export class DungeonWebController {
   private async buildEvaluationConfig(raw: unknown): Promise<EvaluationConfig> {
     const request = EvaluationRequestSchema.parse(raw);
     const dmConfig = await this.config();
-    const basePlayer = defaultPlayerConfig(dmConfig);
-    const playerConfig = ProviderConfigSchema.parse({
-      ...basePlayer,
-      ...(request.playerModel ? { model: request.playerModel } : {}),
-    });
-    return EvaluationConfigSchema.parse({
+    return createEvaluationConfig({
+      dmConfig,
       language: (await loadAppConfig(this.root)).language,
-      sessions: request.sessions ?? 1,
-      turns: request.turns ?? 20,
+      sessions: request.sessions,
+      turns: request.turns,
       concurrency: request.concurrency,
       maxCostUsd: request.maxCostUsd,
       playerProfiles: request.playerProfiles,
-      dm: { config: dmConfig, cost: configuredCost(dmConfig, "DM") },
-      player: {
-        config: playerConfig,
-        cost: configuredCost(playerConfig, "player"),
-      },
+      playerModel: request.playerModel,
     });
   }
 
@@ -380,74 +226,45 @@ export class DungeonWebController {
     });
   }
 
-  private artifactPath(runId: string, kind: string, sessionId?: string): string {
-    const safeRun = assertSafeId(runId, "run ID");
-    const runDir = path.join(this.evaluationsRoot, "runs", safeRun);
-    if (kind === "report") return path.join(runDir, "report.md");
-    if (kind === "manifest") return path.join(runDir, "manifest.json");
-    if (kind !== "transcript" && kind !== "evaluation") throw new Error("Invalid artifact kind");
-    if (!sessionId) throw new Error("A session ID is required");
-    return path.join(runDir, "sessions", assertSafeId(sessionId, "session ID"), `${kind}.md`);
+  private async handleStatusApi(
+    method: string,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
+    if (method !== "GET" || url.pathname !== "/api/status") return false;
+    let config: ProviderConfig | undefined;
+    try { config = await this.config(); } catch { /* First-run state. */ }
+    const store = new StateStore(this.dataRoot);
+    const hasGame = await store.hasCurrentGame();
+    let campaign: unknown;
+    let pending: unknown;
+    if (hasGame) {
+      campaign = this.gameBusy
+        ? await store.readManifest()
+        : (await this.withGameLock(() => store.load())).manifest;
+      pending = pendingStatus(await store.getPending());
+    }
+    sendJson(response, 200, {
+      language: (await loadAppConfig(this.root)).language,
+      languages: Object.entries(LANGUAGES).map(([code, value]) => ({
+        code,
+        name: value.nativeName,
+        setupDefaults: value.setupDefaults,
+      })),
+      config: config ?? null,
+      keyStatus: this.keyStatus(),
+      game: { exists: hasGame, busy: this.gameBusy, campaign: campaign ?? null, pending: pending ?? null },
+      evaluationTask: this.task ?? null,
+    });
+    return true;
   }
 
-  private async evaluationTranscriptPresentation(runId: string, sessionId: string, markdown: string): Promise<unknown> {
-    const runDir = path.join(this.evaluationsRoot, "runs", runId);
-    const manifest = await readEvaluationManifest(path.join(runDir, "manifest.json"));
-    const session = manifest.sessions.find((candidate) => candidate.id === sessionId);
-    if (!session) throw new Error(`Evaluation session ${sessionId} is not present in run ${runId}`);
-    let jsonLines = "";
-    try {
-      jsonLines = await readFile(path.join(runDir, "sessions", sessionId, "turns.jsonl"), "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const turns = parseEvaluationTurns(jsonLines).map((turn) => ({
-      turn: turn.turn,
-      action: turn.action,
-      approach: turn.approach,
-      status: turn.status,
-      ...(turn.narration ? { narration: turn.narration } : {}),
-      ...(turn.check ? { checkText: formatCheck(turn.check, manifest.config.language) } : {}),
-      ...(turn.error ? { error: turn.error } : {}),
-    }));
-    return {
-      profile: session.profile,
-      opening: transcriptOpening(markdown),
-      turns,
-    };
-  }
-
-  async api(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    const method = request.method ?? "GET";
-
-    if (method === "GET" && url.pathname === "/api/status") {
-      let config: ProviderConfig | undefined;
-      try { config = await this.config(); } catch { /* First-run state. */ }
-      const store = new StateStore(this.dataRoot);
-      const hasGame = await store.hasCurrentGame();
-      let campaign: unknown;
-      let pending: unknown;
-      if (hasGame) {
-        campaign = this.gameBusy
-          ? await store.readManifest()
-          : (await this.withGameLock(() => store.load())).manifest;
-        pending = pendingStatus(await store.getPending());
-      }
-      sendJson(response, 200, {
-        language: (await loadAppConfig(this.root)).language,
-        languages: Object.entries(LANGUAGES).map(([code, value]) => ({
-          code,
-          name: value.nativeName,
-          setupDefaults: value.setupDefaults,
-        })),
-        config: config ?? null,
-        keyStatus: this.keyStatus(),
-        game: { exists: hasGame, busy: this.gameBusy, campaign: campaign ?? null, pending: pending ?? null },
-        evaluationTask: this.task ?? null,
-      });
-      return;
-    }
-
+  private async handleConfigurationApi(
+    method: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
     if (url.pathname === "/api/config/language" && method === "PUT") {
       const body = z.object({
         language: LanguageCodeSchema,
@@ -462,13 +279,13 @@ export class DungeonWebController {
       };
       const campaign = body.applyToCurrent ? await this.withGameLock(update) : await update();
       sendJson(response, 200, { language: body.language, campaign });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/provider" && method === "GET") {
       const config = await this.config().catch(() => null);
       sendJson(response, 200, { config, keyStatus: this.keyStatus() });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/provider" && method === "PUT") {
@@ -493,7 +310,7 @@ export class DungeonWebController {
       }
       await atomicWriteJson(this.providerConfigPath, config);
       sendJson(response, 200, { config, keyStatus: this.keyStatus(), keyStorage: "memory_only" });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/provider/test" && method === "POST") {
@@ -521,43 +338,24 @@ export class DungeonWebController {
         const keyName = config.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
         environment[keyName] = body.apiKey;
       }
-      const provider = this.providerFactory(config, environment);
-      const setupResult = await provider.generateStructured({
-        schemaName: "connection_campaign_setup",
-        schema: SetupResultSchema,
-        system: CONNECTION_SYSTEM_PROMPT,
-        prompt: connectionSetupPrompt(CONNECTION_SETUP_PROBE),
-        temperature: 0,
-        maxOutputTokens: 2000,
-      });
-      const result = await provider.generateStructured(gameplayRequest({
-        schemaName: GAMEPLAY_SCHEMA_NAMES.connectionProbe,
-        schema: TurnDecisionSchema,
-        decodeResponse: decodeTurnDecision,
-        system: CONNECTION_SYSTEM_PROMPT,
-        prompt: CONNECTION_GAMEPLAY_PROMPT,
-        temperature: 0,
-        maxOutputTokens: 2000,
-      }));
+      const result = await probeProviderConnection(this.providerFactory(config, environment));
       sendJson(response, 200, {
-        // Parsing any branch proves that the representative union schema was
-        // enforced and accepted; the fictional branch chosen is irrelevant.
         ok: true,
         provider: result.provider,
         model: result.model,
-        usage: combineUsage(setupResult.usage, result.usage) ?? null,
+        usage: result.usage ?? null,
         structuredOutput: {
           required: true,
           compatibility: "compatible",
-          mode: result.structuredMode ?? "exact_schema",
-          protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+          mode: result.structuredMode,
+          protocolVersion: result.protocolVersion,
           testedSchemas: ["campaign_setup", "gameplay_contract_v1"],
           providerRequirement: config.provider === "openrouter"
             ? "The selected model route must support strict response_format=json_schema for campaign setup and gameplay."
             : "The selected Gemini model must accept both provider-enforced campaign setup and Gameplay Contract V1 schemas.",
         },
       });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/world" && method === "GET") {
@@ -565,7 +363,7 @@ export class DungeonWebController {
       const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
       const profile = await resolveWorldProfile(this.root, language);
       sendJson(response, 200, { language, markdown: profile.markdown, source: profile.source });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/world" && method === "PUT") {
@@ -576,7 +374,7 @@ export class DungeonWebController {
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       await saveWorldProfile(this.root, language, body.markdown);
       sendJson(response, 200, { saved: true, language, source: "localized_override" });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/config/prompts" && method === "GET") {
@@ -584,9 +382,17 @@ export class DungeonWebController {
       const configured = (await loadAppConfig(this.root)).language;
       const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
       sendJson(response, 200, inspectPrompt(phase, language));
-      return;
+      return true;
     }
+    return false;
+  }
 
+  private async handleCampaignApi(
+    method: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
     if (url.pathname === "/api/campaign/draft" && method === "POST") {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
       const language = (await loadAppConfig(this.root)).language;
@@ -600,7 +406,7 @@ export class DungeonWebController {
       this.drafts.clear();
       this.drafts.set(draftId, draft);
       sendJson(response, 200, { draftId, setup: setupPreview(draft.setup) });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/campaign/confirm" && method === "POST") {
@@ -618,9 +424,17 @@ export class DungeonWebController {
       });
       this.drafts.delete(body.draftId);
       sendJson(response, 200, { state, openingNarration: setup.openingNarration });
-      return;
+      return true;
     }
+    return false;
+  }
 
+  private async handleGameApi(
+    method: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
     if (url.pathname === "/api/game/play" && method === "POST") {
       const body = z.object({ action: z.string().trim().min(1).max(10_000) }).parse(await readJsonBody(request));
       const result = await this.withGameLock(async () => {
@@ -630,7 +444,7 @@ export class DungeonWebController {
         return appeal ? engine.appeal(appeal) : engine.play(body.action);
       });
       sendJson(response, 200, playerTurnResponse(result));
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/game/retry" && method === "POST") {
@@ -639,7 +453,7 @@ export class DungeonWebController {
         return (await this.engine()).resumePendingTurn();
       });
       sendJson(response, 200, playerTurnResponse(result));
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/game/discard" && method === "POST") {
@@ -648,7 +462,7 @@ export class DungeonWebController {
         await (await this.engine()).discardPendingTurn();
       });
       sendJson(response, 200, { discarded: true });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/game/archive" && method === "POST") {
@@ -657,7 +471,7 @@ export class DungeonWebController {
         await (await this.engine()).archiveAndReset();
       });
       sendJson(response, 200, { archived: true });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/game/inspect" && method === "GET") {
@@ -668,7 +482,7 @@ export class DungeonWebController {
         return (await this.engine()).inspect(view);
       });
       sendJson(response, 200, { inspection });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/game/transcript" && method === "GET") {
@@ -677,12 +491,20 @@ export class DungeonWebController {
         return (await this.engine()).recentTranscript();
       });
       sendJson(response, 200, { turns });
-      return;
+      return true;
     }
+    return false;
+  }
 
+  private async handleEvaluationApi(
+    method: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
     if (url.pathname === "/api/evaluations/runs" && method === "GET") {
       sendJson(response, 200, { runs: await this.listEvaluationRuns(), task: this.task ?? null });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/evaluations/start" && method === "POST") {
@@ -699,7 +521,7 @@ export class DungeonWebController {
         return result.reportPath;
       });
       sendJson(response, 202, { task, config });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/evaluations/resume" && method === "POST") {
@@ -708,7 +530,7 @@ export class DungeonWebController {
       const runId = assertSafeId(body.runId, "run ID");
       const runDir = path.join(this.evaluationsRoot, "runs", runId);
       const manifest = await readEvaluationManifest(path.join(runDir, "manifest.json"));
-      const config = EvaluationConfigSchema.parse(manifest.config);
+      const config = manifest.config;
       const environment = this.effectiveEnvironment();
       const task: BackgroundTask = { id: randomUUID(), kind: "resume", runId, status: "running", startedAt: new Date().toISOString(), logs: [], sessionProgress: {} };
       this.launchTask(task, async (progress) => {
@@ -725,7 +547,7 @@ export class DungeonWebController {
         return (await resumed.run(runId)).reportPath;
       });
       sendJson(response, 202, { task });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/evaluations/report" && method === "POST") {
@@ -733,25 +555,40 @@ export class DungeonWebController {
       const runId = assertSafeId(body.runId, "run ID");
       const reportPath = await generateEvaluationReport(path.join(this.evaluationsRoot, "runs", runId));
       sendJson(response, 200, { report: await readFile(reportPath, "utf8") });
-      return;
+      return true;
     }
 
     if (url.pathname === "/api/evaluations/artifact" && method === "GET") {
       const runId = url.searchParams.get("runId") ?? "";
       const kind = url.searchParams.get("kind") ?? "";
       const sessionId = url.searchParams.get("sessionId") ?? undefined;
-      const target = this.artifactPath(runId, kind, sessionId);
+      const target = evaluationArtifactPath(this.evaluationsRoot, runId, kind, sessionId);
       const text = await readFile(target, "utf8");
       if (kind === "transcript" && sessionId) {
         const safeRunId = assertSafeId(runId, "run ID");
         const safeSessionId = assertSafeId(sessionId, "session ID");
-        const presentation = await this.evaluationTranscriptPresentation(safeRunId, safeSessionId, text);
+        const presentation = await evaluationTranscriptPresentation(
+          this.evaluationsRoot,
+          safeRunId,
+          safeSessionId,
+          text,
+        );
         sendJson(response, 200, { text, presentation });
       } else {
         sendJson(response, 200, { text });
       }
-      return;
+      return true;
     }
+    return false;
+  }
+
+  async api(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+    const method = request.method ?? "GET";
+    if (await this.handleStatusApi(method, response, url)) return;
+    if (await this.handleConfigurationApi(method, request, response, url)) return;
+    if (await this.handleCampaignApi(method, request, response, url)) return;
+    if (await this.handleGameApi(method, request, response, url)) return;
+    if (await this.handleEvaluationApi(method, request, response, url)) return;
 
     sendJson(response, 404, { error: "Not found" });
   }
@@ -761,6 +598,7 @@ export class DungeonWebController {
       "/": { name: "index.html", type: "text/html; charset=utf-8" },
       "/index.html": { name: "index.html", type: "text/html; charset=utf-8" },
       "/app.js": { name: "app.js", type: "text/javascript; charset=utf-8" },
+      "/terminal-history.js": { name: "terminal-history.js", type: "text/javascript; charset=utf-8" },
       "/styles.css": { name: "styles.css", type: "text/css; charset=utf-8" },
     };
     const asset = files[pathname];

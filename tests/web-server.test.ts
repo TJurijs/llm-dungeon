@@ -164,6 +164,17 @@ async function json(base: string, route: string, method = "GET", body?: unknown)
 }
 
 describe("web-cli server", () => {
+  it("serves the browser's extracted terminal-history module under the static allowlist", async () => {
+    const root = await fixtureRoot();
+    await writeFile(path.join(root, "web", "terminal-history.js"), "export const marker = true;\n", "utf8");
+    const { base } = await start(root);
+
+    const response = await fetch(`${base}/terminal-history.js`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(await response.text()).toBe("export const marker = true;\n");
+  });
+
   it("publishes registry-driven language metadata for future presentation clients", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root);

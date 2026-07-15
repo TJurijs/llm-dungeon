@@ -4,18 +4,15 @@ import { clearScreenDown, cursorTo, moveCursor } from "node:readline";
 import { stdout as output } from "node:process";
 import * as p from "@clack/prompts";
 import {
-  defaultPlayerConfig,
-  EvaluationConfigSchema,
+  buildEvaluationConfig,
   EvaluationRunIdSchema,
   generateEvaluationReport,
-  inferModelCost,
   PlayerProfileIdSchema,
   readEvaluationManifest,
   SelfPlayEvaluator,
   type EvaluationConfig,
   type EvaluationProgressEvent,
 } from "../evaluation.js";
-import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import type { CliProjectContext } from "./project-context.js";
 
 export interface EvaluateOptions {
@@ -47,14 +44,6 @@ export function profilePool(value: string): EvaluationConfig["playerProfiles"] {
   return PlayerProfileIdSchema.array().min(1).parse(
     value.split(",").map((profile) => profile.trim()).filter(Boolean),
   );
-}
-
-function configuredCost(config: ProviderConfig, label: string) {
-  const inferred = inferModelCost(config);
-  if (!inferred) {
-    throw new Error(`No built-in pricing for ${label} model ${config.model}; select a supported model for auto-runs`);
-  }
-  return inferred;
 }
 
 class EvaluationProgressRenderer {
@@ -99,26 +88,15 @@ export class EvaluationCli {
 
   private async config(options: EvaluateOptions): Promise<EvaluationConfig> {
     const dmConfig = await this.project.providerConfig();
-    const basePlayerConfig = defaultPlayerConfig(dmConfig);
-    const playerConfig = ProviderConfigSchema.parse({
-      ...basePlayerConfig,
-      ...(options.playerModel ? { model: options.playerModel } : {}),
-    });
-    return EvaluationConfigSchema.parse({
+    return buildEvaluationConfig({
+      dmConfig,
       language: await this.project.language(),
-      sessions: options.sessions ?? 1,
-      turns: options.turns ?? 20,
+      sessions: options.sessions,
+      turns: options.turns,
       concurrency: options.concurrency,
       maxCostUsd: options.maxCost,
-      ...(options.playerProfiles ? { playerProfiles: options.playerProfiles } : {}),
-      dm: {
-        config: dmConfig,
-        cost: configuredCost(dmConfig, "DM"),
-      },
-      player: {
-        config: playerConfig,
-        cost: configuredCost(playerConfig, "player"),
-      },
+      playerProfiles: options.playerProfiles,
+      playerModel: options.playerModel,
     });
   }
 
@@ -146,7 +124,7 @@ export class EvaluationCli {
     runId = EvaluationRunIdSchema.parse(runId);
     const runDir = path.join(this.project.paths.evaluationsRoot, "runs", runId);
     const manifest = await readEvaluationManifest(path.join(runDir, "manifest.json"));
-    const config = EvaluationConfigSchema.parse(manifest.config);
+    const config = manifest.config;
     const worldRules = await readFile(path.join(runDir, "world.md"), "utf8");
     const renderer = new EvaluationProgressRenderer();
     const evaluator = new SelfPlayEvaluator(

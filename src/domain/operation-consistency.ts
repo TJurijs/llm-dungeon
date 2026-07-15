@@ -1,14 +1,9 @@
 import type { Entity, StateOperation } from "../schemas.js";
+import { rejectDomainChange } from "./validation-error.js";
 
 interface StateConsistencyIssue {
-  code: "no_op_movement" | "conflicting_item_destination" | "multiple_inventory_owners" | "non_atomic_item_transfer";
+  code: "conflicting_item_destination" | "multiple_inventory_owners" | "non_atomic_item_transfer";
   message: string;
-}
-
-function createdEntityLocation(operation: StateOperation, targetId: string): string | undefined {
-  return operation.type === "create_entity" && operation.entity.id === targetId
-    ? operation.entity.location
-    : undefined;
 }
 
 function entityKind(operations: StateOperation[], entities: Map<string, Entity>, targetId: string): Entity["kind"] | undefined {
@@ -25,17 +20,6 @@ function findDeterministicConsistencyIssues(
   entities: Map<string, Entity>,
 ): StateConsistencyIssue[] {
   const issues: StateConsistencyIssue[] = [];
-  for (const operation of operations) {
-    if (operation.type !== "move_entity") continue;
-    const currentLocation = entities.get(operation.targetId)?.location
-      ?? operations.map((candidate) => createdEntityLocation(candidate, operation.targetId)).find(Boolean);
-    if (currentLocation === operation.locationId) {
-      issues.push({
-        code: "no_op_movement",
-        message: `move_entity for ${operation.targetId} targets its current location ${operation.locationId}; create or reference the actual destination`,
-      });
-    }
-  }
   const itemDestinations = new Map<string, { moved: boolean; positiveOwners: Set<string>; negativeOwners: Set<string>; transferred: boolean }>();
   for (const operation of operations) {
     if (operation.type === "move_entity" && entityKind(operations, entities, operation.targetId) === "item") {
@@ -86,6 +70,6 @@ export function assertDeterministicConsistency(
 ): void {
   const issues = findDeterministicConsistencyIssues(operations, entities);
   if (issues.length) {
-    throw new Error(`State consistency validation failed:\n${issues.map((issue) => `- [${issue.code}] ${issue.message}`).join("\n")}`);
+    rejectDomainChange(`State consistency validation failed:\n${issues.map((issue) => `- [${issue.code}] ${issue.message}`).join("\n")}`);
   }
 }

@@ -1,3 +1,12 @@
+import {
+  committedTerminalTurns,
+  hasUnpairedPlayerAction,
+  isTerminalChannel,
+  parseTerminalHistory,
+  serializeTerminalHistory,
+  terminalStorageKey,
+} from "./terminal-history.js";
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const terminal = $("#terminal");
@@ -21,27 +30,6 @@ let inspectionRequestSequence = 0;
 let inspectionCampaignKey = null;
 let actionAvailable = false;
 const COMMAND_STORAGE_KEY = "llm-dungeon:web-cli-command-log";
-const TERMINAL_STORAGE_PREFIX = "llm-dungeon:web-cli-terminal:";
-const TERMINAL_MAX_ENTRIES = 300;
-const TERMINAL_MAX_TEXT = 50_000;
-const TERMINAL_MAX_STORAGE = 750_000;
-const TERMINAL_CHANNELS = new Set(["game", "campaign", "provider", "evaluations", "world"]);
-const PLAYER_ACTION_TITLES = new Set(["YOU", "ВЫ"]);
-const LEGACY_INSPECTION_TITLES = new Set([
-  "CHARACTER",
-  "INVENTORY",
-  "LOCATION",
-  "THREADS",
-  "STORY THREADS",
-  "JOURNAL",
-  "ПЕРСОНАЖ",
-  "ИНВЕНТАРЬ",
-  "ЛОКАЦИЯ",
-  "СЮЖЕТНЫЕ ЛИНИИ",
-  "ЖУРНАЛ",
-  "RECENT JOURNAL — RESTORED",
-  "НЕДАВНИЙ ЖУРНАЛ — ВОССТАНОВЛЕН",
-]);
 let commandLog = [];
 let terminalCampaignId;
 let terminalHistory = [];
@@ -407,96 +395,6 @@ function setTerminalReady() {
   terminal.dataset.pristine = "true";
 }
 
-function terminalStorageKey(campaignId) {
-  return `${TERMINAL_STORAGE_PREFIX}${campaignId ?? "no-campaign"}`;
-}
-
-function normalizedTerminalEntry(value, fallbackChannel = "game") {
-  if (!value || typeof value !== "object") return null;
-  const mode = ["normal", "success", "error"].includes(value.mode) ? value.mode : "normal";
-  const channel = TERMINAL_CHANNELS.has(value.channel) ? value.channel : fallbackChannel;
-  const kind = ["opening", "gameplay", "appeal"].includes(value.kind) ? value.kind : undefined;
-  const turn = Number.isSafeInteger(value.turn) && value.turn >= 0 ? value.turn : undefined;
-  const appealTargetTurn = Number.isSafeInteger(value.appealTargetTurn) && value.appealTargetTurn >= 1
-    ? value.appealTargetTurn
-    : undefined;
-  return {
-    title: String(value.title ?? "").slice(0, 500),
-    text: String(value.text ?? "").slice(0, TERMINAL_MAX_TEXT),
-    mode,
-    channel,
-    ...(kind ? { kind } : {}),
-    ...(turn !== undefined ? { turn } : {}),
-    ...(appealTargetTurn !== undefined ? { appealTargetTurn } : {}),
-  };
-}
-
-function withLegacyGameTurnMetadata(entry) {
-  if (!entry || entry.channel !== "game" || entry.kind) return entry;
-  if (["CAMPAIGN BEGINS — ", "КАМПАНИЯ НАЧИНАЕТСЯ — ", "НАЧАЛО КАМПАНИИ — "]
-    .some((prefix) => entry.title.startsWith(prefix))) {
-    return { ...entry, kind: "opening", turn: 0 };
-  }
-  const match = entry.title.match(/^DUNGEON MASTER — TURN ([1-9]\d*)$/)
-    ?? entry.title.match(/^МАСТЕР ПОДЗЕМЕЛИЙ — ХОД ([1-9]\d*)$/);
-  if (!match) return entry;
-  const turn = Number(match[1]);
-  return Number.isSafeInteger(turn) ? { ...entry, kind: "gameplay", turn } : entry;
-}
-
-function isLegacyEvaluationTranscriptEntry(entry) {
-  return entry.title.startsWith("TRANSCRIPT — ")
-    && entry.text.trimStart().startsWith("# Self-Play Transcript:");
-}
-
-function isLegacyInspectionEntry(entry) {
-  return entry.channel === "game" && LEGACY_INSPECTION_TITLES.has(entry.title);
-}
-
-function migratedTerminalEntries(values) {
-  let evaluationOpening = false;
-  let evaluationTurn = false;
-  return values.map((value) => {
-    if (TERMINAL_CHANNELS.has(value?.channel)) return withLegacyGameTurnMetadata(normalizedTerminalEntry(value));
-    const entry = normalizedTerminalEntry(value);
-    if (!entry) return null;
-    const title = entry.title;
-    let channel = "game";
-    const autoRunHeader = title.startsWith("AUTO-RUN") || title.startsWith("АВТОПРОГОН");
-    const evaluationArtifact = title.startsWith("REPORT — ")
-      || title.startsWith("EVALUATION — ")
-      || title.startsWith("TRANSCRIPT — ")
-      || title.startsWith("TURN FAILED ")
-      || title.startsWith("СБОЙ ХОДА ");
-    const evaluationAction = title.startsWith("YOU — ") || title.startsWith("ВЫ — ");
-    if (autoRunHeader || evaluationArtifact) {
-      channel = "evaluations";
-      evaluationOpening = title.includes(" — session-");
-    } else if (evaluationAction) {
-      channel = "evaluations";
-      evaluationOpening = false;
-      evaluationTurn = true;
-    } else if (evaluationOpening && (title.endsWith(" — OPENING") || title.endsWith(" — НАЧАЛО"))) {
-      channel = "evaluations";
-      evaluationOpening = false;
-    } else if (evaluationTurn && (title === "D100 CHECK" || title === "ПРОВЕРКА D100")) {
-      channel = "evaluations";
-    } else if (evaluationTurn && (title.includes(" — TURN ") || title.includes(" — ХОД "))) {
-      channel = "evaluations";
-      evaluationTurn = false;
-    } else if (title.startsWith("CAMPAIGN PREVIEW — ")) {
-      channel = "campaign";
-    } else if (title === "PROVIDER SAVED"
-      || title.includes("CONNECTION + REQUIRED SCHEMAS")
-      || title.includes("СОЕДИНЕНИЕ И ОБЯЗАТЕЛЬНЫЕ СХЕМЫ")) {
-      channel = "provider";
-    } else if (title === "WORLD RULES SAVED") {
-      channel = "world";
-    }
-    return withLegacyGameTurnMetadata({ ...entry, channel });
-  }).filter(Boolean);
-}
-
 function appealCopy(key, turn) {
   return t(key).replace("{turn}", String(turn));
 }
@@ -554,7 +452,7 @@ function appendTerminalEntry(entry) {
 
 function currentTerminalChannel() {
   const selected = panelTabs().find((button) => button.getAttribute("aria-selected") === "true");
-  return TERMINAL_CHANNELS.has(selected?.dataset.panel) ? selected.dataset.panel : "game";
+  return isTerminalChannel(selected?.dataset.panel) ? selected.dataset.panel : "game";
 }
 
 function renderTerminalChannel(channel = currentTerminalChannel()) {
@@ -572,60 +470,17 @@ function renderTerminalChannel(channel = currentTerminalChannel()) {
 
 function persistTerminalHistory() {
   if (terminalCampaignId === undefined) return;
-  let entries = terminalHistory.slice(-TERMINAL_MAX_ENTRIES);
-  let serialized = JSON.stringify({ version: 3, entries });
-  while (entries.length > 1 && serialized.length > TERMINAL_MAX_STORAGE) {
-    entries = entries.slice(1);
-    serialized = JSON.stringify({ version: 3, entries });
-  }
+  const { entries, serialized } = serializeTerminalHistory(terminalHistory);
   terminalHistory = entries;
   try { localStorage.setItem(terminalStorageKey(terminalCampaignId), serialized); } catch { /* Storage can be disabled or full. */ }
 }
 
 function readTerminalHistory(campaignId) {
   try {
-    const raw = localStorage.getItem(terminalStorageKey(campaignId));
-    if (raw === null) return { entries: [], migrated: false };
-    const parsed = JSON.parse(raw);
-    const legacyArray = Array.isArray(parsed);
-    const version = legacyArray ? 0 : parsed?.version;
-    if (!legacyArray && ![1, 2, 3].includes(version)) {
-      return { entries: [], migrated: false };
-    }
-    const values = legacyArray ? parsed : parsed.entries;
-    const entries = Array.isArray(values)
-      ? migratedTerminalEntries(values).slice(-TERMINAL_MAX_ENTRIES)
-      : [];
-    const visibleEntries = entries.filter((entry) => !isLegacyEvaluationTranscriptEntry(entry) && !isLegacyInspectionEntry(entry));
-    return {
-      entries: visibleEntries,
-      migrated: legacyArray || version !== 3 || visibleEntries.length !== entries.length,
-    };
+    return parseTerminalHistory(localStorage.getItem(terminalStorageKey(campaignId)));
   } catch {
     return { entries: [], migrated: false };
   }
-}
-
-function committedTerminalTurns(entries) {
-  return new Set(entries
-    .filter((entry) => entry.channel === "game"
-      && ["opening", "gameplay", "appeal"].includes(entry.kind)
-      && Number.isSafeInteger(entry.turn)
-      && entry.turn >= 0)
-    .map((entry) => entry.turn));
-}
-
-function hasUnpairedPlayerAction(action) {
-  let latestCommittedIndex = -1;
-  for (let index = terminalHistory.length - 1; index >= 0; index -= 1) {
-    const entry = terminalHistory[index];
-    if (entry.channel === "game" && entry.kind && Number.isSafeInteger(entry.turn)) {
-      latestCommittedIndex = index;
-      break;
-    }
-  }
-  return terminalHistory.slice(latestCommittedIndex + 1).some((entry) =>
-    entry.channel === "game" && PLAYER_ACTION_TITLES.has(entry.title) && entry.text === action);
 }
 
 async function switchTerminalCampaign(campaign, { openingNarration } = {}) {
@@ -657,7 +512,7 @@ async function switchTerminalCampaign(campaign, { openingNarration } = {}) {
           committedTurns.add(turn.turn);
           continue;
         }
-        if (!hasUnpairedPlayerAction(turn.action)) print(t("you"), turn.action, "normal", "game");
+        if (!hasUnpairedPlayerAction(terminalHistory, turn.action)) print(t("you"), turn.action, "normal", "game");
         printCommittedResponse(turn);
         committedTurns.add(turn.turn);
       }

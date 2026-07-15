@@ -53,6 +53,8 @@ observable behavior and documented invariants during refactors.
 - `src/llm/structured-generation.ts` owns bounded transient/schema recovery;
   `src/llm/structured-error.ts` classifies structured failures.
 - `src/providers.ts` translates the shared request into Gemini/OpenRouter calls.
+- `src/connection-probe.ts` exercises the real setup and gameplay schemas for
+  provider compatibility checks.
 - `src/prompts.ts` is the internal Prompt Suite V1 facade. `src/prompts/`
   separates shared blocks, setup, gameplay, adjudication-only difficulty,
   administrative appeal, recovery, evaluation, and connection-probe
@@ -71,30 +73,36 @@ observable behavior and documented invariants during refactors.
 - `src/inspection.ts` owns the player-safe Character, Location, and Story
   threads projections. `src/cli/inspection.ts` renders those structured views
   in the terminal; presentation surfaces must not reconstruct state from prose.
-- `src/store.ts` owns the active/archive layout, recovery records, structured
-  inspection, appeal evidence context, and deterministic gameplay context.
+- `src/store.ts` orchestrates the active/archive layout, structured inspection,
+  appeal evidence context, and deterministic gameplay context.
 - `src/persistence/markdown.ts` owns serialization and parsing of durable files.
 - `src/persistence/files.ts` owns shared atomic writes and filesystem probes;
   `src/persistence/pending.ts` validates recoverable pending requests and commits.
-- `src/persistence/lock.ts` owns crash-recoverable cross-process exclusion;
-  `src/persistence/replacement.ts` validates durable campaign replacement intent.
+- `src/persistence/lock.ts` owns crash-recoverable cross-process exclusion.
+  `src/persistence/commit.ts` preflights and executes manifest-last commits;
+  `src/persistence/replacement.ts` validates and recovers campaign replacement.
 - `src/domain/ids.ts` owns canonical names and durable ID allocation. Entity
   filename encoding lives with the Markdown persistence codec.
-- `src/domain/transaction.ts` owns deterministic operation normalization,
-  complete validation, and in-memory application.
+- `src/domain/transaction.ts` is the atomic transaction facade;
+  `src/domain/transaction-normalization.ts` and
+  `src/domain/transaction-application.ts` own deterministic normalization and
+  in-memory application, with shared exhaustive reference mapping in
+  `src/domain/operation-references.ts`.
 - `src/domain/operation-consistency.ts` validates operation-list invariants;
   `src/domain/state-consistency.ts` validates whole-campaign referential and
   physical invariants.
 - `src/schemas.ts` is the authoritative runtime domain contract.
 - `src/mechanics.ts` is the sole d100 calculation authority.
-- `src/evaluation.ts` runs isolated self-play, shared cost accounting, progress,
-  metrics, and reports.
+- `src/evaluation.ts` is the self-play facade. `src/evaluation/` separates run
+  orchestration, contracts, configuration, shared cost accounting, telemetry,
+  manifests, metrics, and reports.
 - `src/evaluation/judge.ts` owns structured post-run judgment and turn-by-turn
   persistence audits.
 - `src/cli.ts` is a thin entry point. `src/cli/` separates command routing, human
   gameplay, evaluation commands, prompting, and project configuration.
-- `src/web-server.ts` and `web/` are the browser presentation surface over the
-  same engine. There is no separate Web CLI engine or source entry point.
+- `src/web-server.ts`, `src/web/`, and `web/` are the browser presentation
+  surface over the same engine. There is no separate Web CLI engine or source
+  entry point.
 - `tests/` uses deterministic fake providers and temporary stores. Prefer adding
   regression coverage here before changing a hard-won invariant.
 - `dist/` is generated. Never edit it directly.

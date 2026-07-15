@@ -3,14 +3,13 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as p from "@clack/prompts";
-import type { DungeonEngine } from "../engine.js";
 import { parseAppealCommand } from "../appeal.js";
 import type { LanguageCode } from "../language.js";
 import { formatCheck } from "../mechanics.js";
 import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
 import { terminalBanner, terminalHeading, terminalPrompt, terminalRule, terminalStyle } from "../terminal-style.js";
-import type { StateView, TurnResult } from "../types.js";
+import type { GameEngine, StateView, TurnResult } from "../types.js";
 import type { CliProjectContext } from "./project-context.js";
 import { takePrompt } from "./prompt.js";
 import { inspectionTitle, renderInspection } from "./inspection.js";
@@ -36,7 +35,7 @@ const HELP = `Commands:
 
 Inspect
   :character  Show player-visible character state
-  :location   Show the current location and notable occupants
+  :location   Show player-visible current-location state
   :threads    Show active and completed story threads
 
 Appeal
@@ -112,7 +111,7 @@ export class HumanGameCli {
     console.log(`\n${terminalRule()}\n${terminalHeading("Opening scene")}\n\n${setup.openingNarration.trim()}\n`);
   }
 
-  private async acceptedSetupDraft(engine: DungeonEngine): Promise<AcceptedSetupDraft> {
+  private async acceptedSetupDraft(engine: GameEngine): Promise<AcceptedSetupDraft> {
     const language = await this.project.language();
     const worldRules = (await this.project.worldProfile(language)).markdown;
     let seeds = await this.gatherSetupSeeds(language);
@@ -143,7 +142,7 @@ export class HumanGameCli {
     }
   }
 
-  private async setupNewGame(engine: DungeonEngine, replaceCurrent: boolean): Promise<void> {
+  private async setupNewGame(engine: GameEngine, replaceCurrent: boolean): Promise<void> {
     const draft = await this.acceptedSetupDraft(engine);
     // The active campaign remains authoritative throughout generation and
     // preview. Archival starts only after the player accepts a valid draft.
@@ -174,7 +173,7 @@ export class HumanGameCli {
     console.log(`\n${terminalRule()}\n`);
   }
 
-  private async handleRecovery(engine: DungeonEngine): Promise<boolean> {
+  private async handleRecovery(engine: GameEngine): Promise<boolean> {
     const pending = await engine.getPendingTurn();
     if (!pending) return true;
     if (pending.kind === "commit") {
@@ -213,7 +212,7 @@ export class HumanGameCli {
     }
   }
 
-  private async playLoop(engine: DungeonEngine): Promise<void> {
+  private async playLoop(engine: GameEngine): Promise<void> {
     console.log(terminalBanner());
     if (!(await this.handleRecovery(engine))) return;
     if (!(await engine.hasCurrentGame())) await this.setupNewGame(engine, false);

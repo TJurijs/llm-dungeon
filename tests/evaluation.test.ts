@@ -6,6 +6,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  buildEvaluationConfig,
+  configuredModelCost,
   defaultPlayerConfig,
   EvaluationConfigSchema,
   inferModelCost,
@@ -240,6 +242,36 @@ async function seedInterruptedRun(
 }
 
 describe("self-play evaluation", () => {
+  it("builds the shared schema-normalized CLI and Web evaluation configuration", () => {
+    const dm = { provider: "gemini" as const, model: "gemini-3.5-flash", temperature: 0.8, maxOutputTokens: 4000 };
+    expect(buildEvaluationConfig({
+      dmConfig: dm,
+      language: "ru",
+      sessions: 3,
+      turns: 4,
+      concurrency: 2,
+      maxCostUsd: 2,
+      playerProfiles: ["chaotic"],
+    })).toEqual({
+      language: "ru",
+      sessions: 3,
+      turns: 4,
+      concurrency: 2,
+      maxCostUsd: 2,
+      playerProfiles: ["chaotic"],
+      dm: {
+        config: dm,
+        cost: { inputPerMillion: 1.5, outputPerMillion: 9 },
+      },
+      player: {
+        config: defaultPlayerConfig(dm),
+        cost: { inputPerMillion: 0.25, outputPerMillion: 1.5 },
+      },
+    });
+    expect(() => configuredModelCost({ ...dm, model: "unknown-model" }, "DM"))
+      .toThrow("No built-in pricing for DM model unknown-model");
+  });
+
   it("uses Gemini 3.1 Flash-Lite as the default player and current standard prices", () => {
     const dm = { provider: "gemini" as const, model: "gemini-3.5-flash", temperature: 0.8, maxOutputTokens: 4000 };
     expect(defaultPlayerConfig(dm).model).toBe("gemini-3.1-flash-lite");

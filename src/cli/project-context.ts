@@ -7,7 +7,7 @@ import { createProvider as createLlmProvider, loadProviderConfig } from "../prov
 import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import { StateStore } from "../store.js";
 import { atomicWriteJson } from "../persistence/files.js";
-import type { LlmProvider } from "../types.js";
+import type { GameEngine, LlmProvider } from "../types.js";
 import { resolveWorldProfile, saveWorldProfile, type ResolvedWorldProfile } from "../world-profile.js";
 import { takePrompt } from "./prompt.js";
 
@@ -89,7 +89,7 @@ export class CliProjectContext {
     return createLlmProvider(config, this.environment);
   }
 
-  async createEngine(): Promise<DungeonEngine> {
+  async createEngine(): Promise<GameEngine> {
     const config = await this.providerConfig();
     return new DungeonEngine(
       new StateStore(this.paths.dataRoot),

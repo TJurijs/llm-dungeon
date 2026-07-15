@@ -1,9 +1,8 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { contextSection, renderContextDocument } from "./context-document.js";
-import matter from "gray-matter";
 import { DEFAULT_LANGUAGE, languageDefinition, languageInstruction, type LanguageCode } from "./language.js";
 import { projectPlayerInspection } from "./inspection.js";
 import { allocateGeneratedId, canonicalEntityName } from "./domain/ids.js";
@@ -12,7 +11,13 @@ import { applyTransaction } from "./domain/transaction.js";
 import { assertCampaignStateConsistency } from "./domain/state-consistency.js";
 import { atomicWriteJson, atomicWriteText, pathExists, unlinkIfExists } from "./persistence/files.js";
 import { acquireFileLock } from "./persistence/lock.js";
-import { ReplacementIntentSchema, type ReplacementIntent } from "./persistence/replacement.js";
+import { contentHash, executePendingCommit } from "./persistence/commit.js";
+import {
+  campaignIdAt,
+  recoverCampaignReplacement,
+  ReplacementIntentSchema,
+  type ReplacementIntent,
+} from "./persistence/replacement.js";
 import {
   PendingRequestSchema,
   PendingTurnSchema,
@@ -23,8 +28,10 @@ import {
 import {
   compactTurnHistory,
   entityFilename,
+  parseChronicle,
   parseEntity,
   parsePlayerVisibleTurn,
+  parseThreads,
   parseTurnOperationLedger,
   renderChronicle,
   renderChronicleForContext,
@@ -58,10 +65,6 @@ import type {
   StateView,
 } from "./types.js";
 
-function contentHash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
 function operationEntityReferences(operation: StateOperation): string[] {
   switch (operation.type) {
     case "create_entity": return [operation.entity.id, ...(operation.entity.location ? [operation.entity.location] : [])];
@@ -79,29 +82,6 @@ function operationEntityReferences(operation: StateOperation): string[] {
     case "update_thread": return operation.relatedEntityIds ?? [];
     default: return [];
   }
-}
-
-function commitTarget(currentDir: string, relative: string): string {
-  const supported = relative === "manifest.json"
-    || relative === "threads.md"
-    || relative === "chronicle.md"
-    || /^entities\/[^/\\]+\.md$/.test(relative)
-    || /^turns\/\d{6}\.md$/.test(relative);
-  if (
-    !supported
-    || relative.includes("\0")
-    || path.posix.normalize(relative) !== relative
-    || path.isAbsolute(relative)
-    || path.win32.isAbsolute(relative)
-  ) {
-    throw new Error(`Unsafe or unsupported path in pending commit: ${relative}`);
-  }
-  const root = path.resolve(currentDir);
-  const target = path.resolve(root, relative);
-  if (!target.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`Unsafe or unsupported path in pending commit: ${relative}`);
-  }
-  return target;
 }
 
 export interface LoadedCampaign {
@@ -255,7 +235,7 @@ export class StateStore {
   private async replaceGameUnlocked(input: NewGameInput): Promise<GameState> {
     await this.recoverReplacementUnlocked();
     const staged = await this.stageGame(input);
-    const previousCampaignId = await this.campaignIdAt(this.currentDir);
+    const previousCampaignId = await campaignIdAt(this.currentDir);
     const archivedDirectory = previousCampaignId
       ? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`
       : undefined;
@@ -278,7 +258,7 @@ export class StateStore {
     } catch (error) {
       try {
         await this.recoverReplacementUnlocked();
-        if (await this.campaignIdAt(this.currentDir) === staged.manifest.campaignId) return staged.manifest;
+        if (await campaignIdAt(this.currentDir) === staged.manifest.campaignId) return staged.manifest;
       } catch (recoveryError) {
         throw new AggregateError([error, recoveryError], "Campaign replacement failed and its durable recovery intent could not be completed");
       }
@@ -290,57 +270,13 @@ export class StateStore {
     }
   }
 
-  private async campaignIdAt(directory: string): Promise<string | undefined> {
-    const manifestPath = path.join(directory, "manifest.json");
-    if (!(await pathExists(manifestPath))) return undefined;
-    return ManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8"))).campaignId;
-  }
-
   private async recoverReplacementUnlocked(): Promise<void> {
-    if (!(await pathExists(this.replacementIntentPath))) return;
-    const intent = ReplacementIntentSchema.parse(JSON.parse(
-      await readFile(this.replacementIntentPath, "utf8"),
-    ));
-    const stagedPath = path.join(this.dataRoot, intent.stagedDirectory);
-    const archivedPath = intent.archivedDirectory
-      ? path.join(this.archiveDir, intent.archivedDirectory)
-      : undefined;
-    const stagedId = await this.campaignIdAt(stagedPath);
-    if (stagedId && stagedId !== intent.stagedCampaignId) {
-      throw new Error("Replacement staging directory belongs to another campaign");
-    }
-    if (archivedPath && await pathExists(archivedPath)) {
-      const archivedId = await this.campaignIdAt(archivedPath);
-      if (archivedId !== intent.previousCampaignId) {
-        throw new Error("Replacement archive directory belongs to another campaign");
-      }
-    }
-
-    const currentId = await this.campaignIdAt(this.currentDir);
-    if (currentId === intent.stagedCampaignId) {
-      if (stagedId) await rm(stagedPath, { recursive: true, force: true });
-      await unlinkIfExists(this.replacementIntentPath);
-      return;
-    }
-    if (currentId) {
-      if (!archivedPath || currentId !== intent.previousCampaignId || await pathExists(archivedPath)) {
-        throw new Error("Replacement intent conflicts with the active campaign");
-      }
-      await mkdir(this.archiveDir, { recursive: true });
-      await rename(this.currentDir, archivedPath);
-    }
-
-    if (await pathExists(stagedPath)) {
-      await rename(stagedPath, this.currentDir);
-      await unlinkIfExists(this.replacementIntentPath);
-      return;
-    }
-    if (archivedPath && await pathExists(archivedPath)) {
-      await rename(archivedPath, this.currentDir);
-      await unlinkIfExists(this.replacementIntentPath);
-      return;
-    }
-    throw new Error("Replacement intent has neither a staged nor recoverable archived campaign");
+    await recoverCampaignReplacement({
+      dataRoot: this.dataRoot,
+      currentDir: this.currentDir,
+      archiveDir: this.archiveDir,
+      intentPath: this.replacementIntentPath,
+    });
   }
 
   private async stageGame(input: NewGameInput): Promise<{ path: string; manifest: GameState }> {
@@ -441,7 +377,7 @@ export class StateStore {
   private async archiveAndResetUnlocked(): Promise<string | undefined> {
     await this.recoverReplacementUnlocked();
     if (!(await pathExists(this.currentDir))) return;
-    await this.recoverCommit();
+    await this.recoverCommitUnlocked();
     await mkdir(this.archiveDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const archivedPath = path.join(this.archiveDir, `${stamp}-${randomUUID().slice(0, 8)}`);
@@ -454,7 +390,7 @@ export class StateStore {
   }
 
   private async setLanguageUnlocked(language: LanguageCode): Promise<GameState> {
-    const loaded = await this.load();
+    const loaded = await this.loadUnlocked();
     const manifest = ManifestSchema.parse({
       ...loaded.manifest,
       language,
@@ -465,15 +401,26 @@ export class StateStore {
   }
 
   async readManifest(): Promise<GameState> {
+    return this.readManifestUnlocked();
+  }
+
+  // This atomic single-file diagnostic read intentionally remains available
+  // while another store instance owns the campaign lock. Multi-file snapshots
+  // use load(), which holds the lock through recovery and every related read.
+  private async readManifestUnlocked(): Promise<GameState> {
     return ManifestSchema.parse(JSON.parse(
       await readFile(path.join(this.currentDir, "manifest.json"), "utf8"),
     ));
   }
 
   async load(): Promise<LoadedCampaign> {
-    await this.withCampaignLock(() => this.recoverReplacementUnlocked());
-    await this.recoverCommit();
-    const manifest = await this.readManifest();
+    return this.withCampaignLock(() => this.loadUnlocked());
+  }
+
+  private async loadUnlocked(): Promise<LoadedCampaign> {
+    await this.recoverReplacementUnlocked();
+    await this.recoverCommitUnlocked();
+    const manifest = await this.readManifestUnlocked();
     const entityDir = path.join(this.currentDir, "entities");
     const names = (await readdir(entityDir)).filter((name) => name.endsWith(".md")).sort();
     const entities = new Map<string, Entity>();
@@ -485,15 +432,19 @@ export class StateStore {
       entityFiles.set(entity.id, name);
     }
     const scenario = await readFile(path.join(this.currentDir, "scenario.md"), "utf8");
-    const threadsDoc = matter(await readFile(path.join(this.currentDir, "threads.md"), "utf8"));
-    const chronicleDoc = matter(await readFile(path.join(this.currentDir, "chronicle.md"), "utf8"));
-    const threads = ThreadSchema.array().parse(threadsDoc.data.threads ?? []);
-    const chronicle = ChronicleEventSchema.array().parse(chronicleDoc.data.events ?? []);
+    const threads = parseThreads(await readFile(path.join(this.currentDir, "threads.md"), "utf8"));
+    const chronicle = parseChronicle(await readFile(path.join(this.currentDir, "chronicle.md"), "utf8"));
     assertCampaignStateConsistency(manifest, entities, threads, chronicle);
     return { manifest, entities, entityFiles, scenario, threads, chronicle };
   }
 
   async getPending(): Promise<PendingTurn | undefined> {
+    return this.getPendingUnlocked();
+  }
+
+  // Like readManifest(), this is a single-file diagnostic read; callers needing
+  // a coherent campaign snapshot use load().
+  private async getPendingUnlocked(): Promise<PendingTurn | undefined> {
     if (!(await pathExists(this.pendingPath))) return undefined;
     return PendingTurnSchema.parse(JSON.parse(await readFile(this.pendingPath, "utf8")));
   }
@@ -512,7 +463,7 @@ export class StateStore {
   }
 
   private async discardPendingRequestUnlocked(): Promise<void> {
-    const pending = await this.getPending();
+    const pending = await this.getPendingUnlocked();
     if (pending?.kind === "commit") throw new Error("Cannot discard a prepared commit");
     await rm(this.pendingPath, { force: true });
   }
@@ -522,68 +473,9 @@ export class StateStore {
   }
 
   private async recoverCommitUnlocked(): Promise<void> {
-    const pending = await this.getPending();
+    const pending = await this.getPendingUnlocked();
     if (!pending || pending.kind !== "commit") return;
-    await this.executeCommit(pending);
-  }
-
-  private async executeCommit(commit: PendingCommit): Promise<void> {
-    // Validate the complete recovery plan before touching the authoritative
-    // campaign. A bad later entry must never leave earlier writes applied.
-    const targets = new Map(
-      Object.keys(commit.writes).map((relative) => [relative, commitTarget(this.currentDir, relative)]),
-    );
-    const targetTurnPath = `turns/${String(commit.targetTurn).padStart(6, "0")}.md`;
-    const turnPaths = Object.keys(commit.writes).filter((relative) => relative.startsWith("turns/"));
-    if (!Object.prototype.hasOwnProperty.call(commit.writes, targetTurnPath)) {
-      throw new Error(`Pending commit must write its target turn log ${targetTurnPath}`);
-    }
-    if (turnPaths.some((relative) => relative !== targetTurnPath)) {
-      throw new Error("Pending commit may write only its target turn log");
-    }
-    const targetTurnText = commit.writes[targetTurnPath]!;
-    const targetTurnDocument = matter(targetTurnText);
-    if (targetTurnDocument.data.turn !== commit.targetTurn) {
-      throw new Error("Pending commit turn log metadata does not match its target turn");
-    }
-    parseTurnOperations(targetTurnText);
-    const existingTurnPath = targets.get(targetTurnPath)!;
-    if (await pathExists(existingTurnPath)) {
-      const existingTurn = await readFile(existingTurnPath, "utf8");
-      if (existingTurn !== targetTurnText) {
-        throw new Error(`Pending commit cannot alter existing turn log ${targetTurnPath}`);
-      }
-    }
-    const targetManifestText = commit.writes["manifest.json"]!;
-    const targetManifest = ManifestSchema.parse(JSON.parse(targetManifestText));
-    if (targetManifest.campaignId !== commit.campaignId || targetManifest.turn !== commit.targetTurn) {
-      throw new Error("Pending commit target manifest does not match its recovery metadata");
-    }
-    const manifestText = await readFile(path.join(this.currentDir, "manifest.json"), "utf8");
-    const manifest = ManifestSchema.parse(JSON.parse(manifestText));
-    if (manifest.campaignId !== commit.campaignId) throw new Error("Pending commit belongs to another campaign");
-    if (manifest.turn !== commit.expectedPreviousTurn && manifest.turn !== commit.targetTurn) {
-      throw new Error(`Pending commit expected turn ${commit.expectedPreviousTurn} or ${commit.targetTurn}, found ${manifest.turn}`);
-    }
-    if (manifest.turn === commit.targetTurn) {
-      if (manifestText !== targetManifestText) {
-        throw new Error("Committed target manifest differs from the pending recovery record");
-      }
-      await unlinkIfExists(this.pendingPath);
-      return;
-    }
-    if (contentHash(manifestText) !== commit.preManifestHash) {
-      throw new Error("Pending commit pre-state manifest hash does not match");
-    }
-    const orderedWrites = Object.entries(commit.writes).sort(([left], [right]) => {
-      if (left === "manifest.json") return 1;
-      if (right === "manifest.json") return -1;
-      return left.localeCompare(right);
-    });
-    for (const [relative, content] of orderedWrites) {
-      await atomicWriteText(targets.get(relative)!, content);
-    }
-    await unlinkIfExists(this.pendingPath);
+    await executePendingCommit(this.currentDir, this.pendingPath, pending);
   }
 
   async commitTurn(committed: CommittedTurn): Promise<GameState> {
@@ -595,7 +487,7 @@ export class StateStore {
   }
 
   private async commitTurnWithResultUnlocked(committed: CommittedTurn): Promise<CommitTurnResult> {
-    const loaded = await this.load();
+    const loaded = await this.loadUnlocked();
     if (loaded.manifest.status !== "active") throw new Error("The campaign has ended");
     const nextTurn = loaded.manifest.turn + 1;
     const turnKind = committed.kind ?? "gameplay";
@@ -610,7 +502,7 @@ export class StateStore {
     }
     const manifestPath = path.join(this.currentDir, "manifest.json");
     const preManifestText = await readFile(manifestPath, "utf8");
-    const previousOperations = (await this.currentOperationLedgerWindow(loaded.manifest.turn))
+    const previousOperations = (await this.currentOperationLedgerWindowUnlocked(loaded.manifest.turn))
       .flatMap((ledger) => ledger.operations);
     const transaction = applyTransaction(
       committed.resolved.operations,
@@ -653,7 +545,7 @@ export class StateStore {
       preManifestHash: contentHash(preManifestText),
     };
     await atomicWriteText(this.pendingPath, `${JSON.stringify(pending, null, 2)}\n`);
-    await this.executeCommit(pending);
+    await executePendingCommit(this.currentDir, this.pendingPath, pending);
     return {
       state: ManifestSchema.parse(manifest),
       operations: transaction.operations,
@@ -661,6 +553,14 @@ export class StateStore {
   }
 
   async recentTurnLogs(limit = 8): Promise<string[]> {
+    return this.withCampaignLock(async () => {
+      await this.recoverReplacementUnlocked();
+      await this.recoverCommitUnlocked();
+      return this.recentTurnLogsUnlocked(limit);
+    });
+  }
+
+  private async recentTurnLogsUnlocked(limit = 8): Promise<string[]> {
     const turnDir = path.join(this.currentDir, "turns");
     const files = (await readdir(turnDir)).filter((name) => name.endsWith(".md")).sort().slice(-limit);
     return Promise.all(files.map((name) => readFile(path.join(turnDir, name), "utf8")));
@@ -672,7 +572,7 @@ export class StateStore {
    * effects, while state-changing appeals remain part of duplicate protection
    * and model context.
    */
-  private async currentOperationLedgerWindow(latestTurn: number): Promise<TurnOperationLedger[]> {
+  private async currentOperationLedgerWindowUnlocked(latestTurn: number): Promise<TurnOperationLedger[]> {
     const reverse: TurnOperationLedger[] = [];
     for (let turn = latestTurn; turn >= 0; turn -= 1) {
       const log = await readFile(
@@ -688,13 +588,21 @@ export class StateStore {
   }
 
   async recentTranscript(limit = 8): Promise<PlayerVisibleTurn[]> {
-    const manifest = await this.readManifest();
-    return (await this.recentTurnLogs(limit))
-      .map((log) => parsePlayerVisibleTurn(log, manifest.language));
+    return this.withCampaignLock(() => this.recentTranscriptUnlocked(limit));
+  }
+
+  private async recentTranscriptUnlocked(limit: number): Promise<PlayerVisibleTurn[]> {
+    const loaded = await this.loadUnlocked();
+    return (await this.recentTurnLogsUnlocked(limit))
+      .map((log) => parsePlayerVisibleTurn(log, loaded.manifest.language));
   }
 
   async inspect(view: StateView): Promise<PlayerStateInspection> {
-    const loaded = await this.load();
+    return this.withCampaignLock(() => this.inspectUnlocked(view));
+  }
+
+  private async inspectUnlocked(view: StateView): Promise<PlayerStateInspection> {
+    const loaded = await this.loadUnlocked();
     return projectPlayerInspection(
       view,
       loaded.manifest.language,
@@ -705,7 +613,11 @@ export class StateStore {
   }
 
   async buildContext(): Promise<string> {
-    const loaded = await this.load();
+    return this.withCampaignLock(() => this.buildContextUnlocked());
+  }
+
+  private async buildContextUnlocked(): Promise<string> {
+    const loaded = await this.loadUnlocked();
     const player = loaded.entities.get(loaded.manifest.playerId);
     const location = loaded.entities.get(loaded.manifest.currentLocationId);
     if (!player || !location) throw new Error("Campaign is missing the player or current location");
@@ -741,8 +653,8 @@ export class StateStore {
         if (related) selected.set(related.id, related);
       }
     }
-    const recent = await this.recentTurnLogs(8);
-    const operationLedgerWindow = await this.currentOperationLedgerWindow(loaded.manifest.turn);
+    const recent = await this.recentTurnLogsUnlocked(8);
+    const operationLedgerWindow = await this.currentOperationLedgerWindowUnlocked(loaded.manifest.turn);
     const lastCommittedOperations = operationLedgerWindow.map((ledger) => [
       `Turn ${ledger.turn} (${ledger.kind})`,
       JSON.stringify(ledger.operations, null, 2),
@@ -780,14 +692,18 @@ export class StateStore {
   }
 
   async buildAppealContext(targetTurn?: number): Promise<string> {
-    const loaded = await this.load();
+    return this.withCampaignLock(() => this.buildAppealContextUnlocked(targetTurn));
+  }
+
+  private async buildAppealContextUnlocked(targetTurn?: number): Promise<string> {
+    const loaded = await this.loadUnlocked();
     if (targetTurn !== undefined
       && (!Number.isSafeInteger(targetTurn) || targetTurn < 1 || targetTurn > loaded.manifest.turn)) {
       throw new Error(`Appeal target turn must be between 1 and ${loaded.manifest.turn}`);
     }
 
     const evidenceLogs = targetTurn === undefined
-      ? await this.recentTurnLogs(8)
+      ? await this.recentTurnLogsUnlocked(8)
       : [await readFile(
           path.join(this.currentDir, "turns", `${String(targetTurn).padStart(6, "0")}.md`),
           "utf8",
@@ -852,7 +768,11 @@ export class StateStore {
   }
 
   async buildCanonicalStateContext(): Promise<string> {
-    const loaded = await this.load();
+    return this.withCampaignLock(() => this.buildCanonicalStateContextUnlocked());
+  }
+
+  private async buildCanonicalStateContextUnlocked(): Promise<string> {
+    const loaded = await this.loadUnlocked();
     return renderContextDocument([
       contextSection("canonical-state", "CANONICAL PERSISTENT CAMPAIGN STATE", `Turn: ${loaded.manifest.turn}; Time: ${loaded.manifest.timeLabel}; Status: ${loaded.manifest.status}; Player: ${loaded.manifest.playerId}; Current location: ${loaded.manifest.currentLocationId}`),
       contextSection("campaign-rules", "CAMPAIGN RULES AND SCENARIO", loaded.scenario),
@@ -863,7 +783,11 @@ export class StateStore {
   }
 
   async buildPlayerContext(): Promise<string> {
-    const loaded = await this.load();
+    return this.withCampaignLock(() => this.buildPlayerContextUnlocked());
+  }
+
+  private async buildPlayerContextUnlocked(): Promise<string> {
+    const loaded = await this.loadUnlocked();
     const player = loaded.entities.get(loaded.manifest.playerId);
     const location = loaded.entities.get(loaded.manifest.currentLocationId);
     if (!player || !location) throw new Error("Campaign is missing the player or current location");
@@ -874,7 +798,7 @@ export class StateStore {
     const inventory = player.inventory
       .map((entry) => `${entry.quantity} × ${loaded.entities.get(entry.entityId)?.name ?? entry.entityId}`)
       .join("\n");
-    const recentLogs = await this.recentTurnLogs(6);
+    const recentLogs = await this.recentTurnLogsUnlocked(6);
     return renderContextDocument([
       contextSection("player-context", "PLAYER-VISIBLE CAMPAIGN CONTEXT", `Turn: ${loaded.manifest.turn}; Time: ${loaded.manifest.timeLabel}; Campaign status: ${loaded.manifest.status}`),
       contextSection("output-language", "OUTPUT LANGUAGE", `${loaded.manifest.language}\n${languageInstruction(loaded.manifest.language)}`),
