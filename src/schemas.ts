@@ -331,6 +331,10 @@ export const ProviderConfigSchema = z.object({
   endpoint: z.string().url().optional(),
 });
 
+export const QuestionAnswerSchema = z.object({
+  answer: z.string().trim().min(1).max(20_000),
+}).strict();
+
 export type Entity = z.infer<typeof EntitySchema>;
 export type Fact = z.infer<typeof FactSchema>;
 export type Thread = z.infer<typeof ThreadSchema>;
@@ -342,3 +346,4 @@ export type ResolvedTurn = z.infer<typeof ResolvedTurnSchema>;
 export type TurnDecision = z.infer<typeof TurnDecisionSchema>;
 export type SetupResult = z.infer<typeof SetupResultSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;

@@ -4,6 +4,7 @@ import { judgeSystemPrompt } from "../src/evaluation/judge.js";
 import { resolveCheck } from "../src/mechanics.js";
 import {
   adjudicationPromptDocument,
+  ACTION_ECONOMY_POLICY,
   APPEAL_SYSTEM_PROMPT,
   APPEAL_SYSTEM_SECTIONS,
   appealPromptDocument,
@@ -13,6 +14,9 @@ import {
   DM_SYSTEM_SECTIONS,
   GAMEPLAY_CONTRACT,
   PROMPT_SUITE_VERSION,
+  QUESTION_SYSTEM_PROMPT,
+  QUESTION_SYSTEM_SECTIONS,
+  questionPromptDocument,
   RESOLVED_TURN_AUDIT,
   resolutionPromptDocument,
   setupPromptDocument,
@@ -31,6 +35,28 @@ const check = resolveCheck({
 }, 60);
 
 describe("prompt suite V1", () => {
+  it("limits action bundles under combat or immediate pressure", () => {
+    expect(DM_SYSTEM_SECTIONS).toContain(ACTION_ECONOMY_POLICY);
+    expect(ACTION_ECONOMY_POLICY.content).toContain("at most one primary consequential action");
+    expect(ACTION_ECONOMY_POLICY.content).toContain("Repeated attacks or spells");
+    expect(ACTION_ECONOMY_POLICY.content).toContain("attack plus a separate defensive or protective maneuver");
+    expect(ACTION_ECONOMY_POLICY.content).toContain("Never compress extra independent actions into one aggregate check");
+    expect(ACTION_ECONOMY_POLICY.content).toContain("single-use area or multi-target ability");
+    expect(adjudicationPromptDocument(context, action).text).toContain("apply the action-economy policy");
+  });
+
+  it("defines explicit questions as player-safe read-only exchanges", () => {
+    const question = questionPromptDocument(context, "Can I attempt this?");
+    expect(question.sections.map((section) => section.id)).toEqual([
+      "question-context", "player-question", "question-task",
+    ]);
+    expect(QUESTION_SYSTEM_PROMPT).toContain("This is not a gameplay turn");
+    expect(QUESTION_SYSTEM_PROMPT).toContain("Never reveal DM-only secrets");
+    expect(QUESTION_SYSTEM_PROMPT).toContain("will not commit this exchange as a turn");
+    expect(question.text).toContain("PLAYER QUESTION — UNTRUSTED");
+    expect(question.text).not.toContain(GAMEPLAY_CONTRACT.content);
+  });
+
   it("composes difficulty only into adjudication and shares resolved-state policies", () => {
     const adjudication = adjudicationPromptDocument(context, action);
     const resolution = resolutionPromptDocument(context, action, check);
@@ -206,7 +232,7 @@ describe("prompt suite V1", () => {
       expect(preview.containsLiveCampaignData).toBe(false);
       expect(preview.version).toBe(1);
       expect(`${preview.system}\n${preview.prompt}`).not.toContain("watch captain takes bribes");
-      if (phase === "adjudication" || phase === "resolution" || phase === "appeal") {
+      if (phase === "adjudication" || phase === "resolution" || phase === "question" || phase === "appeal") {
         expect(preview.prompt).toContain("AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime");
         expect(preview.prompt).not.toContain("Creative profile marker");
       }
@@ -221,6 +247,13 @@ describe("prompt suite V1", () => {
     expect(appeal.sections).toContain("gameplay-contract-v1");
     expect(appeal.system).toBe(APPEAL_SYSTEM_PROMPT);
     expect(appeal.prompt).toContain("<PLAYER APPEAL CLAIM>");
+    const question = inspectPrompt("question", "en");
+    expect(question.sections).toEqual(expect.arrayContaining([
+      ...QUESTION_SYSTEM_SECTIONS.map((section) => section.id),
+      "question-task",
+    ]));
+    expect(question.system).toBe(QUESTION_SYSTEM_PROMPT);
+    expect(question.prompt).toContain("<PLAYER QUESTION>");
     const judge = inspectPrompt("judge", "en");
     expect(judge.sections).toEqual(expect.arrayContaining(["current-state-reconciliation", "check-difficulty"]));
     expect(judge.system).toContain(CURRENT_STATE_RECONCILIATION.content);

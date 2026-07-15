@@ -68,6 +68,7 @@ During play, enter actions as ordinary text. In-game commands are:
 :character                       Show character state and inventory
 :location                        Show the current location
 :threads                         Show story threads
+:ask <question>                  Ask the DM without advancing the campaign
 :appeal <explanation>            Review a possible mistake
 :appeal --turn N <explanation>   Review a specific committed turn
 :retry                           Retry an uncommitted action or appeal
@@ -97,6 +98,7 @@ The browser interface can:
 - select language and edit world/DM style for future campaigns;
 - inspect character, location, and story state;
 - retry or discard pending actions;
+- ask out-of-character questions without advancing a turn;
 - submit appeals;
 - run and inspect self-play evaluations.
 

@@ -10,6 +10,9 @@ import {
   DM_SYSTEM_PROMPT,
   DM_SYSTEM_SECTIONS,
   PROMPT_SUITE_VERSION,
+  QUESTION_SYSTEM_PROMPT,
+  QUESTION_SYSTEM_SECTIONS,
+  questionPromptDocument,
   resolutionPromptDocument,
   setupPromptDocument,
   structuredRepairPrompt,
@@ -29,6 +32,7 @@ export const PROMPT_PHASES = [
   "adjudication",
   "difficulty",
   "resolution",
+  "question",
   "appeal",
   "schema-repair",
   "domain-correction",
@@ -116,6 +120,16 @@ export function inspectPrompt(
       const document = resolutionPromptDocument(CONTEXT_PLACEHOLDER, ACTION_PLACEHOLDER, previewCheck());
       prompt = document.text;
       sections = document.sections.map((item) => item.id);
+      break;
+    }
+    case "question": {
+      const document = questionPromptDocument(CONTEXT_PLACEHOLDER, "<PLAYER QUESTION>");
+      system = QUESTION_SYSTEM_PROMPT;
+      prompt = document.text;
+      sections = [
+        ...QUESTION_SYSTEM_SECTIONS.map((item) => item.id),
+        ...document.sections.map((item) => item.id),
+      ];
       break;
     }
     case "appeal": {

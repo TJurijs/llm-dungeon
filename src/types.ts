@@ -129,6 +129,11 @@ export interface TurnResult {
   state: GameState;
 }
 
+export interface QuestionResult {
+  kind: "question";
+  answer: string;
+}
+
 export interface PlayerVisibleTurn {
   turn: number;
   kind: TurnKind;
@@ -145,6 +150,7 @@ export interface GameEngine {
   createGame(input: NewGameInput): Promise<GameState>;
   replaceGame(input: NewGameInput): Promise<GameState>;
   play(action: string): Promise<TurnResult>;
+  ask(question: string): Promise<QuestionResult>;
   appeal(input: AppealInput): Promise<TurnResult>;
   inspect(view: StateView): Promise<PlayerStateInspection>;
   recentTranscript(limit?: number): Promise<PlayerVisibleTurn[]>;

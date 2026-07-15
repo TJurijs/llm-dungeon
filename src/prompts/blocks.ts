@@ -28,6 +28,18 @@ export const INPUT_POLICY: PromptSection = section(
 - Preserve the action's grammatical scope. Asking an NPC whether a later action is possible, proposing a plan, or requesting advice does not authorize performing that later action; resolve only what the player actually attempts now.`,
 );
 
+export const ACTION_ECONOMY_POLICY: PromptSection = section(
+  "action-economy",
+  "ACTION ECONOMY UNDER PRESSURE",
+  `- During combat, immediate danger, or active opposition, resolve at most one primary consequential action per player turn.
+- Brief speech, necessary repositioning, drawing or readying one item, and ordinary self-preservation may accompany the primary action only when they are incidental rather than separate attempts to gain another outcome or advantage.
+- Repeated attacks or spells, independent actions against several targets, an attack plus a separate defensive or protective maneuver, and unrelated maneuvers cannot all resolve in one turn unless an established ability explicitly performs them as one action.
+- Never compress extra independent actions into one aggregate check. An aggregate check resolves one coherent primary attempt, not an action bundle.
+- If one primary action and target are clear, resolve only that attempt and explicitly state which additional clauses were not completed. If the primary action or target is ambiguous, ask the player to choose and leave time and durable state unchanged.
+- An established single-use area or multi-target ability may affect multiple targets exactly within its established scope.
+- Outside immediate pressure, coherent routine sequences may proceed when elapsed time and consequences are represented normally.`,
+);
+
 export const PERSISTENCE_POLICY: PromptSection = section(
   "persistence-policy",
   "PERSISTENCE",
@@ -79,6 +91,7 @@ export const DM_SYSTEM_SECTIONS = [
   DM_IDENTITY,
   STATE_AUTHORITY_POLICY,
   INPUT_POLICY,
+  ACTION_ECONOMY_POLICY,
   PERSISTENCE_POLICY,
   NARRATIVE_POLICY,
   EXECUTION_BOUNDARY_POLICY,

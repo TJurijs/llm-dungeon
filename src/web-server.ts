@@ -26,6 +26,7 @@ import { atomicWriteJson } from "./persistence/files.js";
 import type { LlmProvider, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { parseAppealCommand } from "./appeal.js";
+import { parseQuestionCommand } from "./question.js";
 import {
   assertSafeId,
   evaluationArtifactPath,
@@ -440,6 +441,8 @@ export class DungeonWebController {
       const result = await this.withGameLock(async () => {
         await this.currentStore();
         const engine = await this.engine();
+        const question = parseQuestionCommand(body.action);
+        if (question) return engine.ask(question);
         const appeal = parseAppealCommand(body.action);
         return appeal ? engine.appeal(appeal) : engine.play(body.action);
       });

@@ -18,7 +18,7 @@ export function adjudicationPromptDocument(context: string, action: string): Pro
     section(
       "adjudication-task",
       "ADJUDICATION TASK",
-      `First preserve the exact grammatical scope of the action and account for every material clause; do not turn discussion, planning, or advice into execution.
+      `First preserve the exact grammatical scope of the action, apply the action-economy policy, and account for every material clause; do not turn discussion, planning, or advice into execution.
 Return decision=resolved when no consequential check is warranted.
 Return decision=check_required only for meaningful uncertainty. Lock the check name, calibrated difficulty, zero to five modifiers, four explicit outcome stakes, and any allowed failure campaign status. Do not narrate a rolled outcome before the application supplies the roll.`,
     ),

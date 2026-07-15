@@ -116,6 +116,31 @@ describe("turn engine", () => {
     expect(result.check).toBeUndefined();
   });
 
+  it("answers an explicit question without rolling, persisting, or advancing a turn", async () => {
+    const store = await createTestStore();
+    const provider = new FakeProvider([{ answer: "You can attempt one primary action while under immediate pressure." }]);
+    let rolls = 0;
+    const engine = new DungeonEngine(store, provider, () => { rolls += 1; return 50; });
+    const before = await store.load();
+    const beforeTranscript = await store.recentTranscript();
+
+    const result = await engine.ask("Can I attack three enemies and protect myself in one turn?");
+
+    expect(result).toEqual({
+      kind: "question",
+      answer: "You can attempt one primary action while under immediate pressure.",
+    });
+    expect(rolls).toBe(0);
+    expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]?.schemaName).toBe("campaign_question");
+    expect(provider.requests[0]?.system).toContain("This is not a gameplay turn");
+    expect(provider.requests[0]?.system).toContain("Never reveal DM-only secrets");
+    expect(provider.requests[0]?.prompt).toContain("PLAYER QUESTION — UNTRUSTED");
+    expect((await store.load()).manifest).toEqual(before.manifest);
+    expect(await store.recentTranscript()).toEqual(beforeTranscript);
+    expect(await store.getPending()).toBeUndefined();
+  });
+
   it("repairs an unambiguous omitted thread namespace before committing", async () => {
     const store = await createTestStore();
     const thread = (await store.load()).threads[0]!;

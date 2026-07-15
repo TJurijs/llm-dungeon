@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as p from "@clack/prompts";
 import { parseAppealCommand } from "../appeal.js";
+import { parseQuestionCommand } from "../question.js";
 import type { LanguageCode } from "../language.js";
 import { formatCheck } from "../mechanics.js";
 import { campaignSetupDefaults } from "../language.js";
@@ -41,6 +42,9 @@ Inspect
 Appeal
   :appeal <explanation>             Ask the DM to review a state inconsistency
   :appeal --turn N <explanation>    Review a specific committed turn
+
+Ask
+  :ask <question>                   Ask the DM without advancing the campaign
 
 Recovery
   :retry      Retry an uncommitted action (reusing a locked roll)
@@ -264,6 +268,26 @@ export class HumanGameCli {
             }),
           );
           if (confirmed) await this.setupNewGame(engine, true);
+          continue;
+        }
+        let question: ReturnType<typeof parseQuestionCommand>;
+        try {
+          question = parseQuestionCommand(action);
+        } catch (error) {
+          p.log.error(error instanceof Error ? error.message : String(error));
+          continue;
+        }
+        if (question) {
+          const spin = p.spinner();
+          spin.start("The dungeon master considers your question...");
+          try {
+            const result = await engine.ask(question);
+            spin.stop("Question answered; no turn advanced.");
+            console.log(`\n${terminalHeading("Dungeon Master", "answer — no turn")}\n\n${result.answer.trim()}\n\n${terminalRule()}\n`);
+          } catch (error) {
+            spin.stop("The question was not answered.");
+            p.log.error(error instanceof Error ? error.message : String(error));
+          }
           continue;
         }
         let appeal: ReturnType<typeof parseAppealCommand>;

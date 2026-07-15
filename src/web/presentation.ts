@@ -1,7 +1,7 @@
 import { formatCheck } from "../mechanics.js";
 import type { PendingTurn } from "../persistence/pending.js";
 import type { SetupResult } from "../schemas.js";
-import type { TurnResult } from "../types.js";
+import type { QuestionResult, TurnResult } from "../types.js";
 
 /** Deliberately omits prepared writes, action text, stakes, and raw operations. */
 export function pendingStatus(pending: PendingTurn | undefined): unknown {
@@ -35,8 +35,9 @@ export function setupPreview(setup: SetupResult): unknown {
   };
 }
 
-/** Committed-turn projection; alternate stakes and state operations stay server-side. */
-export function playerTurnResponse(result: TurnResult): unknown {
+/** Player-safe game response; alternate stakes and state operations stay server-side. */
+export function playerTurnResponse(result: TurnResult | QuestionResult): unknown {
+  if (result.kind === "question") return { kind: result.kind, answer: result.answer };
   return {
     turn: result.turn,
     kind: result.kind,

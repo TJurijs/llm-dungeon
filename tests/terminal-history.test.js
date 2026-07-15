@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   committedTerminalTurns,
   hasUnpairedPlayerAction,
@@ -10,6 +11,15 @@ import {
 } from "../web/terminal-history.js";
 
 describe("browser terminal history", () => {
+  it("uses the exported normalization helper in the browser entry point", async () => {
+    const source = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
+    expect(source).toContain("normalizeTerminalEntry,");
+    expect(source).toContain("const entry = normalizeTerminalEntry(");
+    expect(source).not.toContain("normalizedTerminalEntry");
+    expect(source).toContain('if (result.kind === "question")');
+    expect(source).toContain('t("answerHeading")');
+  });
+
   it("normalizes untrusted local storage entries conservatively", () => {
     expect(normalizeTerminalEntry(null)).toBeNull();
     expect(normalizeTerminalEntry({

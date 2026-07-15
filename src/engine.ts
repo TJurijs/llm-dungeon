@@ -1,4 +1,5 @@
 import {
+  QuestionAnswerSchema,
   ResolvedTurnSchema,
   SetupResultSchema,
   TurnDecisionSchema,
@@ -20,6 +21,8 @@ import {
   APPEAL_SYSTEM_PROMPT,
   appealPrompt,
   DM_SYSTEM_PROMPT,
+  QUESTION_SYSTEM_PROMPT,
+  questionPrompt,
   resolutionPrompt,
   setupDomainCorrectionPrompt,
   setupPrompt,
@@ -37,6 +40,7 @@ import type {
   GameEngine,
   LlmProvider,
   NewGameInput,
+  QuestionResult,
   SetupGenerationInput,
   StateView,
   StructuredResult,
@@ -139,6 +143,28 @@ export class DungeonEngine implements GameEngine {
 
   async play(action: string): Promise<TurnResult> {
     return this.store.withCampaignLock(() => this.playLocked(action));
+  }
+
+  async ask(question: string): Promise<QuestionResult> {
+    return this.store.withCampaignLock(async () => {
+      const cleanQuestion = question.trim();
+      if (!cleanQuestion) throw new Error("Question cannot be empty");
+      if (cleanQuestion.length > 10_000) throw new Error("Question exceeds 10,000 characters");
+      await this.store.load();
+      if (await this.store.getPending()) {
+        throw new Error("Resolve or discard the pending turn before asking a question");
+      }
+      const context = await this.store.buildContext();
+      const result = await this.structured.generate({
+        schemaName: "campaign_question",
+        schema: QuestionAnswerSchema,
+        system: QUESTION_SYSTEM_PROMPT,
+        prompt: questionPrompt(context, cleanQuestion),
+        temperature: 0.2,
+        maxOutputTokens: 2_000,
+      });
+      return { kind: "question", answer: result.data.answer };
+    });
   }
 
   private async playLocked(action: string): Promise<TurnResult> {

@@ -38,14 +38,19 @@ observable behavior and documented invariants during refactors.
 - Administrative appeals append a new non-fiction review turn. They never
   rewrite a committed turn, reroll, rewind, retcon, advance fictional time, end
   a campaign, or resurrect terminal state.
+- Explicit `:ask` questions are read-only and not campaign-persisted. They
+  never roll, mutate state, advance fictional time, or consume a campaign turn.
+- Under combat or immediate pressure, one player turn resolves at most one
+  primary consequential action. Incidental speech, movement, item preparation,
+  or self-preservation must not become an additional independent outcome.
 - English and Russian must remain functional and additional languages should be
   addable through the centralized registries.
 
 ## Repository map and boundaries
 
-- `src/engine.ts` orchestrates setup, pending gameplay/appeal requests, checks,
-  correction, and commit. Keep it independent from terminal and HTTP
-  presentation.
+- `src/engine.ts` orchestrates setup, read-only questions, pending
+  gameplay/appeal requests, checks, correction, and commit. Keep it independent
+  from terminal and HTTP presentation.
 - `src/types.ts` contains reusable interfaces, including `GameEngine` and
   `LlmProvider`.
 - `src/llm/gameplay-protocol.ts` is the exact Gameplay Contract V1 wire
@@ -70,6 +75,8 @@ observable behavior and documented invariants during refactors.
   `src/domain/appeal.ts` enforces the deterministic correction policy, and
   `src/prompts/appeal.ts` owns both the administrative system prompt and the
   untrusted review task prompt.
+- `src/question.ts` parses the explicit human `:ask` command, and
+  `src/prompts/question.ts` owns its player-safe read-only answer boundary.
 - `src/inspection.ts` owns the player-safe Character, Location, and Story
   threads projections. `src/cli/inspection.ts` renders those structured views
   in the terminal; presentation surfaces must not reconstruct state from prose.

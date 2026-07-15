@@ -24,8 +24,9 @@ class WebFakeProvider implements LlmProvider {
       data = { action: "I ask the innkeeper about the old road.", approach: "investigation" };
     } else if (request.schemaName === "connection_gameplay_contract_v1") {
       data = { kind: "resolved", narration: "Schema enforcement verified.", turnSummary: "Schema enforcement verified.", operations: [] };
-    }
-    else if (request.schemaName.includes("session_judgment")) {
+    } else if (request.schemaName === "campaign_question") {
+      data = { answer: "Use one primary consequential action while under immediate pressure." };
+    } else if (request.schemaName.includes("session_judgment")) {
       data = {
         verdict: "good",
         overallScore: 8,
@@ -502,6 +503,36 @@ describe("web-cli server", () => {
       appealTargetTurn: 1,
       action: ":appeal --turn 1 The greeting changed no state; please verify that is correct.",
     });
+  });
+
+  it("answers explicit questions without exposing turn fields or advancing the campaign", async () => {
+    const root = await fixtureRoot();
+    const requests: string[] = [];
+    const server = createDungeonWebServer({
+      root,
+      environment: { GEMINI_API_KEY: "test-key" },
+      providerFactory: (config) => new WebFakeProvider(config.model, (request) => requests.push(request.schemaName)),
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const draft = await json(base, "/api/campaign/draft", "POST", { premise: "A tavern.", character: "A scout." });
+    await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
+    const beforeStatus = await json(base, "/api/status");
+    const beforeTranscript = await json(base, "/api/game/transcript");
+
+    const answer = await json(base, "/api/game/play", "POST", {
+      action: ":ask Can I attack three enemies and protect myself in one turn?",
+    });
+
+    expect(answer).toEqual({
+      kind: "question",
+      answer: "Use one primary consequential action while under immediate pressure.",
+    });
+    expect(requests.at(-1)).toBe("campaign_question");
+    expect((await json(base, "/api/status")).game.campaign.turn).toBe(beforeStatus.game.campaign.turn);
+    expect(await json(base, "/api/game/transcript")).toEqual(beforeTranscript);
   });
 
   it("returns only player-visible turn, transcript, and structured inspection fields", async () => {

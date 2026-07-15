@@ -2,6 +2,7 @@ import {
   committedTerminalTurns,
   hasUnpairedPlayerAction,
   isTerminalChannel,
+  normalizeTerminalEntry,
   parseTerminalHistory,
   serializeTerminalHistory,
   terminalStorageKey,
@@ -41,7 +42,7 @@ const UI_COPY = {
     campaignGroup: "Campaign", configurationGroup: "Configuration", testingGroup: "Testing",
     game: "Play", newCampaign: "New campaign", providerKey: "Provider & key", autoRuns: "Auto-runs", worldRules: "World & style",
     play: "Play", whatDo: "What do you do?", send: "Send action", retry: "Retry pending", discard: "Discard pending",
-    sendHint: "Ctrl/⌘ + Enter sends the action. Rolls and modifiers appear in the output.",
+    sendHint: "Ctrl/⌘ + Enter sends the action. Use :ask <question> for an answer that does not advance the turn.",
     pendingHint: "Pending recovery: Retry resumes the same action or appeal, including any locked roll. Discard removes it with no world-state change.",
     inspect: "Inspect", character: "Character", location: "Location", threads: "Story threads", archive: "Archive campaign…",
     appealGenericLabel: "Appeal a state or DM mistake", appealGenericTitle: "Prefill a general appeal; nothing is sent yet", appealTurnLabel: "Appeal turn {turn}", appealTurnTitle: "Prefill an appeal for turn {turn}; nothing is sent yet", appealHeading: "APPEAL",
@@ -58,7 +59,7 @@ const UI_COPY = {
     selfPlay: "Self-play auto-runs", cost: "Cost ceiling ($)", sessions: "Sessions", turnsSession: "Turns / session", concurrency: "Parallel sessions", playerProfile: "Player profile pool", profileHint: "Select one or more. Sessions rotate through profiles in the order you select them.", playerModel: "Simulated-player model (optional override)", startRun: "Start bounded auto-run", artifacts: "Run artifacts", run: "Run", report: "Show report", resume: "Resume run", regenReport: "Regenerate report", session: "Session", transcript: "Transcript", aiEvaluation: "AI evaluation",
     worldNotice: "This creative Markdown controls setting, tone, pacing, and boundaries for future campaigns. Engine rules and protocols remain protected.", worldProfileMarkdown: "Creative profile Markdown", saveWorld: "Save creative profile", working: "Working…",
     promptInspector: "Prompt inspector", promptNotice: "Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.", promptPhase: "Prompt phase", showPrompt: "Show prompt", promptChoose: "Choose a phase to inspect its static template.",
-    phaseDmSystem: "DM system", phaseSetup: "Campaign setup", phaseAdjudication: "Turn adjudication", phaseDifficulty: "Check difficulty", phaseResolution: "Locked resolution", phaseAppeal: "Appeal review", phaseSchemaRepair: "Schema repair", phaseDomainCorrection: "Domain correction", phaseSimulatedPlayer: "Simulated player", phaseJudge: "Evaluation judge", phaseConnectionProbe: "Provider probe",
+    phaseDmSystem: "DM system", phaseSetup: "Campaign setup", phaseAdjudication: "Turn adjudication", phaseDifficulty: "Check difficulty", phaseResolution: "Locked resolution", phaseQuestion: "Out-of-character question", phaseAppeal: "Appeal review", phaseSchemaRepair: "Schema repair", phaseDomainCorrection: "Domain correction", phaseSimulatedPlayer: "Simulated player", phaseJudge: "Evaluation judge", phaseConnectionProbe: "Provider probe",
     profileDefault: "built-in native default", profileLocalized: "language-specific override", profileLegacy: "legacy custom profile", defaultPrefix: "Default",
     noCampaign: "No current campaign. Create one in the New campaign panel.", pendingAvailable: "pending action available", none: "none",
     providerMissing: "provider: not configured", noKey: "no key", campaignNone: "campaign: none", evaluationIdle: "evaluation: idle",
@@ -66,7 +67,7 @@ const UI_COPY = {
     ready: "llm-dungeon web-cli ready.\n\nConfigure a provider, create or resume a campaign, then enter any action.", emptyOutput: "No output for this tab yet.",
     changed: "LANGUAGE CHANGED", changedBody: "The selected language now applies to the interface where translated and to new campaign narration.",
     actionPlaceholder: "I approach the hooded traveler and ask why they have been watching the door.", premisePlaceholder: "Default: A classical opening in a tavern, with immediate but optional possibilities.", characterPlaceholder: "Default: A grounded adventurer with two useful traits and one complicating trait.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — recommended",
-    endpointPlaceholder: "Use provider default", keyPlaceholder: "Session-only key", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", campaignEnded: "CAMPAIGN ENDED",
+    endpointPlaceholder: "Use provider default", keyPlaceholder: "Session-only key", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", answerHeading: "ANSWER — NO TURN", campaignEnded: "CAMPAIGN ENDED",
     controlPanelsAria: "Control panels", languageAria: "Game and interface language", selectedProfilesAria: "Selected player profiles",
     campaignNoun: "campaign", turnNoun: "turn", turnHeading: "TURN", statusNoun: "status", statusHeading: "Status", evaluationNoun: "evaluation", defaultPlayer: "Default player",
     selectPlayerProfileError: "Select at least one player profile", selectProfiles: "Select profiles…", selectProfileError: "Select at least one profile.", everySession: "Every session", rotationOrder: "Rotation order",
@@ -80,7 +81,7 @@ const UI_COPY = {
     campaignGroup: "Кампания", configurationGroup: "Настройки", testingGroup: "Тестирование",
     game: "Играть", newCampaign: "Новая кампания", providerKey: "Провайдер и ключ", autoRuns: "Автопрогоны", worldRules: "Мир и стиль",
     play: "Играть", whatDo: "Что вы делаете?", send: "Отправить действие", retry: "Повторить ожидающее", discard: "Отменить ожидающее",
-    sendHint: "Ctrl/⌘ + Enter отправляет действие. Броски и модификаторы появятся в выводе.",
+    sendHint: "Ctrl/⌘ + Enter отправляет действие. Используйте :ask <вопрос>, чтобы получить ответ без нового хода.",
     pendingHint: "Восстановление: повтор продолжает то же действие или апелляцию, включая сохранённый бросок. Отмена удаляет запрос, не меняя мир.",
     inspect: "Просмотр", character: "Персонаж", location: "Локация", threads: "Сюжетные линии", archive: "Архивировать кампанию…",
     appealGenericLabel: "Оспорить состояние игры или ошибку мастера", appealGenericTitle: "Вставить общую апелляцию; ничего не отправляется", appealTurnLabel: "Оспорить ход {turn}", appealTurnTitle: "Вставить апелляцию на ход {turn}; ничего не отправляется", appealHeading: "АПЕЛЛЯЦИЯ",
@@ -97,7 +98,7 @@ const UI_COPY = {
     selfPlay: "Автоматические тестовые игры", cost: "Лимит стоимости ($)", sessions: "Сессии", turnsSession: "Ходов в сессии", concurrency: "Параллельные сессии", playerProfile: "Набор профилей игрока", profileHint: "Выберите один или несколько. Сессии чередуют профили в порядке выбора.", playerModel: "Модель игрока (необязательная замена)", startRun: "Запустить ограниченный автопрогон", artifacts: "Материалы прогонов", run: "Прогон", report: "Показать отчёт", resume: "Продолжить прогон", regenReport: "Обновить отчёт", session: "Сессия", transcript: "Транскрипт", aiEvaluation: "Оценка ИИ",
     worldNotice: "Этот творческий Markdown задаёт мир, тон, темп и границы будущих кампаний. Правила движка и протоколы защищены от изменений.", worldProfileMarkdown: "Markdown творческого профиля", saveWorld: "Сохранить творческий профиль", working: "Работаю…",
     promptInspector: "Инспектор промптов", promptNotice: "Статические шаблоны только для чтения с безопасными заполнителями. Контекст и секреты текущей кампании здесь не раскрываются.", promptPhase: "Этап промпта", showPrompt: "Показать промпт", promptChoose: "Выберите этап для просмотра статического шаблона.",
-    phaseDmSystem: "Системный промпт мастера", phaseSetup: "Создание кампании", phaseAdjudication: "Решение по ходу", phaseDifficulty: "Сложность проверки", phaseResolution: "Разрешение броска", phaseAppeal: "Рассмотрение апелляции", phaseSchemaRepair: "Исправление схемы", phaseDomainCorrection: "Исправление состояния", phaseSimulatedPlayer: "Симуляция игрока", phaseJudge: "Судья автопрогона", phaseConnectionProbe: "Проверка провайдера",
+    phaseDmSystem: "Системный промпт мастера", phaseSetup: "Создание кампании", phaseAdjudication: "Решение по ходу", phaseDifficulty: "Сложность проверки", phaseResolution: "Разрешение броска", phaseQuestion: "Внеигровой вопрос", phaseAppeal: "Рассмотрение апелляции", phaseSchemaRepair: "Исправление схемы", phaseDomainCorrection: "Исправление состояния", phaseSimulatedPlayer: "Симуляция игрока", phaseJudge: "Судья автопрогона", phaseConnectionProbe: "Проверка провайдера",
     profileDefault: "встроенный профиль", profileLocalized: "языковая настройка", profileLegacy: "старый пользовательский профиль", defaultPrefix: "По умолчанию",
     noCampaign: "Текущей кампании нет. Создайте её на вкладке «Новая кампания».", pendingAvailable: "есть ожидающее действие", none: "нет",
     providerMissing: "провайдер: не настроен", noKey: "нет ключа", campaignNone: "кампания: нет", evaluationIdle: "автопрогон: не запущен",
@@ -105,7 +106,7 @@ const UI_COPY = {
     ready: "llm-dungeon web-cli готов.\n\nНастройте провайдера, создайте или продолжите кампанию, затем введите любое действие.", emptyOutput: "На этой вкладке пока нет вывода.",
     changed: "ЯЗЫК ИЗМЕНЁН", changedBody: "Язык интерфейса и текущей кампании обновлён. Новое повествование будет на русском.",
     actionPlaceholder: "Я подхожу к путнику в капюшоне и спрашиваю, почему он следит за дверью.", premisePlaceholder: "По умолчанию: классическое начало в таверне с немедленными, но необязательными возможностями.", characterPlaceholder: "По умолчанию: приземлённый искатель приключений с двумя полезными и одной осложняющей чертой.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — рекомендуется",
-    endpointPlaceholder: "Адрес провайдера по умолчанию", keyPlaceholder: "Ключ только для этой сессии", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
+    endpointPlaceholder: "Адрес провайдера по умолчанию", keyPlaceholder: "Ключ только для этой сессии", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", answerHeading: "ОТВЕТ — БЕЗ ХОДА", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
     controlPanelsAria: "Панели управления", languageAria: "Язык игры и интерфейса", selectedProfilesAria: "Выбранные профили игрока",
     campaignNoun: "кампания", turnNoun: "ход", turnHeading: "ХОД", statusNoun: "статус", statusHeading: "Статус", evaluationNoun: "автопрогон", defaultPlayer: "Игрок по умолчанию",
     selectPlayerProfileError: "Выберите хотя бы один профиль игрока", selectProfiles: "Выберите профили…", selectProfileError: "Выберите хотя бы один профиль.", everySession: "Каждая сессия", rotationOrder: "Порядок ротации",
@@ -130,7 +131,7 @@ const STATIC_TARGETS = {
 
 const PROMPT_PHASE_COPY = {
   "dm-system": "phaseDmSystem", setup: "phaseSetup", adjudication: "phaseAdjudication", difficulty: "phaseDifficulty",
-  resolution: "phaseResolution", appeal: "phaseAppeal", "schema-repair": "phaseSchemaRepair", "domain-correction": "phaseDomainCorrection",
+  resolution: "phaseResolution", question: "phaseQuestion", appeal: "phaseAppeal", "schema-repair": "phaseSchemaRepair", "domain-correction": "phaseDomainCorrection",
   "simulated-player": "phaseSimulatedPlayer", judge: "phaseJudge", "connection-probe": "phaseConnectionProbe",
 };
 
@@ -651,7 +652,7 @@ async function api(url, options = {}) {
 }
 
 function print(title, text, mode = "normal", channel = currentTerminalChannel(), metadata = {}) {
-  const entry = normalizedTerminalEntry({ title, text, mode, channel, ...metadata });
+  const entry = normalizeTerminalEntry({ title, text, mode, channel, ...metadata });
   if (!entry) return;
   terminalHistory.push(entry);
   persistTerminalHistory();
@@ -1238,6 +1239,10 @@ async function play() {
   print(t("you"), action, "normal", "game");
   $("#action").value = "";
   const result = await api("/api/game/play", { method: "POST", body: JSON.stringify({ action }) });
+  if (result.kind === "question") {
+    print(`${t("dm")} — ${t("answerHeading")}`, result.answer, "success", "game");
+    return;
+  }
   printCommittedResponse(result);
   await refreshInspectionAfterCommit(result.state);
   if (result.state.status !== "active") print(t("campaignEnded"), `${t("statusHeading")}: ${result.state.status}`, "error", "game");
