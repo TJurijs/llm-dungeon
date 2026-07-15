@@ -329,8 +329,8 @@ and do not use destructive Git commands to manufacture a clean tree.
   location state; omit co-located entities and loose location inventory until
   the domain has explicit visibility tracking. Keep transcript reconstruction
   separate from state inspection.
-- Appeal icons only prefill a general or turn-targeted command in the action
-  field. They must never send, commit, or silently mutate state on click.
+- Ask and appeal icons only prefill a general or turn-referenced command in the
+  action field. They must never send, commit, or silently mutate state on click.
 - The browser activity log is an inspectable local audit trail, not a public API
   console. Keys remain redacted.
 - Browser draft/status/turn/transcript/inspection responses are player-safe

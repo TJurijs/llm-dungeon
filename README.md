@@ -97,7 +97,7 @@ The browser interface can:
 - configure and test providers and models;
 - select language and edit world/DM style for future campaigns;
 - inspect character, location, and story state;
-- retry or discard pending actions;
+- recover pending actions with `:retry` or `:discard`;
 - ask out-of-character questions without advancing a turn;
 - submit appeals;
 - run and inspect self-play evaluations.

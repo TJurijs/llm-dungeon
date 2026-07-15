@@ -30,6 +30,7 @@ let currentInspection = null;
 let inspectionRequestSequence = 0;
 let inspectionCampaignKey = null;
 let actionAvailable = false;
+let pendingRecoveryAvailable = false;
 const COMMAND_STORAGE_KEY = "llm-dungeon:web-cli-command-log";
 let commandLog = [];
 let terminalCampaignId;
@@ -41,10 +42,12 @@ const UI_COPY = {
     commandTitle: "Activity log", commandHint: "A local audit trail of actions performed through this interface. API keys are always redacted.", activityCloseLabel: "Close activity log", copy: "Copy", clearLog: "Clear activity", noCommands: "No activity recorded yet.", copied: "Copied", online: "WEB-CLI ONLINE",
     campaignGroup: "Campaign", configurationGroup: "Configuration", testingGroup: "Testing",
     game: "Play", newCampaign: "New campaign", providerKey: "Provider & key", autoRuns: "Auto-runs", worldRules: "World & style",
-    play: "Play", whatDo: "What do you do?", send: "Send action", retry: "Retry pending", discard: "Discard pending",
+    play: "Play", whatDo: "What do you do?", send: "Send action",
     sendHint: "Ctrl/⌘ + Enter sends the action. Use :ask <question> for an answer that does not advance the turn.",
-    pendingHint: "Pending recovery: Retry resumes the same action or appeal, including any locked roll. Discard removes it with no world-state change.",
+    pendingHint: "Pending recovery: Enter :retry to resume the same action or appeal, including its locked roll, or :discard to remove it without changing the world.",
+    pendingCommandRequired: "A turn is pending. Enter :retry or :discard before sending another action.", pendingDiscardedHeading: "PENDING TURN", pendingDiscardedBody: "Discarded without changing campaign state.",
     inspect: "Inspect", character: "Character", location: "Location", threads: "Story threads", archive: "Archive campaign…",
+    askGenericLabel: "Ask the DM without advancing the turn", askGenericTitle: "Prefill an out-of-character question; nothing is sent yet", askTurnLabel: "Ask about turn {turn}", askTurnTitle: "Prefill a question about turn {turn}; nothing is sent yet", askTurnPrefix: "Regarding turn {turn}: ",
     appealGenericLabel: "Appeal a state or DM mistake", appealGenericTitle: "Prefill a general appeal; nothing is sent yet", appealTurnLabel: "Appeal turn {turn}", appealTurnTitle: "Prefill an appeal for turn {turn}; nothing is sent yet", appealHeading: "APPEAL",
     inspectionViewsAria: "Inspection views", inspectionRegionAria: "Campaign inspection", inspectionLoading: "Loading campaign state…", inspectionLoadFailed: "Could not load campaign state.",
     descriptionHeading: "Description", traitsHeading: "Traits", conditionsHeading: "Conditions", inventoryHeading: "Inventory", featuresHeading: "Features", factsHeading: "Facts", knowledgeHeading: "Player knowledge", historyHeading: "History", relationshipsHeading: "Relationships", knownDetailsHeading: "Known details", activeThreadsHeading: "Active", resolvedThreadsHeading: "Resolved", failedThreadsHeading: "Failed", noDescription: "No description recorded.", emptyList: "None.",
@@ -80,10 +83,12 @@ const UI_COPY = {
     commandTitle: "Журнал действий", commandHint: "Локальный журнал действий, выполненных через этот интерфейс. Ключи API всегда скрыты.", activityCloseLabel: "Закрыть журнал действий", copy: "Копировать", clearLog: "Очистить действия", noCommands: "Действий пока нет.", copied: "Скопировано", online: "WEB-CLI ГОТОВ",
     campaignGroup: "Кампания", configurationGroup: "Настройки", testingGroup: "Тестирование",
     game: "Играть", newCampaign: "Новая кампания", providerKey: "Провайдер и ключ", autoRuns: "Автопрогоны", worldRules: "Мир и стиль",
-    play: "Играть", whatDo: "Что вы делаете?", send: "Отправить действие", retry: "Повторить ожидающее", discard: "Отменить ожидающее",
+    play: "Играть", whatDo: "Что вы делаете?", send: "Отправить действие",
     sendHint: "Ctrl/⌘ + Enter отправляет действие. Используйте :ask <вопрос>, чтобы получить ответ без нового хода.",
-    pendingHint: "Восстановление: повтор продолжает то же действие или апелляцию, включая сохранённый бросок. Отмена удаляет запрос, не меняя мир.",
+    pendingHint: "Восстановление: введите :retry, чтобы продолжить действие или апелляцию с сохранённым броском, либо :discard, чтобы удалить запрос без изменения мира.",
+    pendingCommandRequired: "Есть незавершённый ход. Введите :retry или :discard перед новым действием.", pendingDiscardedHeading: "НЕЗАВЕРШЁННЫЙ ХОД", pendingDiscardedBody: "Удалён без изменения состояния кампании.",
     inspect: "Просмотр", character: "Персонаж", location: "Локация", threads: "Сюжетные линии", archive: "Архивировать кампанию…",
+    askGenericLabel: "Задать мастеру вопрос без нового хода", askGenericTitle: "Вставить внеигровой вопрос; ничего не отправляется", askTurnLabel: "Спросить о ходе {turn}", askTurnTitle: "Вставить вопрос о ходе {turn}; ничего не отправляется", askTurnPrefix: "О ходе {turn}: ",
     appealGenericLabel: "Оспорить состояние игры или ошибку мастера", appealGenericTitle: "Вставить общую апелляцию; ничего не отправляется", appealTurnLabel: "Оспорить ход {turn}", appealTurnTitle: "Вставить апелляцию на ход {turn}; ничего не отправляется", appealHeading: "АПЕЛЛЯЦИЯ",
     inspectionViewsAria: "Разделы состояния", inspectionRegionAria: "Состояние кампании", inspectionLoading: "Загружаю состояние кампании…", inspectionLoadFailed: "Не удалось загрузить состояние кампании.",
     descriptionHeading: "Описание", traitsHeading: "Черты", conditionsHeading: "Состояния", inventoryHeading: "Инвентарь", featuresHeading: "Особенности", factsHeading: "Факты", knowledgeHeading: "Знания игрока", historyHeading: "История", relationshipsHeading: "Отношения", knownDetailsHeading: "Известные сведения", activeThreadsHeading: "Активные", resolvedThreadsHeading: "Завершённые", failedThreadsHeading: "Проваленные", noDescription: "Описание отсутствует.", emptyList: "Нет.",
@@ -121,7 +126,7 @@ const STATIC_TARGETS = {
   "#command-log-label": "commands", "#command-log-close": "close", ".command-dialog h2": "commandTitle", ".command-dialog > .hint": "commandHint", "#copy-command-log": "copy", "#clear-command-log": "clearLog",
   "#tab-group-campaign-label": "campaignGroup", "#tab-group-configuration-label": "configurationGroup", "#tab-group-testing-label": "testingGroup",
   '[data-panel="game"]': "game", '[data-panel="campaign"]': "newCampaign", '[data-panel="provider"]': "providerKey", '[data-panel="evaluations"]': "autoRuns", '[data-panel="world"]': "worldRules",
-  "#panel-game h1": "play", 'label[for="action"]': "whatDo", "#play": "send", "#retry": "retry", "#discard": "discard", "#panel-game .hint:not(#pending-help)": "sendHint", "#pending-help": "pendingHint", "#panel-game h2": "inspect",
+  "#panel-game h1": "play", 'label[for="action"]': "whatDo", "#play": "send", "#panel-game .hint:not(#pending-help)": "sendHint", "#pending-help": "pendingHint", "#panel-game h2": "inspect",
   '[data-view="character"]': "character", '[data-view="location"]': "location", '[data-view="threads"]': "threads", "#archive-label": "archive",
   "#panel-campaign h1": "newCampaign", 'label[for="premise"]': "premise", 'label[for="character"]': "characterConcept", "#generate-campaign": "generate", ".check span": "archiveExisting", "#confirm-campaign": "accept", "#regenerate-campaign": "regenerate",
   "#panel-provider h1": "providerKey", "#panel-provider .notice": "keyNotice", 'label[for="provider"]': "provider", '#provider option[value="gemini"]': "googleRecommended", '#provider option[value="openrouter"]': "openrouter", 'label[for="model"]': "model", 'label[for="temperature"]': "temperature", 'label[for="max-tokens"]': "maxTokens", 'label[for="endpoint"]': "endpoint", 'label[for="api-key"]': "apiKey", "#save-provider": "saveConfig", "#test-provider": "test", "#player-model-schema-hint": "playerSchemaHint",
@@ -362,7 +367,7 @@ function applyUiLanguage(language, { resetTerminal = false } = {}) {
   $("#profile-selection-summary").setAttribute("aria-label", t("selectedProfilesAria"));
   $("#inspect-buttons").setAttribute("aria-label", t("inspectionViewsAria"));
   $("#inspection-output").setAttribute("aria-label", t("inspectionRegionAria"));
-  updateAppealControlLabels();
+  updatePrefillControlLabels();
   workspaceResizer.setAttribute("aria-label", t("splitLabel"));
   workspaceResizer.title = t("splitTitle");
   for (const option of $("#prompt-phase").options) {
@@ -396,36 +401,48 @@ function setTerminalReady() {
   terminal.dataset.pristine = "true";
 }
 
-function appealCopy(key, turn) {
+function turnCopy(key, turn) {
   return t(key).replace("{turn}", String(turn));
 }
 
-function setAppealButtonCopy(button, turn) {
-  const label = turn === undefined ? t("appealGenericLabel") : appealCopy("appealTurnLabel", turn);
-  const title = turn === undefined ? t("appealGenericTitle") : appealCopy("appealTurnTitle", turn);
+function setPrefillButtonCopy(button, kind, turn) {
+  const prefix = kind === "ask" ? "ask" : "appeal";
+  const label = turn === undefined ? t(`${prefix}GenericLabel`) : turnCopy(`${prefix}TurnLabel`, turn);
+  const title = turn === undefined ? t(`${prefix}GenericTitle`) : turnCopy(`${prefix}TurnTitle`, turn);
   button.setAttribute("aria-label", label);
   button.title = title;
 }
 
-function updateAppealControlLabels() {
-  setAppealButtonCopy($("#appeal-generic"));
-  $$('[data-appeal-turn]').forEach((button) => setAppealButtonCopy(button, Number(button.dataset.appealTurn)));
+function updatePrefillControlLabels() {
+  setPrefillButtonCopy($("#ask-generic"), "ask");
+  setPrefillButtonCopy($("#appeal-generic"), "appeal");
+  $$('[data-ask-turn]').forEach((button) => setPrefillButtonCopy(button, "ask", Number(button.dataset.askTurn)));
+  $$('[data-appeal-turn]').forEach((button) => setPrefillButtonCopy(button, "appeal", Number(button.dataset.appealTurn)));
 }
 
-function updateAppealAvailability() {
+function updatePrefillAvailability() {
+  $("#ask-generic").disabled = !actionAvailable;
   $("#appeal-generic").disabled = !actionAvailable;
+  $$('[data-ask-turn]').forEach((button) => { button.disabled = !actionAvailable; });
   $$('[data-appeal-turn]').forEach((button) => { button.disabled = !actionAvailable; });
 }
 
-function createTurnAppealButton(turn) {
+function createTurnPrefillButton(kind, turn) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "appeal-button terminal-appeal-button";
-  button.dataset.appealTurn = String(turn);
-  button.append($("#appeal-generic svg").cloneNode(true));
+  button.className = `action-prefill-button ${kind}-button`;
+  button.dataset[kind === "ask" ? "askTurn" : "appealTurn"] = String(turn);
+  button.append($(`#${kind}-generic svg`).cloneNode(true));
   button.disabled = !actionAvailable;
-  setAppealButtonCopy(button, turn);
+  setPrefillButtonCopy(button, kind, turn);
   return button;
+}
+
+function createTurnPrefillControls(turn) {
+  const controls = document.createElement("span");
+  controls.className = "terminal-turn-actions";
+  controls.append(createTurnPrefillButton("ask", turn), createTurnPrefillButton("appeal", turn));
+  return controls;
 }
 
 function appendTerminalEntry(entry) {
@@ -442,7 +459,7 @@ function appendTerminalEntry(entry) {
   titleElement.textContent = entry.title;
   heading.append(markerElement, titleElement);
   if (entry.channel === "game" && entry.kind === "gameplay" && Number.isSafeInteger(entry.turn) && entry.turn > 0) {
-    heading.append(createTurnAppealButton(entry.turn));
+    heading.append(createTurnPrefillControls(entry.turn));
   }
   const body = document.createElement("pre");
   body.textContent = entry.text;
@@ -907,15 +924,24 @@ async function loadInspection(view, { record = true, showLoading = true } = {}) 
   }
 }
 
-function prefillAppeal(turn) {
+function setActionPrefill(prefix, pattern) {
   const input = $("#action");
-  const prefix = turn === undefined ? ":appeal " : `:appeal --turn ${turn} `;
   const existing = input.value.trim();
-  const appeal = existing.match(/^:appeal(?:\s+--turn\s+\d+)?(?:\s+([\s\S]*))?$/);
-  const claim = (appeal ? appeal[1] ?? "" : existing).trim();
-  input.value = claim ? `${prefix}${claim}` : prefix;
+  const currentPrefill = existing.match(pattern);
+  const content = (currentPrefill ? currentPrefill[1] ?? "" : existing).trim();
+  input.value = content ? `${prefix}${content}` : prefix;
   input.focus({ preventScroll: false });
   input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function prefillAsk(turn) {
+  const context = turn === undefined ? "" : turnCopy("askTurnPrefix", turn);
+  setActionPrefill(`:ask ${context}`, /^:ask(?:\s+(?:Regarding turn|О ходе)\s+\d+:)?(?:\s+([\s\S]*))?$/);
+}
+
+function prefillAppeal(turn) {
+  const prefix = turn === undefined ? ":appeal " : `:appeal --turn ${turn} `;
+  setActionPrefill(prefix, /^:appeal(?:\s+--turn\s+\d+)?(?:\s+([\s\S]*))?$/);
 }
 
 function printCommittedResponse(result) {
@@ -1015,17 +1041,17 @@ async function refreshStatus() {
       : t("noCampaign");
     const gameBusy = Boolean(status.game.busy);
     const hasGame = Boolean(status.game.exists);
-    const canPlay = hasGame && campaign?.status === "active" && !status.game.pending && !gameBusy;
-    actionAvailable = canPlay;
     const hasPendingRequest = status.game.pending?.kind === "action" || status.game.pending?.kind === "appeal";
-    $("#action").disabled = !canPlay;
-    $("#play").disabled = !canPlay;
-    $("#retry").disabled = !hasPendingRequest || gameBusy;
-    $("#discard").disabled = !hasPendingRequest || gameBusy;
+    const canPlay = hasGame && campaign?.status === "active" && !status.game.pending && !gameBusy;
+    const canEnterRecoveryCommand = hasGame && campaign?.status === "active" && hasPendingRequest && !gameBusy;
+    actionAvailable = canPlay;
+    pendingRecoveryAvailable = canEnterRecoveryCommand;
+    $("#action").disabled = !canPlay && !canEnterRecoveryCommand;
+    $("#play").disabled = !canPlay && !canEnterRecoveryCommand;
     $("#pending-help").classList.toggle("hidden", !hasPendingRequest);
     $("#archive").disabled = !hasGame || gameBusy;
     $$("#inspect-buttons button").forEach((button) => { button.disabled = !hasGame || gameBusy; });
-    updateAppealAvailability();
+    updatePrefillAvailability();
     $("#archive-on-confirm").disabled = !hasGame;
     if (!hasGame) $("#archive-on-confirm").checked = false;
     if (shouldRefreshInspection && hasGame) {
@@ -1228,13 +1254,29 @@ async function confirmCampaign() {
   showPanel("game");
 }
 
+function lockActionControls() {
+  actionAvailable = false;
+  pendingRecoveryAvailable = false;
+  $("#action").disabled = true;
+  $("#play").disabled = true;
+  updatePrefillAvailability();
+}
+
 async function play() {
   const action = $("#action").value.trim();
   if (!action) throw new Error("Enter an action first");
-  actionAvailable = false;
-  $("#action").disabled = true;
-  $("#play").disabled = true;
-  updateAppealAvailability();
+  if (action === ":retry") {
+    lockActionControls();
+    $("#action").value = "";
+    return retry();
+  }
+  if (action === ":discard") {
+    lockActionControls();
+    $("#action").value = "";
+    return discardPending();
+  }
+  if (pendingRecoveryAvailable) throw new Error(t("pendingCommandRequired"));
+  lockActionControls();
   recordCommand(`> ${action}`);
   print(t("you"), action, "normal", "game");
   $("#action").value = "";
@@ -1253,6 +1295,12 @@ async function retry() {
   const result = await api("/api/game/retry", { method: "POST", body: "{}" });
   printCommittedResponse(result);
   await refreshInspectionAfterCommit(result.state);
+}
+
+async function discardPending() {
+  recordCommand(":discard");
+  await api("/api/game/discard", { method: "POST", body: "{}" });
+  print(t("pendingDiscardedHeading"), t("pendingDiscardedBody"), "success", "game");
 }
 
 function runPayload() {
@@ -1455,11 +1503,6 @@ $("#generate-campaign").addEventListener("click", () => work("Generating campaig
 $("#regenerate-campaign").addEventListener("click", () => work("Regenerating campaign…", generateCampaign));
 $("#confirm-campaign").addEventListener("click", () => work("Creating campaign…", confirmCampaign));
 $("#play").addEventListener("click", () => work("The dungeon master considers the world…", play));
-$("#retry").addEventListener("click", () => work("Retrying pending turn…", retry));
-$("#discard").addEventListener("click", () => work("Discarding pending turn…", async () => {
-  recordCommand(":discard");
-  await api("/api/game/discard", { method: "POST", body: "{}" }); print("PENDING TURN", "Discarded without changing campaign state.", "success", "game");
-}));
 $("#archive").addEventListener("click", () => {
   if (!confirm(t("archiveConfirm"))) return;
   recordCommand("campaign.archive");
@@ -1473,12 +1516,15 @@ $("#inspect-buttons").addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("button[data-view]") : null;
   if (button?.dataset.view) loadInspection(button.dataset.view);
 });
+$("#ask-generic").addEventListener("click", () => prefillAsk());
 $("#appeal-generic").addEventListener("click", () => prefillAppeal());
 terminal.addEventListener("click", (event) => {
-  const button = event.target instanceof Element ? event.target.closest("[data-appeal-turn]") : null;
+  const button = event.target instanceof Element ? event.target.closest("[data-ask-turn], [data-appeal-turn]") : null;
   if (!button || button.disabled) return;
-  const turn = Number(button.dataset.appealTurn);
-  if (Number.isSafeInteger(turn) && turn > 0) prefillAppeal(turn);
+  const turn = Number(button.dataset.askTurn ?? button.dataset.appealTurn);
+  if (!Number.isSafeInteger(turn) || turn < 1) return;
+  if (button.dataset.askTurn) prefillAsk(turn);
+  else prefillAppeal(turn);
 });
 $("#action").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); work("The dungeon master considers the world…", play); }

@@ -20,6 +20,26 @@ describe("browser terminal history", () => {
     expect(source).toContain('t("answerHeading")');
   });
 
+  it("uses distinct ask and appeal prefill icons and command-only pending recovery", async () => {
+    const [app, html, styles] = await Promise.all([
+      readFile(new URL("../web/app.js", import.meta.url), "utf8"),
+      readFile(new URL("../web/index.html", import.meta.url), "utf8"),
+      readFile(new URL("../web/styles.css", import.meta.url), "utf8"),
+    ]);
+
+    expect(html).toContain('id="ask-generic" class="action-prefill-button ask-button"');
+    expect(html).toContain('id="appeal-generic" class="action-prefill-button appeal-button"');
+    expect(html).toContain('<circle cx="12" cy="12" r="9"></circle>');
+    expect(html).toContain('<path d="M12 3 2.7 20h18.6L12 3Z"></path>');
+    expect(html).not.toContain('id="retry"');
+    expect(html).not.toContain('id="discard"');
+    expect(app).toContain('controls.append(createTurnPrefillButton("ask", turn), createTurnPrefillButton("appeal", turn));');
+    expect(app).toContain('if (action === ":retry")');
+    expect(app).toContain('if (action === ":discard")');
+    expect(styles).toContain(".ask-button:hover");
+    expect(styles).toContain(".appeal-button:hover");
+  });
+
   it("normalizes untrusted local storage entries conservatively", () => {
     expect(normalizeTerminalEntry(null)).toBeNull();
     expect(normalizeTerminalEntry({
