@@ -13,6 +13,7 @@ import {
 import type { CommittedTurn, PlayerVisibleTurn, TurnKind } from "../types.js";
 import { CheckResultSchema, formatCheck } from "../mechanics.js";
 import { DEFAULT_LANGUAGE, type LanguageCode } from "../language.js";
+import { UsageSchema, type Usage } from "../usage.js";
 
 const SECTION_HEADINGS: Record<Fact["section"], string> = {
   established: "Established Facts",
@@ -38,6 +39,13 @@ export interface TurnOperationLedger {
   turn: number;
   kind: TurnKind;
   operations: StateOperation[];
+}
+
+export interface TurnGenerationMetadata {
+  turn: number;
+  provider: string;
+  model: string;
+  usage?: Usage;
 }
 
 export function entityFilename(id: string): string {
@@ -356,6 +364,28 @@ export function parseTurnOperations(log: string): StateOperation[] {
   const fenced = section.match(/^```json\s*([\s\S]*?)\s*```$/);
   if (!fenced?.[1]) throw new Error("Turn log is missing its structured state operations");
   return StateOperationSchema.array().parse(JSON.parse(fenced[1]));
+}
+
+/** Decode private provider usage metadata without exposing narrative or operations. */
+export function parseTurnGenerationMetadata(log: string): TurnGenerationMetadata {
+  const parsed = matter(log);
+  if (!Number.isInteger(parsed.data.turn) || parsed.data.turn < 0) {
+    throw new Error("Turn log is missing a valid turn number");
+  }
+  const provider = typeof parsed.data.provider === "string" && parsed.data.provider
+    ? parsed.data.provider
+    : "unknown";
+  const model = typeof parsed.data.model === "string" && parsed.data.model
+    ? parsed.data.model
+    : "unknown";
+  const parsedUsage = UsageSchema.safeParse(parsed.data.usage);
+  const usage = parsedUsage.success ? parsedUsage.data : undefined;
+  return {
+    turn: parsed.data.turn as number,
+    provider,
+    model,
+    ...(usage ? { usage } : {}),
+  };
 }
 
 /** Decode the private operation ledger metadata needed by deterministic state selection. */

@@ -43,10 +43,10 @@ const UI_COPY = {
     campaignGroup: "Campaign", configurationGroup: "Configuration", testingGroup: "Testing",
     game: "Play", newCampaign: "New campaign", providerKey: "Provider & key", autoRuns: "Auto-runs", worldRules: "World & style",
     play: "Play", whatDo: "What do you do?", send: "Send action",
-    sendHint: "Ctrl/⌘ + Enter sends the action. Use :ask <question> for an answer that does not advance the turn.",
+    sendHint: "{shortcut} sends the action. Use :ask <question> for an answer that does not advance the turn.",
     pendingHint: "Pending recovery: Enter :retry to resume the same action or appeal, including its locked roll, or :discard to remove it without changing the world.",
     pendingCommandRequired: "A turn is pending. Enter :retry or :discard before sending another action.", pendingDiscardedHeading: "PENDING TURN", pendingDiscardedBody: "Discarded without changing campaign state.",
-    inspect: "Inspect", character: "Character", location: "Location", threads: "Story threads", archive: "Archive campaign…",
+    inspect: "Inspect", character: "Character", location: "Location", threads: "Story threads", exportCampaign: "Export campaign log (.md)", archive: "Archive campaign…",
     askGenericLabel: "Ask the DM without advancing the turn", askGenericTitle: "Prefill an out-of-character question; nothing is sent yet", askTurnLabel: "Ask about turn {turn}", askTurnTitle: "Prefill a question about turn {turn}; nothing is sent yet", askTurnPrefix: "Regarding turn {turn}: ",
     appealGenericLabel: "Appeal a state or DM mistake", appealGenericTitle: "Prefill a general appeal; nothing is sent yet", appealTurnLabel: "Appeal turn {turn}", appealTurnTitle: "Prefill an appeal for turn {turn}; nothing is sent yet", appealHeading: "APPEAL",
     inspectionViewsAria: "Inspection views", inspectionRegionAria: "Campaign inspection", inspectionLoading: "Loading campaign state…", inspectionLoadFailed: "Could not load campaign state.",
@@ -61,7 +61,7 @@ const UI_COPY = {
     schemaFullTitle: "Compatible · setup and gameplay schemas enforced", schemaFullDetail: "The provider accepted the campaign-setup schema and exact Gameplay Contract V1 wire schema; no degraded fallback is used.", schemaFailedTitle: "Incompatible · required schema rejected", schemaFailedDetail: "This provider/model cannot pass every schema required to create and play a campaign.", openrouterSchemaRequirement: "The selected model route supports strict response_format=json_schema.", geminiSchemaRequirement: "The selected Gemini model accepts both provider-enforced schemas.", playerSchemaHint: "A player-model override must also support schema-constrained JSON output.", connectionSchemaOk: "CONNECTION + REQUIRED SCHEMAS OK",
     selfPlay: "Self-play auto-runs", cost: "Cost ceiling ($)", sessions: "Sessions", turnsSession: "Turns / session", concurrency: "Parallel sessions", playerProfile: "Player profile pool", profileHint: "Select one or more. Sessions rotate through profiles in the order you select them.", playerModel: "Simulated-player model (optional override)", startRun: "Start bounded auto-run", artifacts: "Run artifacts", run: "Run", report: "Show report", resume: "Resume run", regenReport: "Regenerate report", session: "Session", transcript: "Transcript", aiEvaluation: "AI evaluation",
     worldNotice: "This creative Markdown controls setting, tone, pacing, and boundaries for future campaigns. Engine rules and protocols remain protected.", worldProfileMarkdown: "Creative profile Markdown", saveWorld: "Save creative profile", working: "Working…",
-    promptInspector: "Prompt inspector", promptNotice: "Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.", promptPhase: "Prompt phase", showPrompt: "Show prompt", promptChoose: "Choose a phase to inspect its static template.",
+    promptInspector: "Prompt inspector", promptNotice: "Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.", promptPhase: "Prompt template", showPrompt: "Show prompt", promptChoose: "Choose a template to inspect its static prompt.", promptSources: "Editable source files (from project root)", promptSharedSystem: "The SYSTEM section is intentionally shared; the phase-specific TASK section comes from the other listed file.",
     phaseDmSystem: "DM system", phaseSetup: "Campaign setup", phaseAdjudication: "Turn adjudication", phaseDifficulty: "Check difficulty", phaseResolution: "Locked resolution", phaseQuestion: "Out-of-character question", phaseAppeal: "Appeal review", phaseSchemaRepair: "Schema repair", phaseDomainCorrection: "Domain correction", phaseSimulatedPlayer: "Simulated player", phaseJudge: "Evaluation judge", phaseConnectionProbe: "Provider probe",
     profileDefault: "built-in native default", profileLocalized: "language-specific override", profileLegacy: "legacy custom profile", defaultPrefix: "Default",
     noCampaign: "No current campaign. Create one in the New campaign panel.", pendingAvailable: "pending action available", none: "none",
@@ -72,7 +72,7 @@ const UI_COPY = {
     actionPlaceholder: "I approach the hooded traveler and ask why they have been watching the door.", premisePlaceholder: "Default: A classical opening in a tavern, with immediate but optional possibilities.", characterPlaceholder: "Default: A grounded adventurer with two useful traits and one complicating trait.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — recommended",
     keyPlaceholder: "Optional session override", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", answerHeading: "ANSWER — NO TURN", campaignEnded: "CAMPAIGN ENDED",
     controlPanelsAria: "Control panels", languageAria: "Game and interface language", selectedProfilesAria: "Selected player profiles",
-    campaignNoun: "campaign", turnNoun: "turn", turnHeading: "TURN", statusNoun: "status", statusHeading: "Status", evaluationNoun: "evaluation", defaultPlayer: "Default player",
+    campaignNoun: "campaign", turnNoun: "turn", turnHeading: "TURN", statusNoun: "status", statusHeading: "Status", campaignCost: "cost", evaluationNoun: "evaluation", defaultPlayer: "Default player",
     selectPlayerProfileError: "Select at least one player profile", selectProfiles: "Select profiles…", selectProfileError: "Select at least one profile.", everySession: "Every session", rotationOrder: "Rotation order",
     autoRunHeading: "AUTO-RUN", profileHeading: "Profile", openingHeading: "OPENING", turnFailedHeading: "TURN FAILED", unknownTechnicalFailure: "Unknown technical failure", changingLanguage: "Changing language…",
     connectionEnforcementLabel: "Enforcement", connectionEnforcementMode: "campaign setup + exact Gameplay Contract V1 machine-code schema + local domain validation", connectionSafetyLabel: "Safety", connectionSafetyMode: "unrestricted fallback intentionally disabled (fail closed)",
@@ -84,10 +84,10 @@ const UI_COPY = {
     campaignGroup: "Кампания", configurationGroup: "Настройки", testingGroup: "Тестирование",
     game: "Играть", newCampaign: "Новая кампания", providerKey: "Провайдер и ключ", autoRuns: "Автопрогоны", worldRules: "Мир и стиль",
     play: "Играть", whatDo: "Что вы делаете?", send: "Отправить действие",
-    sendHint: "Ctrl/⌘ + Enter отправляет действие. Используйте :ask <вопрос>, чтобы получить ответ без нового хода.",
+    sendHint: "{shortcut} отправляет действие. Используйте :ask <вопрос>, чтобы получить ответ без нового хода.",
     pendingHint: "Восстановление: введите :retry, чтобы продолжить действие или апелляцию с сохранённым броском, либо :discard, чтобы удалить запрос без изменения мира.",
     pendingCommandRequired: "Есть незавершённый ход. Введите :retry или :discard перед новым действием.", pendingDiscardedHeading: "НЕЗАВЕРШЁННЫЙ ХОД", pendingDiscardedBody: "Удалён без изменения состояния кампании.",
-    inspect: "Просмотр", character: "Персонаж", location: "Локация", threads: "Сюжетные линии", archive: "Архивировать кампанию…",
+    inspect: "Просмотр", character: "Персонаж", location: "Локация", threads: "Сюжетные линии", exportCampaign: "Экспорт журнала кампании (.md)", archive: "Архивировать кампанию…",
     askGenericLabel: "Задать мастеру вопрос без нового хода", askGenericTitle: "Вставить внеигровой вопрос; ничего не отправляется", askTurnLabel: "Спросить о ходе {turn}", askTurnTitle: "Вставить вопрос о ходе {turn}; ничего не отправляется", askTurnPrefix: "О ходе {turn}: ",
     appealGenericLabel: "Оспорить состояние игры или ошибку мастера", appealGenericTitle: "Вставить общую апелляцию; ничего не отправляется", appealTurnLabel: "Оспорить ход {turn}", appealTurnTitle: "Вставить апелляцию на ход {turn}; ничего не отправляется", appealHeading: "АПЕЛЛЯЦИЯ",
     inspectionViewsAria: "Разделы состояния", inspectionRegionAria: "Состояние кампании", inspectionLoading: "Загружаю состояние кампании…", inspectionLoadFailed: "Не удалось загрузить состояние кампании.",
@@ -102,7 +102,7 @@ const UI_COPY = {
     schemaFullTitle: "Совместимо · схемы создания и игры применяются", schemaFullDetail: "Провайдер принял схему создания кампании и точную схему Gameplay Contract V1; ослабленный резервный режим не используется.", schemaFailedTitle: "Несовместимо · обязательная схема отклонена", schemaFailedDetail: "Эта комбинация провайдера и модели не прошла все проверки, необходимые для создания и игры кампании.", openrouterSchemaRequirement: "Выбранный маршрут модели поддерживает строгий response_format=json_schema.", geminiSchemaRequirement: "Выбранная модель Gemini принимает обе схемы, заданные провайдеру.", playerSchemaHint: "Переопределённая модель игрока также должна поддерживать JSON с ограничением схемой.", connectionSchemaOk: "СОЕДИНЕНИЕ И ОБЯЗАТЕЛЬНЫЕ СХЕМЫ В ПОРЯДКЕ",
     selfPlay: "Автоматические тестовые игры", cost: "Лимит стоимости ($)", sessions: "Сессии", turnsSession: "Ходов в сессии", concurrency: "Параллельные сессии", playerProfile: "Набор профилей игрока", profileHint: "Выберите один или несколько. Сессии чередуют профили в порядке выбора.", playerModel: "Модель игрока (необязательная замена)", startRun: "Запустить ограниченный автопрогон", artifacts: "Материалы прогонов", run: "Прогон", report: "Показать отчёт", resume: "Продолжить прогон", regenReport: "Обновить отчёт", session: "Сессия", transcript: "Транскрипт", aiEvaluation: "Оценка ИИ",
     worldNotice: "Этот творческий Markdown задаёт мир, тон, темп и границы будущих кампаний. Правила движка и протоколы защищены от изменений.", worldProfileMarkdown: "Markdown творческого профиля", saveWorld: "Сохранить творческий профиль", working: "Работаю…",
-    promptInspector: "Инспектор промптов", promptNotice: "Статические шаблоны только для чтения с безопасными заполнителями. Контекст и секреты текущей кампании здесь не раскрываются.", promptPhase: "Этап промпта", showPrompt: "Показать промпт", promptChoose: "Выберите этап для просмотра статического шаблона.",
+    promptInspector: "Инспектор промптов", promptNotice: "Статические шаблоны только для чтения с безопасными заполнителями. Контекст и секреты текущей кампании здесь не раскрываются.", promptPhase: "Шаблон промпта", showPrompt: "Показать промпт", promptChoose: "Выберите шаблон для просмотра статического промпта.", promptSources: "Файлы для редактирования (от корня проекта)", promptSharedSystem: "Раздел SYSTEM намеренно общий; специальный для этого шаблона раздел TASK находится в остальных указанных файлах.",
     phaseDmSystem: "Системный промпт мастера", phaseSetup: "Создание кампании", phaseAdjudication: "Решение по ходу", phaseDifficulty: "Сложность проверки", phaseResolution: "Разрешение броска", phaseQuestion: "Внеигровой вопрос", phaseAppeal: "Рассмотрение апелляции", phaseSchemaRepair: "Исправление схемы", phaseDomainCorrection: "Исправление состояния", phaseSimulatedPlayer: "Симуляция игрока", phaseJudge: "Судья автопрогона", phaseConnectionProbe: "Проверка провайдера",
     profileDefault: "встроенный профиль", profileLocalized: "языковая настройка", profileLegacy: "старый пользовательский профиль", defaultPrefix: "По умолчанию",
     noCampaign: "Текущей кампании нет. Создайте её на вкладке «Новая кампания».", pendingAvailable: "есть ожидающее действие", none: "нет",
@@ -113,7 +113,7 @@ const UI_COPY = {
     actionPlaceholder: "Я подхожу к путнику в капюшоне и спрашиваю, почему он следит за дверью.", premisePlaceholder: "По умолчанию: классическое начало в таверне с немедленными, но необязательными возможностями.", characterPlaceholder: "По умолчанию: приземлённый искатель приключений с двумя полезными и одной осложняющей чертой.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — рекомендуется",
     keyPlaceholder: "Необязательная замена на сеанс", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", answerHeading: "ОТВЕТ — БЕЗ ХОДА", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
     controlPanelsAria: "Панели управления", languageAria: "Язык игры и интерфейса", selectedProfilesAria: "Выбранные профили игрока",
-    campaignNoun: "кампания", turnNoun: "ход", turnHeading: "ХОД", statusNoun: "статус", statusHeading: "Статус", evaluationNoun: "автопрогон", defaultPlayer: "Игрок по умолчанию",
+    campaignNoun: "кампания", turnNoun: "ход", turnHeading: "ХОД", statusNoun: "статус", statusHeading: "Статус", campaignCost: "стоимость", evaluationNoun: "автопрогон", defaultPlayer: "Игрок по умолчанию",
     selectPlayerProfileError: "Выберите хотя бы один профиль игрока", selectProfiles: "Выберите профили…", selectProfileError: "Выберите хотя бы один профиль.", everySession: "Каждая сессия", rotationOrder: "Порядок ротации",
     autoRunHeading: "АВТОПРОГОН", profileHeading: "Профиль", openingHeading: "НАЧАЛО", turnFailedHeading: "СБОЙ ХОДА", unknownTechnicalFailure: "Неизвестная техническая ошибка", changingLanguage: "Меняю язык…",
     connectionEnforcementLabel: "Применение схем", connectionEnforcementMode: "схема создания кампании + точная Gameplay Contract V1 с машинными кодами + локальная проверка домена", connectionSafetyLabel: "Безопасность", connectionSafetyMode: "неограниченный резервный режим намеренно отключён (ошибка вместо ослабления схемы)",
@@ -127,7 +127,7 @@ const STATIC_TARGETS = {
   "#tab-group-campaign-label": "campaignGroup", "#tab-group-configuration-label": "configurationGroup", "#tab-group-testing-label": "testingGroup",
   '[data-panel="game"]': "game", '[data-panel="campaign"]': "newCampaign", '[data-panel="provider"]': "providerKey", '[data-panel="evaluations"]': "autoRuns", '[data-panel="world"]': "worldRules",
   "#panel-game h1": "play", 'label[for="action"]': "whatDo", "#play": "send", "#panel-game .hint:not(#pending-help)": "sendHint", "#pending-help": "pendingHint", "#panel-game h2": "inspect",
-  '[data-view="character"]': "character", '[data-view="location"]': "location", '[data-view="threads"]': "threads", "#archive-label": "archive",
+  '[data-view="character"]': "character", '[data-view="location"]': "location", '[data-view="threads"]': "threads", "#export-campaign-label": "exportCampaign", "#archive-label": "archive",
   "#panel-campaign h1": "newCampaign", 'label[for="premise"]': "premise", 'label[for="character"]': "characterConcept", "#generate-campaign": "generate", ".check span": "archiveExisting", "#confirm-campaign": "accept", "#regenerate-campaign": "regenerate",
   "#panel-provider h1": "providerKey", "#panel-provider .notice": "keyNotice", 'label[for="provider"]': "provider", '#provider option[value="gemini"]': "googleRecommended", '#provider option[value="openrouter"]': "openrouter", 'label[for="model"]': "model", 'label[for="temperature"]': "temperature", 'label[for="max-tokens"]': "maxTokens", 'label[for="api-key"]': "apiKey", "#save-provider": "saveConfig", "#test-provider": "test", "#player-model-schema-hint": "playerSchemaHint",
   "#panel-evaluations h1": "selfPlay", 'label[for="max-cost"]': "cost", 'label[for="sessions"]': "sessions", 'label[for="turns"]': "turnsSession", 'label[for="concurrency"]': "concurrency", "#profile-control legend": "playerProfile", "#profile-help": "profileHint", 'label[for="player-model"]': "playerModel", "#start-evaluation": "startRun", "#panel-evaluations h2": "artifacts", 'label[for="run-select"]': "run", "#show-report": "report", "#resume-run": "resume", "#regenerate-report": "regenReport", 'label[for="session-select"]': "session", "#show-transcript": "transcript", "#show-evaluation": "aiEvaluation",
@@ -339,6 +339,11 @@ function clearCurrentDraft() {
   $("#draft-controls").classList.add("hidden");
 }
 
+function submitShortcut() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  return /mac/i.test(platform) ? "⌘ + Enter" : "Ctrl + Enter";
+}
+
 function applyUiLanguage(language, { resetTerminal = false } = {}) {
   const languageChanged = uiLanguageInitialized && language !== gameLanguage;
   if (languageChanged) clearCurrentDraft();
@@ -351,6 +356,7 @@ function applyUiLanguage(language, { resetTerminal = false } = {}) {
     const element = $(selector);
     if (element) element.textContent = t(key);
   }
+  $("#panel-game .hint:not(#pending-help)").textContent = t("sendHint").replace("{shortcut}", submitShortcut());
   $("#action").placeholder = t("actionPlaceholder");
   refreshSetupPlaceholders();
   $("#player-model").placeholder = t("playerModelPlaceholder");
@@ -969,6 +975,12 @@ function setStatus(element, text, kind) {
   element.className = `status ${kind || ""}`;
 }
 
+function campaignCostText(cost) {
+  if (!cost || typeof cost.totalUsd !== "number" || cost.pricedTurns < 1) return "";
+  const exact = cost.basis === "exact" && cost.unpricedTurns === 0;
+  return ` · ${t("campaignCost")}: ${exact ? "" : "≈"}$${cost.totalUsd.toFixed(4)}`;
+}
+
 function renderProviderCompatibility() {
   const card = $("#schema-compatibility");
   if (!card) return;
@@ -1032,7 +1044,9 @@ async function refreshStatus() {
     inspectionCampaignKey = nextInspectionCampaignKey;
     setStatus(
       $("#campaign-status"),
-      campaign ? `${t("campaignNoun")}: ${campaign.title} · ${t("turnNoun")} ${campaign.turn} · ${campaign.status}` : t("campaignNone"),
+      campaign
+        ? `${t("campaignNoun")}: ${campaign.title} · ${t("turnNoun")} ${campaign.turn} · ${campaign.status}${campaignCostText(status.game.campaignCost)}`
+        : t("campaignNone"),
       campaign?.status === "active" ? "ok" : campaign ? "warn" : "",
     );
     $("#game-summary").textContent = campaign
@@ -1048,6 +1062,7 @@ async function refreshStatus() {
     $("#action").disabled = !canPlay && !canEnterRecoveryCommand;
     $("#play").disabled = !canPlay && !canEnterRecoveryCommand;
     $("#pending-help").classList.toggle("hidden", !hasPendingRequest);
+    $("#export-campaign").disabled = !hasGame || gameBusy;
     $("#archive").disabled = !hasGame || gameBusy;
     $$("#inspect-buttons button").forEach((button) => { button.disabled = !hasGame || gameBusy; });
     updatePrefillAvailability();
@@ -1213,6 +1228,8 @@ async function loadPromptPreview() {
   if (requestedLanguage !== gameLanguage || phase !== $("#prompt-phase").value) return;
   const output = [
     `PROMPT SUITE V${body.version} · ${body.phase}`,
+    `${t("promptSources")}: ${body.sourceFiles.join(", ")}`,
+    ...(body.sharedSystemSource ? [`${t("promptSharedSystem")} (${body.sharedSystemSource})`] : []),
     `SECTIONS: ${body.sections.join(", ") || "none"}`,
     ...(body.system ? [`\n=== SYSTEM ===\n${body.system}`] : []),
     ...(body.prompt ? [`\n=== TASK ===\n${body.prompt}`] : []),
@@ -1499,6 +1516,15 @@ $("#generate-campaign").addEventListener("click", () => work("Generating campaig
 $("#regenerate-campaign").addEventListener("click", () => work("Regenerating campaign…", generateCampaign));
 $("#confirm-campaign").addEventListener("click", () => work("Creating campaign…", confirmCampaign));
 $("#play").addEventListener("click", () => work("The dungeon master considers the world…", play));
+$("#export-campaign").addEventListener("click", () => {
+  recordCommand("campaign.export --format markdown");
+  const link = document.createElement("a");
+  link.href = "/api/game/export?format=markdown";
+  link.download = "";
+  document.body.append(link);
+  link.click();
+  link.remove();
+});
 $("#archive").addEventListener("click", () => {
   if (!confirm(t("archiveConfirm"))) return;
   recordCommand("campaign.archive");

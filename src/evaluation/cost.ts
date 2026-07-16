@@ -1,6 +1,7 @@
 import type { ProviderConfig } from "../schemas.js";
 import type { StructuredRequest, StructuredResult } from "../types.js";
 import type { ModelCost } from "./contracts.js";
+import { estimateTokenCost, inferTokenPrice, roundUsd } from "../pricing.js";
 
 export class EvaluationCostLimitError extends Error {
   constructor() {
@@ -86,7 +87,7 @@ export class EvaluationBudget {
 }
 
 export function roundMoney(value: number): number {
-  return Math.round(value * 1_000_000) / 1_000_000;
+  return roundUsd(value);
 }
 
 export function completedJsonLineCost(text: string): number {
@@ -114,12 +115,8 @@ export function estimateCost(
   usage: StructuredResult<unknown>["usage"],
   cost: ModelCost,
 ): number {
-  if (!usage) return 0;
-  return roundMoney(
-    ((usage.inputTokens ?? 0) * cost.inputPerMillion
-      + (usage.outputTokens ?? 0) * cost.outputPerMillion)
-      / 1_000_000,
-  );
+  if (usage?.billedCostUsd !== undefined) return roundMoney(usage.billedCostUsd);
+  return estimateTokenCost(usage, cost);
 }
 
 export function estimateReservation(
@@ -135,12 +132,7 @@ export function estimateReservation(
 }
 
 export function inferModelCost(config: ProviderConfig): ModelCost | undefined {
-  const model = config.model.toLowerCase();
-  if (config.provider === "gemini" && model === "gemini-3.5-flash") return { inputPerMillion: 1.5, outputPerMillion: 9 };
-  if (model.includes("gemini-3.1-flash-lite")) return { inputPerMillion: 0.25, outputPerMillion: 1.5 };
-  if (config.provider === "openrouter" && model.includes("gemini-3.5-flash")) return { inputPerMillion: 1.5, outputPerMillion: 9 };
-  if (config.provider === "gemini" && model === "gemini-3-flash-preview") return { inputPerMillion: 0.5, outputPerMillion: 3 };
-  return undefined;
+  return inferTokenPrice(config.provider, config.model);
 }
 
 export function configuredModelCost(config: ProviderConfig, label: string): ModelCost {

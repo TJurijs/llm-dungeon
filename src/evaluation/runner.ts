@@ -309,13 +309,14 @@ export class SelfPlayEvaluator {
 
     try {
       emit("Generating campaign setup");
-      const setup = await engine.generateSetup({
+      const generated = await engine.generateSetupWithMetadata({
         language: this.config.language,
         worldRules: this.worldRules,
         premise: `A classical fantasy tavern opening for evaluation session ${sessionId}. Create meaningful sandbox possibilities without forcing a quest.`,
         character: `Create a character suitable for the ${profile.id} player profile: ${profile.instruction}`,
       });
-      await engine.createGame({ setup, worldRules: this.worldRules, language: this.config.language });
+      const setup = generated.setup;
+      await engine.createGame({ setup, openingGeneration: generated.generation, worldRules: this.worldRules, language: this.config.language });
       startingStateContext = await store.buildCanonicalStateContext();
       await rm(path.join(sessionDir, "starting-state"), { recursive: true, force: true });
       await cp(store.currentDir, path.join(sessionDir, "starting-state"), { recursive: true });

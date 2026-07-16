@@ -159,10 +159,15 @@ describe("provider adapters", () => {
       expect(body.response_format.type).toBe("json_schema");
       expect(body.response_format.json_schema.strict).toBe(true);
       expect(body.provider.require_parameters).toBe(true);
-      return new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"yes"}' } }], usage: { total_tokens: 4 } }), { status: 200 });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"answer":"yes"}' } }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4, cost: 0.000123 },
+      }), { status: 200 });
     });
     const provider = new OpenRouterProvider("provider/model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock as typeof fetch);
-    expect((await provider.generateStructured(answerRequest)).data).toEqual({ answer: "yes" });
+    const result = await provider.generateStructured(answerRequest);
+    expect(result.data).toEqual({ answer: "yes" });
+    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4, billedCostUsd: 0.000123 });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

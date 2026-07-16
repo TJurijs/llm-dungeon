@@ -100,7 +100,17 @@ The browser interface can:
 - recover pending actions with `:retry` or `:discard`;
 - ask out-of-character questions without advancing a turn;
 - submit appeals;
+- export the complete player-safe campaign log as a shareable Markdown file;
+- show cumulative campaign generation cost beside campaign status;
 - run and inspect self-play evaluations.
+
+Campaign cost uses exact billed cost returned by OpenRouter when available.
+Gemini and older saved turns are estimated from provider token usage and the
+built-in standard-tier price table, so the browser marks those totals with
+`≈`. Prompt-inspector previews also list their editable source files relative
+to the project root. Campaign exports include the opening, player actions,
+checks, narration, summaries, and appeals, but omit secrets, state operations,
+provider metadata, and token/cost details.
 
 Leave the browser session-key field blank to use the matching key from `.env`.
 Keys entered in the browser stay only in the running server process. Stop the

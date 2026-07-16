@@ -59,7 +59,7 @@ class WebFakeProvider implements LlmProvider {
       model: this.model,
       rawText: JSON.stringify(data),
       structuredMode: "exact_schema",
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150, billedCostUsd: 0.0006 },
     };
   }
 }
@@ -195,6 +195,28 @@ describe("web-cli server", () => {
     ]));
   });
 
+  it("reports cumulative persisted campaign cost including setup and gameplay", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, { GEMINI_API_KEY: "test-key" });
+    const draft = await json(base, "/api/campaign/draft", "POST", { premise: "A tavern.", character: "A scout." });
+    await json(base, "/api/campaign/confirm", "POST", { draftId: draft.draftId, archiveCurrent: false });
+
+    expect((await json(base, "/api/status")).game.campaignCost).toEqual({
+      totalUsd: 0.0006,
+      basis: "exact",
+      pricedTurns: 1,
+      unpricedTurns: 0,
+    });
+
+    await json(base, "/api/game/play", "POST", { action: "I greet the innkeeper." });
+    expect((await json(base, "/api/status")).game.campaignCost).toEqual({
+      totalUsd: 0.0012,
+      basis: "exact",
+      pricedTurns: 2,
+      unpricedTurns: 0,
+    });
+  });
+
   it("stores language-specific world guidance without rewriting the legacy profile", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root);
@@ -224,6 +246,12 @@ describe("web-cli server", () => {
 
     const preview = await json(base, "/api/config/prompts?phase=adjudication&language=en");
     expect(preview).toMatchObject({ phase: "adjudication", version: 1, containsLiveCampaignData: false });
+    expect(preview.sourceFiles).toEqual([
+      "src/prompts/gameplay.ts",
+      "src/prompts/difficulty.ts",
+      "src/prompts/blocks.ts",
+    ]);
+    expect(preview.sharedSystemSource).toBe("src/prompts/blocks.ts");
     expect(preview.sections).toContain("check-difficulty");
     expect(preview.prompt).toContain("AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime");
     expect(JSON.stringify(preview)).not.toContain("Mara suspects the watch captain takes bribes.");
@@ -620,6 +648,23 @@ describe("web-cli server", () => {
     });
     expect(JSON.stringify(transcript)).not.toContain(PRIVATE_CHECK_STAKE);
     expect(JSON.stringify(transcript)).not.toContain(PRIVATE_OPERATION_FACT);
+
+    const exported = await fetch(`${base}/api/game/export?format=markdown`);
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    expect(exported.headers.get("content-disposition")).toContain("attachment;");
+    expect(exported.headers.get("content-disposition")).toContain("The%20Crooked%20Crown.md");
+    const markdown = await exported.text();
+    expect(markdown).toContain("# The Crooked Crown");
+    expect(markdown).toContain("## Opening");
+    expect(markdown).toContain("## Turn 1");
+    expect(markdown).toContain("I investigate Mara's story.");
+    expect(markdown).toContain("Mara gives you a guarded but useful answer.");
+    expect(markdown).not.toContain(PRIVATE_CHECK_STAKE);
+    expect(markdown).not.toContain(PRIVATE_OPERATION_FACT);
+    expect(markdown).not.toContain("State Operations");
+    expect(markdown).not.toContain("Input Tokens");
+    expect(markdown).not.toContain("fake");
   });
 
   it("creates and plays a campaign and runs self-play through HTTP", async () => {

@@ -5,6 +5,7 @@ import type { Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DungeonEngine } from "./engine.js";
+import { campaignMarkdownFilename, renderCampaignMarkdown } from "./campaign-export.js";
 import { probeProviderConnection } from "./connection-probe.js";
 import { loadProjectEnv } from "./env.js";
 import {
@@ -23,7 +24,7 @@ import { createProvider, loadProviderConfig } from "./providers.js";
 import { ProviderConfigSchema, type ProviderConfig, type SetupResult } from "./schemas.js";
 import { StateStore } from "./store.js";
 import { atomicWriteJson } from "./persistence/files.js";
-import type { LlmProvider, StateView } from "./types.js";
+import type { GenerationMetadata, LlmProvider, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { parseAppealCommand } from "./appeal.js";
 import { parseQuestionCommand } from "./question.js";
@@ -32,7 +33,7 @@ import {
   evaluationArtifactPath,
   evaluationTranscriptPresentation,
 } from "./web/evaluation-artifacts.js";
-import { asError, readJsonBody, rejectUnsafeMutation, sendJson } from "./web/http.js";
+import { asError, readJsonBody, rejectUnsafeMutation, sendJson, sendTextDownload } from "./web/http.js";
 import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
 type ProviderFactory = (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
@@ -94,6 +95,7 @@ export class DungeonWebController {
   private readonly providerFactory: ProviderFactory;
   private readonly drafts = new Map<string, {
     setup: SetupResult;
+    generation: GenerationMetadata;
     language: LanguageCode;
     worldRules: string;
   }>();
@@ -238,11 +240,19 @@ export class DungeonWebController {
     const store = new StateStore(this.dataRoot);
     const hasGame = await store.hasCurrentGame();
     let campaign: unknown;
+    let campaignCost: unknown;
     let pending: unknown;
     if (hasGame) {
-      campaign = this.gameBusy
-        ? await store.readManifest()
-        : (await this.withGameLock(() => store.load())).manifest;
+      if (this.gameBusy) {
+        campaign = await store.readManifest();
+      } else {
+        const snapshot = await this.withGameLock(async () => ({
+          campaign: (await store.load()).manifest,
+          cost: await store.campaignCost(),
+        }));
+        campaign = snapshot.campaign;
+        campaignCost = snapshot.cost;
+      }
       pending = pendingStatus(await store.getPending());
     }
     sendJson(response, 200, {
@@ -254,7 +264,13 @@ export class DungeonWebController {
       })),
       config: config ?? null,
       keyStatus: this.keyStatus(),
-      game: { exists: hasGame, busy: this.gameBusy, campaign: campaign ?? null, pending: pending ?? null },
+      game: {
+        exists: hasGame,
+        busy: this.gameBusy,
+        campaign: campaign ?? null,
+        campaignCost: campaignCost ?? null,
+        pending: pending ?? null,
+      },
       evaluationTask: this.task ?? null,
     });
     return true;
@@ -409,8 +425,8 @@ export class DungeonWebController {
       const draft = await this.withGameLock(async () => {
         const worldRules = (await resolveWorldProfile(this.root, language)).markdown;
         const engine = await this.engine();
-        const setup = await engine.generateSetup({ ...body, language, worldRules });
-        return { setup, language, worldRules };
+        const generated = await engine.generateSetupWithMetadata({ ...body, language, worldRules });
+        return { setup: generated.setup, generation: generated.generation, language, worldRules };
       });
       const draftId = randomUUID();
       this.drafts.clear();
@@ -423,14 +439,14 @@ export class DungeonWebController {
       const body = z.object({ draftId: z.string().uuid(), archiveCurrent: z.boolean().default(false) }).parse(await readJsonBody(request));
       const draft = this.drafts.get(body.draftId);
       if (!draft) throw new Error("Campaign draft was not found; generate it again");
-      const { setup, language, worldRules } = draft;
+      const { setup, generation, language, worldRules } = draft;
       const state = await this.withGameLock(async () => {
         const engine = await this.engine();
         if (await engine.hasCurrentGame()) {
           if (!body.archiveCurrent) throw new Error("A campaign already exists; confirm archival before starting another");
-          return engine.replaceGame({ setup, language, worldRules });
+          return engine.replaceGame({ setup, openingGeneration: generation, language, worldRules });
         }
-        return engine.createGame({ setup, language, worldRules });
+        return engine.createGame({ setup, openingGeneration: generation, language, worldRules });
       });
       this.drafts.delete(body.draftId);
       sendJson(response, 200, { state, openingNarration: setup.openingNarration });
@@ -503,6 +519,22 @@ export class DungeonWebController {
         return (await this.engine()).recentTranscript();
       });
       sendJson(response, 200, { turns });
+      return true;
+    }
+
+    if (url.pathname === "/api/game/export" && method === "GET") {
+      const format = url.searchParams.get("format") ?? "markdown";
+      if (format !== "markdown") throw new Error(`Unsupported campaign export format: ${format}`);
+      const snapshot = await this.withGameLock(async () => {
+        await this.currentStore();
+        return (await this.engine()).campaignLogSnapshot();
+      });
+      sendTextDownload(
+        response,
+        200,
+        renderCampaignMarkdown(snapshot),
+        campaignMarkdownFilename(snapshot.state.title),
+      );
       return true;
     }
     return false;

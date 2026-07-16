@@ -8,6 +8,7 @@ import type {
 import type { LanguageCode } from "./language.js";
 import type { CheckResult } from "./mechanics.js";
 import type { PendingTurn } from "./persistence/pending.js";
+import type { Usage } from "./usage.js";
 
 export type { CheckResult } from "./mechanics.js";
 
@@ -34,11 +35,7 @@ export interface StructuredResult<T> {
   rawText?: string;
   structuredMode?: "exact_schema";
   protocolVersion?: number;
-  usage?: {
-    inputTokens?: number | undefined;
-    outputTokens?: number | undefined;
-    totalTokens?: number | undefined;
-  };
+  usage?: Usage;
 }
 
 export interface LlmProvider {
@@ -51,6 +48,18 @@ export interface NewGameInput {
   setup: SetupResult;
   worldRules: string;
   language?: LanguageCode;
+  openingGeneration?: GenerationMetadata;
+}
+
+export interface GenerationMetadata {
+  provider: string;
+  model: string;
+  usage?: Usage;
+}
+
+export interface GeneratedSetup {
+  setup: SetupResult;
+  generation: GenerationMetadata;
 }
 
 export interface SetupGenerationInput {
@@ -144,8 +153,14 @@ export interface PlayerVisibleTurn {
   checkText?: string;
 }
 
+export interface CampaignLogSnapshot {
+  state: GameState;
+  turns: PlayerVisibleTurn[];
+}
+
 export interface GameEngine {
   generateSetup(input: SetupGenerationInput): Promise<SetupResult>;
+  generateSetupWithMetadata(input: SetupGenerationInput): Promise<GeneratedSetup>;
   hasCurrentGame(): Promise<boolean>;
   createGame(input: NewGameInput): Promise<GameState>;
   replaceGame(input: NewGameInput): Promise<GameState>;
@@ -154,6 +169,7 @@ export interface GameEngine {
   appeal(input: AppealInput): Promise<TurnResult>;
   inspect(view: StateView): Promise<PlayerStateInspection>;
   recentTranscript(limit?: number): Promise<PlayerVisibleTurn[]>;
+  campaignLogSnapshot(): Promise<CampaignLogSnapshot>;
   getPendingTurn(): Promise<PendingTurn | undefined>;
   resumePendingTurn(): Promise<TurnResult>;
   recoverPendingCommit(): Promise<boolean>;

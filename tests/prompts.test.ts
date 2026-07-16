@@ -239,6 +239,10 @@ describe("prompt suite V1", () => {
     }
     const dmSystem = inspectPrompt("dm-system", "en");
     expect(dmSystem.sections).toEqual(DM_SYSTEM_SECTIONS.map((section) => section.id));
+    expect(dmSystem.sourceFiles).toEqual(["src/prompts/blocks.ts"]);
+    const adjudication = inspectPrompt("adjudication", "en");
+    expect(adjudication.sharedSystemSource).toBe("src/prompts/blocks.ts");
+    expect(adjudication.sourceFiles).toContain("src/prompts/gameplay.ts");
     const appeal = inspectPrompt("appeal", "en");
     expect(appeal.sections).toEqual(expect.arrayContaining([
       ...APPEAL_SYSTEM_SECTIONS.map((section) => section.id),

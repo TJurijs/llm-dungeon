@@ -209,7 +209,7 @@ export class OpenRouterProvider implements LlmProvider {
     if (!response.ok) throw httpFailure("OpenRouter", response.status, await readError(response, secrets));
     const body = (await response.json()) as {
       choices?: Array<{ finish_reason?: string; message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number };
     };
     const choice = body.choices?.[0];
     const content = choice?.message?.content;
@@ -219,6 +219,9 @@ export class OpenRouterProvider implements LlmProvider {
           ...(body.usage.prompt_tokens === undefined ? {} : { inputTokens: body.usage.prompt_tokens }),
           ...(body.usage.completion_tokens === undefined ? {} : { outputTokens: body.usage.completion_tokens }),
           ...(body.usage.total_tokens === undefined ? {} : { totalTokens: body.usage.total_tokens }),
+          ...(typeof body.usage.cost === "number" && Number.isFinite(body.usage.cost) && body.usage.cost >= 0
+            ? { billedCostUsd: body.usage.cost }
+            : {}),
         }
       : undefined;
     let parsed: unknown;

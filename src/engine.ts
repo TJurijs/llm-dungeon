@@ -102,6 +102,10 @@ export class DungeonEngine implements GameEngine {
   }
 
   async generateSetup(input: SetupGenerationInput): Promise<SetupResult> {
+    return (await this.generateSetupWithMetadata(input)).setup;
+  }
+
+  async generateSetupWithMetadata(input: SetupGenerationInput): Promise<import("./types.js").GeneratedSetup> {
     const prompt = setupPrompt(input);
     const generated = await this.structured.generate({
       schemaName: "campaign_setup",
@@ -112,7 +116,14 @@ export class DungeonEngine implements GameEngine {
       maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
     });
     try {
-      return validateInitialSetup(generated.data);
+      return {
+        setup: validateInitialSetup(generated.data),
+        generation: {
+          provider: generated.provider,
+          model: generated.model,
+          ...(generated.usage ? { usage: generated.usage } : {}),
+        },
+      };
     } catch (error) {
       const corrected = await this.structured.generate({
         schemaName: "domain_repair_campaign_setup",
@@ -122,7 +133,15 @@ export class DungeonEngine implements GameEngine {
         temperature: 0.4,
         maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
       });
-      return validateInitialSetup(corrected.data);
+      const usage = combineUsage(generated.usage, corrected.usage);
+      return {
+        setup: validateInitialSetup(corrected.data),
+        generation: {
+          provider: corrected.provider,
+          model: corrected.model,
+          ...(usage ? { usage } : {}),
+        },
+      };
     }
   }
 
@@ -132,6 +151,7 @@ export class DungeonEngine implements GameEngine {
   async archiveAndReset(): Promise<void> { await this.store.archiveAndReset(); }
   inspect(view: StateView) { return this.store.withCampaignLock(() => this.store.inspect(view)); }
   recentTranscript(limit = 8) { return this.store.withCampaignLock(() => this.store.recentTranscript(limit)); }
+  campaignLogSnapshot() { return this.store.withCampaignLock(() => this.store.campaignLogSnapshot()); }
   getPendingTurn() { return this.store.getPending(); }
   discardPendingTurn() { return this.store.discardPendingRequest(); }
 

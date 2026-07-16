@@ -49,8 +49,25 @@ export interface PromptInspection {
   readonly sections: readonly string[];
   readonly system: string;
   readonly prompt: string;
+  readonly sourceFiles: readonly string[];
+  readonly sharedSystemSource?: string;
   readonly containsLiveCampaignData: false;
 }
+
+const PROMPT_SOURCE_FILES: Record<PromptPhase, readonly string[]> = {
+  "dm-system": ["src/prompts/blocks.ts"],
+  setup: ["src/prompts/setup.ts", "src/prompts/blocks.ts"],
+  adjudication: ["src/prompts/gameplay.ts", "src/prompts/difficulty.ts", "src/prompts/blocks.ts"],
+  difficulty: ["src/prompts/difficulty.ts"],
+  resolution: ["src/prompts/gameplay.ts", "src/prompts/blocks.ts"],
+  question: ["src/prompts/question.ts"],
+  appeal: ["src/prompts/appeal.ts"],
+  "schema-repair": ["src/prompts/recovery.ts"],
+  "domain-correction": ["src/prompts/recovery.ts"],
+  "simulated-player": ["src/prompts/evaluation.ts"],
+  judge: ["src/evaluation/judge.ts"],
+  "connection-probe": ["src/prompts/connection.ts"],
+};
 
 const CONTEXT_PLACEHOLDER = "<AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime; hidden state is never exposed by this inspector>";
 const ACTION_PLACEHOLDER = "<PLAYER ACTION>";
@@ -177,6 +194,10 @@ export function inspectPrompt(
     sections,
     system,
     prompt,
+    sourceFiles: PROMPT_SOURCE_FILES[phase],
+    ...(["setup", "adjudication", "resolution"].includes(phase)
+      ? { sharedSystemSource: "src/prompts/blocks.ts" }
+      : {}),
     containsLiveCampaignData: false,
   };
 }

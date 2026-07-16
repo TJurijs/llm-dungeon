@@ -34,7 +34,7 @@ label { display: block; color: var(--dim); margin: .9rem 0 .35rem; font-size: .8
 .action-prefill-button:hover { background: #1b2417; }
 .ask-button:hover { border-color: #557291; color: #88b8e8; }
 .appeal-button:hover { border-color: #8b7043; color: var(--amber); }
-.action-prefill-button svg, .archive-action svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.action-prefill-button svg, .archive-action svg, .export-action svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 h1 { margin: 0 0 1rem; font: 700 1.25rem/1.2 inherit; color: var(--green); }
 h2 { margin: 1.5rem 0 .6rem; font: 700 .9rem/1.2 inherit; text-transform: uppercase; letter-spacing: .08em; color: var(--amber); }
 p { margin: .6rem 0; }
@@ -139,8 +139,9 @@ summary { color: var(--amber); cursor: pointer; }
 .inspection-thread-group { margin-top: .75rem; }
 .inspection-message { margin: 0; padding: .7rem; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); background: #11130f; }
 .inspection-message.error { border-color: #743f37; color: var(--red); }
-.campaign-secondary-actions { display: flex; justify-content: flex-end; margin-top: 1.3rem; padding-top: .65rem; border-top: 1px solid #252920; }
-.archive-action { display: inline-flex; width: auto; min-height: 38px; align-items: center; gap: .45rem; padding: .35rem .5rem; border-color: transparent; background: transparent; color: var(--dim); font-size: .73rem; }
+.campaign-secondary-actions { display: flex; justify-content: space-between; gap: .5rem; margin-top: 1.3rem; padding-top: .65rem; border-top: 1px solid #252920; }
+.archive-action, .export-action { display: inline-flex; width: auto; min-height: 38px; align-items: center; gap: .45rem; padding: .35rem .5rem; border-color: transparent; background: transparent; color: var(--dim); font-size: .73rem; }
+.export-action:hover, .export-action:focus-visible { border-color: #596e42; background: #1b2417; color: var(--green); }
 .archive-action:hover, .archive-action:focus-visible { border-color: #743f37; background: #211512; color: var(--red); }
 .archive-action:focus-visible { outline-color: var(--red); }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
@@ -241,7 +242,7 @@ summary { color: var(--amber); cursor: pointer; }
 @media (max-width: 520px) {
   .tabs { gap: .35rem; padding: .4rem; }
   .action-prefill-button { width: 40px; min-width: 40px; height: 40px; }
-  .archive-action { min-height: 44px; }
+  .archive-action, .export-action { min-height: 44px; }
 }
 
 @container controls (max-width: 370px) {

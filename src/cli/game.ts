@@ -10,7 +10,7 @@ import { formatCheck } from "../mechanics.js";
 import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
 import { terminalBanner, terminalHeading, terminalPrompt, terminalRule, terminalStyle } from "../terminal-style.js";
-import type { GameEngine, StateView, TurnResult } from "../types.js";
+import type { GameEngine, GenerationMetadata, StateView, TurnResult } from "../types.js";
 import type { CliProjectContext } from "./project-context.js";
 import { takePrompt } from "./prompt.js";
 import { inspectionTitle, renderInspection } from "./inspection.js";
@@ -22,6 +22,7 @@ interface SetupSeeds {
 
 interface AcceptedSetupDraft {
   setup: SetupResult;
+  openingGeneration: GenerationMetadata;
   worldRules: string;
   language: LanguageCode;
 }
@@ -123,8 +124,11 @@ export class HumanGameCli {
       const spin = p.spinner();
       spin.start("Creating the campaign...");
       let setup: SetupResult;
+      let openingGeneration: GenerationMetadata;
       try {
-        setup = await engine.generateSetup({ worldRules, language, ...seeds });
+        const generated = await engine.generateSetupWithMetadata({ worldRules, language, ...seeds });
+        setup = generated.setup;
+        openingGeneration = generated.generation;
         spin.stop("Campaign draft ready.");
       } catch (error) {
         spin.stop("Campaign generation failed.");
@@ -141,7 +145,7 @@ export class HumanGameCli {
           ],
         }),
       );
-      if (choice === "accept") return { setup, worldRules, language };
+      if (choice === "accept") return { setup, openingGeneration, worldRules, language };
       if (choice === "edit") seeds = await this.gatherSetupSeeds(language);
     }
   }

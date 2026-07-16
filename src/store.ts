@@ -33,6 +33,7 @@ import {
   parsePlayerVisibleTurn,
   parseThreads,
   parseTurnOperationLedger,
+  parseTurnGenerationMetadata,
   renderChronicle,
   renderChronicleForContext,
   renderContextEntities,
@@ -43,6 +44,7 @@ import {
   renderTurnLog,
   type TurnOperationLedger,
 } from "./persistence/markdown.js";
+import { summarizeCampaignCost, type CampaignCostSummary } from "./campaign-cost.js";
 import {
   ChronicleEventSchema,
   EntitySchema,
@@ -58,6 +60,7 @@ import {
   type Thread,
 } from "./schemas.js";
 import type {
+  CampaignLogSnapshot,
   CommittedTurn,
   NewGameInput,
   PlayerVisibleTurn,
@@ -359,8 +362,9 @@ export class StateStore {
       const opening: CommittedTurn = {
         action: lifecycleCopy.openingAction,
         resolved: { narration: setup.openingNarration, turnSummary: lifecycleCopy.openingSummary, operations: [] },
-        provider: "setup",
-        model: "setup",
+        provider: input.openingGeneration?.provider ?? "setup",
+        model: input.openingGeneration?.model ?? "setup",
+        ...(input.openingGeneration?.usage ? { usage: input.openingGeneration.usage } : {}),
       };
       await writeFile(path.join(staging, "turns", "000000.md"), renderTurnLog(0, opening), "utf8");
       return { path: staging, manifest };
@@ -560,6 +564,14 @@ export class StateStore {
     });
   }
 
+  async campaignCost(): Promise<CampaignCostSummary> {
+    return this.withCampaignLock(async () => {
+      const loaded = await this.loadUnlocked();
+      const logs = await this.recentTurnLogsUnlocked(loaded.manifest.turn + 1);
+      return summarizeCampaignCost(logs.map(parseTurnGenerationMetadata));
+    });
+  }
+
   private async recentTurnLogsUnlocked(limit = 8): Promise<string[]> {
     const turnDir = path.join(this.currentDir, "turns");
     const files = (await readdir(turnDir)).filter((name) => name.endsWith(".md")).sort().slice(-limit);
@@ -589,6 +601,17 @@ export class StateStore {
 
   async recentTranscript(limit = 8): Promise<PlayerVisibleTurn[]> {
     return this.withCampaignLock(() => this.recentTranscriptUnlocked(limit));
+  }
+
+  async campaignLogSnapshot(): Promise<CampaignLogSnapshot> {
+    return this.withCampaignLock(async () => {
+      const loaded = await this.loadUnlocked();
+      const logs = await this.recentTurnLogsUnlocked(loaded.manifest.turn + 1);
+      return {
+        state: loaded.manifest,
+        turns: logs.map((log) => parsePlayerVisibleTurn(log, loaded.manifest.language)),
+      };
+    });
   }
 
   private async recentTranscriptUnlocked(limit: number): Promise<PlayerVisibleTurn[]> {

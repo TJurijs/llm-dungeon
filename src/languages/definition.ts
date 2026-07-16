@@ -37,6 +37,25 @@ export interface CampaignLifecycleCopy {
   readonly openingSummary: string;
 }
 
+export interface CampaignExportCopy {
+  readonly documentLabel: string;
+  readonly status: string;
+  readonly turnCount: string;
+  readonly inWorldTime: string;
+  readonly updated: string;
+  readonly opening: string;
+  readonly turn: string;
+  readonly appeal: string;
+  readonly reviewedTurn: string;
+  readonly player: string;
+  readonly playerAppeal: string;
+  readonly check: string;
+  readonly dungeonMaster: string;
+  readonly decision: string;
+  readonly summary: string;
+  readonly statuses: Readonly<Record<"active" | "dead" | "ended", string>>;
+}
+
 /**
  * Everything gameplay-facing that is specific to one output language.
  *
@@ -50,6 +69,7 @@ export interface LanguageDefinition {
   readonly setupDefaults: CampaignSetupDefaults;
   readonly mechanics: MechanicsCopy;
   readonly campaignLifecycle: CampaignLifecycleCopy;
+  readonly campaignExport: CampaignExportCopy;
   readonly inspection: InspectionCopy;
   /** Filename inside config/worlds. The language registry owns this mapping. */
   readonly worldProfileFile: string;

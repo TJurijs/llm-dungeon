@@ -36,6 +36,23 @@ export function sendJson(response: ServerResponse, status: number, value: unknow
   response.end(JSON.stringify(value));
 }
 
+export function sendTextDownload(
+  response: ServerResponse,
+  status: number,
+  text: string,
+  filename: string,
+): void {
+  const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  response.writeHead(status, {
+    "Content-Type": "text/markdown; charset=utf-8",
+    "Content-Disposition": `attachment; filename="llm-dungeon-campaign.md"; filename*=UTF-8''${encodedFilename}`,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(text);
+}
+
 /** Enforce the local Web CLI's JSON and same-origin mutation boundary. */
 export function rejectUnsafeMutation(request: IncomingMessage, response: ServerResponse): boolean {
   const method = request.method ?? "GET";

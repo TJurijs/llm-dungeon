@@ -14,10 +14,12 @@ export function combineUsage(
   const inputTokens = add(first?.inputTokens, second?.inputTokens);
   const outputTokens = add(first?.outputTokens, second?.outputTokens);
   const totalTokens = add(first?.totalTokens, second?.totalTokens);
+  const billedCostUsd = add(first?.billedCostUsd, second?.billedCostUsd);
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(billedCostUsd === undefined ? {} : { billedCostUsd }),
   };
 }
 

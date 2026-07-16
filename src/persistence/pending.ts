@@ -1,12 +1,7 @@
 import { z } from "zod";
 import { CheckResultSchema } from "../mechanics.js";
 import { SafeIdSchema } from "../schemas.js";
-
-const UsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative().optional(),
-  outputTokens: z.number().int().nonnegative().optional(),
-  totalTokens: z.number().int().nonnegative().optional(),
-});
+import { UsageSchema } from "../usage.js";
 
 const RequestedGameplayActionSchema = z.object({
   kind: z.literal("action"),
