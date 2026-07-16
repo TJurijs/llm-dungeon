@@ -102,6 +102,7 @@ The browser interface can:
 - submit appeals;
 - run and inspect self-play evaluations.
 
+Leave the browser session-key field blank to use the matching key from `.env`.
 Keys entered in the browser stay only in the running server process. Stop the
 server with `Ctrl+C`.
 

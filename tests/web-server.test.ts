@@ -306,6 +306,37 @@ describe("web-cli server", () => {
     expect(environments.at(-1)?.GEMINI_API_KEY).toBe("super-secret-key");
   });
 
+  it("clears a blank browser session key and falls back to the environment", async () => {
+    const root = await fixtureRoot();
+    let usedEnvironmentKey = false;
+    const server = createDungeonWebServer({
+      root,
+      environment: { GEMINI_API_KEY: "environment-key" },
+      providerFactory: (config, environment) => {
+        usedEnvironmentKey = environment.GEMINI_API_KEY === "environment-key";
+        return new WebFakeProvider(config.model);
+      },
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const provider = {
+      provider: "gemini",
+      model: "gemini-3.5-flash",
+      temperature: 0.7,
+      maxOutputTokens: 5000,
+    };
+
+    await json(base, "/api/config/provider", "PUT", { ...provider, apiKey: "session-key" });
+    const cleared = await json(base, "/api/config/provider", "PUT", { ...provider, apiKey: "" });
+    expect(cleared.keyStorage).toBe("environment");
+    expect(cleared.keyStatus.gemini).toBe(true);
+
+    await json(base, "/api/config/provider/test", "POST", { ...provider, apiKey: "" });
+    expect(usedEnvironmentKey).toBe(true);
+  });
+
   it("rejects simple cross-site mutation requests before changing local files", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root, { GEMINI_API_KEY: "test-key" });

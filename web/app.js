@@ -54,9 +54,9 @@ const UI_COPY = {
     archiveConfirm: "Archive the current campaign? This cannot be undone or resumed.", archivingCampaign: "Archiving campaign…", campaignArchived: "CAMPAIGN ARCHIVED", campaignArchivedBody: "You can now create a new campaign.",
     premise: "Premise / scenario (optional)", characterConcept: "Character concept (optional)",
     generate: "Generate preview", archiveExisting: "Archive the current campaign if one exists", accept: "Accept & begin", regenerate: "Regenerate",
-    provider: "Provider", googleRecommended: "Google — recommended", openrouter: "OpenRouter", model: "Model ID", recommended: "recommended", showModelOptions: "Show model options", noModelMatches: "No preset matches. Your entered model ID will be used.", temperature: "Temperature", maxTokens: "Max output tokens", endpoint: "Endpoint override (optional)", apiKey: "API key (leave blank to keep current key)", saveConfig: "Save config", test: "Test connection",
+    provider: "Provider", googleRecommended: "Google — recommended", openrouter: "OpenRouter", model: "Model ID", recommended: "recommended", showModelOptions: "Show model options", noModelMatches: "No preset matches. Your entered model ID will be used.", temperature: "Temperature", maxTokens: "Max output tokens", apiKey: "Session API key (leave blank to use .env)", saveConfig: "Save config", test: "Test connection",
     recommendedDm: "Recommended DM model.", listedModel: "Listed model. Run Test connection before use with the selected provider.", unverifiedModel: "Manually entered model. It may reject schemas or behave differently; run Test connection before use.",
-    keyNotice: "Browser-entered keys stay only in this server process and are never written to files or returned by the API.",
+    keyNotice: "Leave the session key blank to use GEMINI_API_KEY or OPENROUTER_API_KEY from .env. A key entered here overrides it only for this server session and is never written to files or returned by the API.",
     schemaRequired: "Structured output required", schemaUntested: "The selected model must accept both campaign-setup and Gameplay Contract V1 schemas. Run Test connection after changing provider or model.", schemaRule: "Unsupported models fail closed; the game never falls back to unrestricted JSON.",
     schemaFullTitle: "Compatible · setup and gameplay schemas enforced", schemaFullDetail: "The provider accepted the campaign-setup schema and exact Gameplay Contract V1 wire schema; no degraded fallback is used.", schemaFailedTitle: "Incompatible · required schema rejected", schemaFailedDetail: "This provider/model cannot pass every schema required to create and play a campaign.", openrouterSchemaRequirement: "The selected model route supports strict response_format=json_schema.", geminiSchemaRequirement: "The selected Gemini model accepts both provider-enforced schemas.", playerSchemaHint: "A player-model override must also support schema-constrained JSON output.", connectionSchemaOk: "CONNECTION + REQUIRED SCHEMAS OK",
     selfPlay: "Self-play auto-runs", cost: "Cost ceiling ($)", sessions: "Sessions", turnsSession: "Turns / session", concurrency: "Parallel sessions", playerProfile: "Player profile pool", profileHint: "Select one or more. Sessions rotate through profiles in the order you select them.", playerModel: "Simulated-player model (optional override)", startRun: "Start bounded auto-run", artifacts: "Run artifacts", run: "Run", report: "Show report", resume: "Resume run", regenReport: "Regenerate report", session: "Session", transcript: "Transcript", aiEvaluation: "AI evaluation",
@@ -70,7 +70,7 @@ const UI_COPY = {
     ready: "llm-dungeon web-cli ready.\n\nConfigure a provider, create or resume a campaign, then enter any action.", emptyOutput: "No output for this tab yet.",
     changed: "LANGUAGE CHANGED", changedBody: "The selected language now applies to the interface where translated and to new campaign narration.",
     actionPlaceholder: "I approach the hooded traveler and ask why they have been watching the door.", premisePlaceholder: "Default: A classical opening in a tavern, with immediate but optional possibilities.", characterPlaceholder: "Default: A grounded adventurer with two useful traits and one complicating trait.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — recommended",
-    endpointPlaceholder: "Use provider default", keyPlaceholder: "Session-only key", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", answerHeading: "ANSWER — NO TURN", campaignEnded: "CAMPAIGN ENDED",
+    keyPlaceholder: "Optional session override", present: "present", missing: "missing", you: "YOU", check: "D100 CHECK", dm: "DUNGEON MASTER", answerHeading: "ANSWER — NO TURN", campaignEnded: "CAMPAIGN ENDED",
     controlPanelsAria: "Control panels", languageAria: "Game and interface language", selectedProfilesAria: "Selected player profiles",
     campaignNoun: "campaign", turnNoun: "turn", turnHeading: "TURN", statusNoun: "status", statusHeading: "Status", evaluationNoun: "evaluation", defaultPlayer: "Default player",
     selectPlayerProfileError: "Select at least one player profile", selectProfiles: "Select profiles…", selectProfileError: "Select at least one profile.", everySession: "Every session", rotationOrder: "Rotation order",
@@ -95,9 +95,9 @@ const UI_COPY = {
     archiveConfirm: "Архивировать текущую кампанию? Это нельзя отменить, и кампанию нельзя продолжить.", archivingCampaign: "Архивирую кампанию…", campaignArchived: "КАМПАНИЯ АРХИВИРОВАНА", campaignArchivedBody: "Теперь можно создать новую кампанию.",
     premise: "Завязка / сценарий (необязательно)", characterConcept: "Концепция персонажа (необязательно)",
     generate: "Создать предпросмотр", archiveExisting: "Архивировать текущую кампанию, если она существует", accept: "Принять и начать", regenerate: "Создать заново",
-    provider: "Провайдер", googleRecommended: "Google — рекомендуется", openrouter: "OpenRouter", model: "ID модели", recommended: "рекомендуется", showModelOptions: "Показать варианты моделей", noModelMatches: "Подходящих вариантов нет. Будет использован введённый ID модели.", temperature: "Температура", maxTokens: "Макс. токенов ответа", endpoint: "Адрес API (необязательно)", apiKey: "Ключ API (оставьте пустым, чтобы сохранить текущий)", saveConfig: "Сохранить", test: "Проверить соединение",
+    provider: "Провайдер", googleRecommended: "Google — рекомендуется", openrouter: "OpenRouter", model: "ID модели", recommended: "рекомендуется", showModelOptions: "Показать варианты моделей", noModelMatches: "Подходящих вариантов нет. Будет использован введённый ID модели.", temperature: "Температура", maxTokens: "Макс. токенов ответа", apiKey: "Сеансовый API-ключ (оставьте пустым для .env)", saveConfig: "Сохранить", test: "Проверить соединение",
     recommendedDm: "Рекомендуемая модель мастера.", listedModel: "Модель из списка. Перед использованием с выбранным провайдером запустите проверку соединения.", unverifiedModel: "Модель введена вручную. Она может отклонить схему или вести себя иначе; сначала запустите проверку соединения.",
-    keyNotice: "Введённые в браузере ключи хранятся только в процессе сервера, не записываются в файлы и не возвращаются API.",
+    keyNotice: "Оставьте сеансовый ключ пустым, чтобы использовать GEMINI_API_KEY или OPENROUTER_API_KEY из .env. Введённый здесь ключ заменяет его только для текущего процесса сервера, не записывается в файлы и не возвращается API.",
     schemaRequired: "Требуется структурированный вывод", schemaUntested: "Выбранная модель должна принять схемы создания кампании и Gameplay Contract V1. После смены провайдера или модели запустите проверку.", schemaRule: "Неподдерживаемые модели отклоняются; игра никогда не переходит к JSON без ограничений.",
     schemaFullTitle: "Совместимо · схемы создания и игры применяются", schemaFullDetail: "Провайдер принял схему создания кампании и точную схему Gameplay Contract V1; ослабленный резервный режим не используется.", schemaFailedTitle: "Несовместимо · обязательная схема отклонена", schemaFailedDetail: "Эта комбинация провайдера и модели не прошла все проверки, необходимые для создания и игры кампании.", openrouterSchemaRequirement: "Выбранный маршрут модели поддерживает строгий response_format=json_schema.", geminiSchemaRequirement: "Выбранная модель Gemini принимает обе схемы, заданные провайдеру.", playerSchemaHint: "Переопределённая модель игрока также должна поддерживать JSON с ограничением схемой.", connectionSchemaOk: "СОЕДИНЕНИЕ И ОБЯЗАТЕЛЬНЫЕ СХЕМЫ В ПОРЯДКЕ",
     selfPlay: "Автоматические тестовые игры", cost: "Лимит стоимости ($)", sessions: "Сессии", turnsSession: "Ходов в сессии", concurrency: "Параллельные сессии", playerProfile: "Набор профилей игрока", profileHint: "Выберите один или несколько. Сессии чередуют профили в порядке выбора.", playerModel: "Модель игрока (необязательная замена)", startRun: "Запустить ограниченный автопрогон", artifacts: "Материалы прогонов", run: "Прогон", report: "Показать отчёт", resume: "Продолжить прогон", regenReport: "Обновить отчёт", session: "Сессия", transcript: "Транскрипт", aiEvaluation: "Оценка ИИ",
@@ -111,7 +111,7 @@ const UI_COPY = {
     ready: "llm-dungeon web-cli готов.\n\nНастройте провайдера, создайте или продолжите кампанию, затем введите любое действие.", emptyOutput: "На этой вкладке пока нет вывода.",
     changed: "ЯЗЫК ИЗМЕНЁН", changedBody: "Язык интерфейса и текущей кампании обновлён. Новое повествование будет на русском.",
     actionPlaceholder: "Я подхожу к путнику в капюшоне и спрашиваю, почему он следит за дверью.", premisePlaceholder: "По умолчанию: классическое начало в таверне с немедленными, но необязательными возможностями.", characterPlaceholder: "По умолчанию: приземлённый искатель приключений с двумя полезными и одной осложняющей чертой.", playerModelPlaceholder: "google/gemini-3.1-flash-lite — рекомендуется",
-    endpointPlaceholder: "Адрес провайдера по умолчанию", keyPlaceholder: "Ключ только для этой сессии", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", answerHeading: "ОТВЕТ — БЕЗ ХОДА", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
+    keyPlaceholder: "Необязательная замена на сеанс", present: "есть", missing: "нет", you: "ВЫ", check: "ПРОВЕРКА D100", dm: "МАСТЕР ПОДЗЕМЕЛИЙ", answerHeading: "ОТВЕТ — БЕЗ ХОДА", campaignEnded: "КАМПАНИЯ ЗАВЕРШЕНА",
     controlPanelsAria: "Панели управления", languageAria: "Язык игры и интерфейса", selectedProfilesAria: "Выбранные профили игрока",
     campaignNoun: "кампания", turnNoun: "ход", turnHeading: "ХОД", statusNoun: "статус", statusHeading: "Статус", evaluationNoun: "автопрогон", defaultPlayer: "Игрок по умолчанию",
     selectPlayerProfileError: "Выберите хотя бы один профиль игрока", selectProfiles: "Выберите профили…", selectProfileError: "Выберите хотя бы один профиль.", everySession: "Каждая сессия", rotationOrder: "Порядок ротации",
@@ -129,7 +129,7 @@ const STATIC_TARGETS = {
   "#panel-game h1": "play", 'label[for="action"]': "whatDo", "#play": "send", "#panel-game .hint:not(#pending-help)": "sendHint", "#pending-help": "pendingHint", "#panel-game h2": "inspect",
   '[data-view="character"]': "character", '[data-view="location"]': "location", '[data-view="threads"]': "threads", "#archive-label": "archive",
   "#panel-campaign h1": "newCampaign", 'label[for="premise"]': "premise", 'label[for="character"]': "characterConcept", "#generate-campaign": "generate", ".check span": "archiveExisting", "#confirm-campaign": "accept", "#regenerate-campaign": "regenerate",
-  "#panel-provider h1": "providerKey", "#panel-provider .notice": "keyNotice", 'label[for="provider"]': "provider", '#provider option[value="gemini"]': "googleRecommended", '#provider option[value="openrouter"]': "openrouter", 'label[for="model"]': "model", 'label[for="temperature"]': "temperature", 'label[for="max-tokens"]': "maxTokens", 'label[for="endpoint"]': "endpoint", 'label[for="api-key"]': "apiKey", "#save-provider": "saveConfig", "#test-provider": "test", "#player-model-schema-hint": "playerSchemaHint",
+  "#panel-provider h1": "providerKey", "#panel-provider .notice": "keyNotice", 'label[for="provider"]': "provider", '#provider option[value="gemini"]': "googleRecommended", '#provider option[value="openrouter"]': "openrouter", 'label[for="model"]': "model", 'label[for="temperature"]': "temperature", 'label[for="max-tokens"]': "maxTokens", 'label[for="api-key"]': "apiKey", "#save-provider": "saveConfig", "#test-provider": "test", "#player-model-schema-hint": "playerSchemaHint",
   "#panel-evaluations h1": "selfPlay", 'label[for="max-cost"]': "cost", 'label[for="sessions"]': "sessions", 'label[for="turns"]': "turnsSession", 'label[for="concurrency"]': "concurrency", "#profile-control legend": "playerProfile", "#profile-help": "profileHint", 'label[for="player-model"]': "playerModel", "#start-evaluation": "startRun", "#panel-evaluations h2": "artifacts", 'label[for="run-select"]': "run", "#show-report": "report", "#resume-run": "resume", "#regenerate-report": "regenReport", 'label[for="session-select"]': "session", "#show-transcript": "transcript", "#show-evaluation": "aiEvaluation",
   "#panel-world h1": "worldRules", "#panel-world .notice": "worldNotice", 'label[for="world-markdown"]': "worldProfileMarkdown", "#save-world": "saveWorld", "#prompt-inspector-title": "promptInspector", "#prompt-inspector-notice": "promptNotice", 'label[for="prompt-phase"]': "promptPhase", "#show-prompt": "showPrompt", "#busy b": "working",
 };
@@ -358,7 +358,6 @@ function applyUiLanguage(language, { resetTerminal = false } = {}) {
     root.querySelector(".model-picker-toggle").setAttribute("aria-label", t("showModelOptions"));
     if (!root.querySelector('[role="listbox"]').hidden) renderModelPickerOptions(root);
   }
-  $("#endpoint").placeholder = t("endpointPlaceholder");
   $("#api-key").placeholder = t("keyPlaceholder");
   renderModelGuidance();
   $(".tabs").setAttribute("aria-label", t("controlPanelsAria"));
@@ -1165,7 +1164,6 @@ async function loadProvider() {
     setModelValue(body.config.model);
     $("#temperature").value = body.config.temperature;
     $("#max-tokens").value = body.config.maxOutputTokens;
-    $("#endpoint").value = body.config.endpoint || "";
   } else {
     setModelValue("google/gemini-3.5-flash");
   }
@@ -1179,20 +1177,19 @@ function providerFormPayload() {
     model: requestModelId(provider, $("#model").value),
     temperature: Number($("#temperature").value),
     maxOutputTokens: Number($("#max-tokens").value),
-    endpoint: $("#endpoint").value.trim(),
-    apiKey: $("#api-key").value.trim() || undefined,
+    apiKey: $("#api-key").value.trim(),
   };
 }
 
 async function saveProvider() {
   const payload = providerFormPayload();
-  recordCommand(`llm-dungeon configure  # provider=${payload.provider} model=${quoted(payload.model)} api-key=${payload.apiKey ? "[redacted]" : "[unchanged]"}`);
+  recordCommand(`llm-dungeon configure  # provider=${payload.provider} model=${quoted(payload.model)} api-key=${payload.apiKey ? "[redacted]" : "[.env]"}`);
   const body = await api("/api/config/provider", {
     method: "PUT",
     body: JSON.stringify(payload),
   });
   $("#api-key").value = "";
-  print("PROVIDER SAVED", `${providerLabel(body.config.provider)}/${displayModelId(body.config.provider, body.config.model)}\nAPI key storage: memory only`, "success", "provider");
+  print("PROVIDER SAVED", `${providerLabel(body.config.provider)}/${displayModelId(body.config.provider, body.config.model)}\nAPI key source: ${payload.apiKey ? "session memory" : ".env"}`, "success", "provider");
   await loadProvider();
 }
 
@@ -1468,7 +1465,7 @@ $("#clear-terminal").addEventListener("click", () => {
 $("#save-provider").addEventListener("click", () => work("Saving provider…", saveProvider));
 $("#test-provider").addEventListener("click", () => work("Testing provider…", async () => {
   const payload = providerFormPayload();
-  recordCommand(`provider.test --provider ${payload.provider} --model ${quoted(payload.model)} --api-key ${payload.apiKey ? "[redacted]" : "[configured]"}`);
+  recordCommand(`provider.test --provider ${payload.provider} --model ${quoted(payload.model)} --api-key ${payload.apiKey ? "[redacted]" : "[.env]"}`);
   try {
     const body = await api("/api/config/provider/test", { method: "POST", body: JSON.stringify(payload) });
     providerCompatibility = { status: "ok", provider: body.provider, model: body.model, ...body.structuredOutput };
@@ -1490,7 +1487,6 @@ $("#provider").addEventListener("change", () => {
   setModelValue($("#model").value);
 });
 $("#model").addEventListener("input", () => { invalidateProviderCompatibility(); renderModelGuidance(); });
-$("#endpoint").addEventListener("input", invalidateProviderCompatibility);
 $("#save-world").addEventListener("click", () => work("Saving world and style…", async () => {
   const language = gameLanguage;
   recordCommand(`world.set --language ${language}`);

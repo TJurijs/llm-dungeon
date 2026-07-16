@@ -305,12 +305,17 @@ export class DungeonWebController {
         maxOutputTokens: body.maxOutputTokens,
         ...(body.endpoint ? { endpoint: body.endpoint } : {}),
       });
-      if (body.apiKey) {
-        const name = body.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
-        this.runtimeKeys[name] = body.apiKey;
+      const keyName = body.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
+      if (body.apiKey !== undefined) {
+        if (body.apiKey) this.runtimeKeys[keyName] = body.apiKey;
+        else delete this.runtimeKeys[keyName];
       }
       await atomicWriteJson(this.providerConfigPath, config);
-      sendJson(response, 200, { config, keyStatus: this.keyStatus(), keyStorage: "memory_only" });
+      sendJson(response, 200, {
+        config,
+        keyStatus: this.keyStatus(),
+        keyStorage: body.apiKey ? "memory_only" : body.apiKey === "" ? "environment" : "unchanged",
+      });
       return true;
     }
 
@@ -335,9 +340,13 @@ export class DungeonWebController {
       else if (body.endpoint !== undefined) candidate.endpoint = body.endpoint;
       const config = ProviderConfigSchema.parse(candidate);
       const environment = this.effectiveEnvironment();
+      const keyName = config.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
       if (body.apiKey) {
-        const keyName = config.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
         environment[keyName] = body.apiKey;
+      } else if (body.apiKey === "") {
+        const environmentKey = this.environment[keyName];
+        if (environmentKey) environment[keyName] = environmentKey;
+        else delete environment[keyName];
       }
       const result = await probeProviderConnection(this.providerFactory(config, environment));
       sendJson(response, 200, {

@@ -40,6 +40,19 @@ describe("browser terminal history", () => {
     expect(styles).toContain(".appeal-button:hover");
   });
 
+  it("keeps provider endpoints out of the Web form and explains the .env key fallback", async () => {
+    const [app, html] = await Promise.all([
+      readFile(new URL("../web/app.js", import.meta.url), "utf8"),
+      readFile(new URL("../web/index.html", import.meta.url), "utf8"),
+    ]);
+
+    expect(html).not.toContain('id="endpoint"');
+    expect(app).not.toContain('$("#endpoint")');
+    expect(html).toContain("leave blank to use .env");
+    expect(app).toContain("GEMINI_API_KEY or OPENROUTER_API_KEY from .env");
+    expect(app).toContain('apiKey: $("#api-key").value.trim()');
+  });
+
   it("normalizes untrusted local storage entries conservatively", () => {
     expect(normalizeTerminalEntry(null)).toBeNull();
     expect(normalizeTerminalEntry({
