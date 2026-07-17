@@ -7,9 +7,14 @@ import {
 import { configuredModelCost } from "./cost.js";
 
 export function defaultPlayerConfig(dmConfig: ProviderConfig): ProviderConfig {
+  const model = dmConfig.provider === "gemini"
+    ? "gemini-3.1-flash-lite"
+    : dmConfig.provider === "openrouter"
+      ? "google/gemini-3.1-flash-lite"
+      : dmConfig.model;
   return ProviderConfigSchema.parse({
     ...dmConfig,
-    model: dmConfig.provider === "gemini" ? "gemini-3.1-flash-lite" : "google/gemini-3.1-flash-lite",
+    model,
     temperature: 0.9,
     maxOutputTokens: 1_500,
   });

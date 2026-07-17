@@ -12,6 +12,7 @@ import { assertCampaignStateConsistency } from "./domain/state-consistency.js";
 import { atomicWriteJson, atomicWriteText, pathExists, unlinkIfExists } from "./persistence/files.js";
 import { acquireFileLock } from "./persistence/lock.js";
 import { contentHash, executePendingCommit } from "./persistence/commit.js";
+import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
 import {
   campaignIdAt,
   recoverCampaignReplacement,
@@ -44,11 +45,12 @@ import {
   renderTurnLog,
   type TurnOperationLedger,
 } from "./persistence/markdown.js";
-import { summarizeCampaignCost, type CampaignCostSummary } from "./campaign-cost.js";
+import { replyGeneration, summarizeCampaignCost, type CampaignCostSummary } from "./campaign-cost.js";
 import {
   ChronicleEventSchema,
   EntitySchema,
   ManifestSchema,
+  SafeIdSchema,
   SetupResultSchema,
   ThreadSchema,
   type ChronicleEvent,
@@ -61,12 +63,27 @@ import {
 } from "./schemas.js";
 import type {
   CampaignLogSnapshot,
+  CampaignStartSettings,
   CommittedTurn,
   NewGameInput,
   PlayerVisibleTurn,
   PlayerStateInspection,
   StateView,
 } from "./types.js";
+
+const CAMPAIGN_SETUP_DIRECTORY = "setup";
+const CAMPAIGN_PREMISE_FILE = "premise.md";
+const CAMPAIGN_CHARACTER_FILE = "character-concept.md";
+const CAMPAIGN_RULES_PREFIX = "# Campaign Rules Snapshot\n\n";
+const CAMPAIGN_SCENARIO_MARKER = "\n\n# Scenario\n\n";
+
+function worldRulesFromScenario(scenario: string): string {
+  const marker = scenario.indexOf(CAMPAIGN_SCENARIO_MARKER);
+  if (!scenario.startsWith(CAMPAIGN_RULES_PREFIX) || marker < CAMPAIGN_RULES_PREFIX.length) {
+    throw new Error("Campaign scenario is missing its rules snapshot");
+  }
+  return scenario.slice(CAMPAIGN_RULES_PREFIX.length, marker).trim();
+}
 
 function operationEntityReferences(operation: StateOperation): string[] {
   switch (operation.type) {
@@ -100,6 +117,46 @@ export interface LoadedCampaign {
 export interface CommitTurnResult {
   state: GameState;
   operations: import("./schemas.js").StateOperation[];
+}
+
+/** Read and validate one complete Markdown campaign directory without recovery. */
+export async function loadCampaignDirectory(
+  currentDir: string,
+  expectedCampaignId?: string,
+): Promise<LoadedCampaign> {
+  const manifest = ManifestSchema.parse(JSON.parse(
+    await readFile(path.join(currentDir, "manifest.json"), "utf8"),
+  ));
+  if (expectedCampaignId !== undefined && manifest.campaignId !== expectedCampaignId) {
+    throw new Error(`Campaign store identity mismatch: expected ${expectedCampaignId}, found ${manifest.campaignId}`);
+  }
+  const entityDir = path.join(currentDir, "entities");
+  const names = (await readdir(entityDir)).filter((name) => name.endsWith(".md")).sort();
+  const entities = new Map<string, Entity>();
+  const entityFiles = new Map<string, string>();
+  for (const name of names) {
+    const entity = parseEntity(await readFile(path.join(entityDir, name), "utf8"));
+    if (entities.has(entity.id)) throw new Error(`Duplicate entity ID ${entity.id}`);
+    entities.set(entity.id, entity);
+    entityFiles.set(entity.id, name);
+  }
+  const scenario = await readFile(path.join(currentDir, "scenario.md"), "utf8");
+  const threads = parseThreads(await readFile(path.join(currentDir, "threads.md"), "utf8"));
+  const chronicle = parseChronicle(await readFile(path.join(currentDir, "chronicle.md"), "utf8"));
+  assertCampaignStateConsistency(manifest, entities, threads, chronicle);
+  return { manifest, entities, entityFiles, scenario, threads, chronicle };
+}
+
+export interface StateStoreOptions {
+  /**
+   * Catalog-owned stores receive their durable campaign identity before setup.
+   * Reopened stores validate every manifest against the same identity.
+   */
+  campaignId?: string;
+  /** Archived catalog entries may be inspected but never resumed or mutated. */
+  readOnly?: boolean;
+  /** Catalog metadata is rechecked under the campaign lock before each write. */
+  catalogMetadataPath?: string;
 }
 
 export function validateInitialSetup(input: unknown): SetupResult {
@@ -185,14 +242,40 @@ export class StateStore {
   readonly pendingPath: string;
   readonly lockPath: string;
   readonly replacementIntentPath: string;
+  readonly campaignId: string | undefined;
+  readonly readOnly: boolean;
+  private readonly catalogMetadataPath: string | undefined;
   private readonly lockContext = new AsyncLocalStorage<boolean>();
 
-  constructor(readonly dataRoot: string) {
+  constructor(readonly dataRoot: string, options: StateStoreOptions = {}) {
+    this.campaignId = options.campaignId === undefined
+      ? undefined
+      : SafeIdSchema.parse(options.campaignId);
+    this.readOnly = options.readOnly ?? false;
+    this.catalogMetadataPath = options.catalogMetadataPath;
     this.currentDir = path.join(dataRoot, "current");
     this.archiveDir = path.join(dataRoot, "archive");
     this.pendingPath = path.join(this.currentDir, "pending-turn.json");
     this.lockPath = path.join(dataRoot, ".campaign.lock");
     this.replacementIntentPath = path.join(dataRoot, ".replacement-intent.json");
+  }
+
+  private async assertWritable(operation: string): Promise<void> {
+    if (this.readOnly) throw new Error(`Archived campaign is read-only and cannot ${operation}`);
+    if (this.catalogMetadataPath !== undefined) {
+      const metadata = await readCampaignMetadata(path.dirname(this.catalogMetadataPath));
+      if (metadata.archived) throw new Error(`Archived campaign is read-only and cannot ${operation}`);
+      if (this.campaignId !== undefined && metadata.campaignId !== this.campaignId) {
+        throw new Error("Campaign catalog metadata belongs to another campaign");
+      }
+    }
+  }
+
+  private validateCampaignIdentity(manifest: GameState): GameState {
+    if (this.campaignId !== undefined && manifest.campaignId !== this.campaignId) {
+      throw new Error(`Campaign store identity mismatch: expected ${this.campaignId}, found ${manifest.campaignId}`);
+    }
+    return manifest;
   }
 
   async withCampaignLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -213,7 +296,10 @@ export class StateStore {
   }
 
   async createGame(input: NewGameInput): Promise<GameState> {
-    return this.withCampaignLock(() => this.createGameUnlocked(input));
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("be created");
+      return this.createGameUnlocked(input);
+    });
   }
 
   private async createGameUnlocked(input: NewGameInput): Promise<GameState> {
@@ -232,7 +318,13 @@ export class StateStore {
 
   /** Stage a complete replacement before archiving the authoritative campaign. */
   async replaceGame(input: NewGameInput): Promise<GameState> {
-    return this.withCampaignLock(() => this.replaceGameUnlocked(input));
+    if (this.catalogMetadataPath !== undefined) {
+      throw new Error("Catalog campaigns cannot be replaced; create a separate campaign instead");
+    }
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("be replaced");
+      return this.replaceGameUnlocked(input);
+    });
   }
 
   private async replaceGameUnlocked(input: NewGameInput): Promise<GameState> {
@@ -274,6 +366,9 @@ export class StateStore {
   }
 
   private async recoverReplacementUnlocked(): Promise<void> {
+    if (await pathExists(this.replacementIntentPath)) {
+      await this.assertWritable("recover a replacement");
+    }
     await recoverCampaignReplacement({
       dataRoot: this.dataRoot,
       currentDir: this.currentDir,
@@ -289,7 +384,7 @@ export class StateStore {
     const now = new Date().toISOString();
     const manifest = ManifestSchema.parse({
       schemaVersion: 1,
-      campaignId: `campaign:${randomUUID()}`,
+      campaignId: this.campaignId ?? `campaign:${randomUUID()}`,
       title: setup.campaignTitle,
       turn: 0,
       status: "active",
@@ -347,6 +442,12 @@ export class StateStore {
     try {
       await mkdir(path.join(staging, "entities"), { recursive: true });
       await mkdir(path.join(staging, "turns"), { recursive: true });
+      if (input.setupInput) {
+        const setupDirectory = path.join(staging, CAMPAIGN_SETUP_DIRECTORY);
+        await mkdir(setupDirectory, { recursive: true });
+        await writeFile(path.join(setupDirectory, CAMPAIGN_PREMISE_FILE), `${input.setupInput.premise.trim()}\n`, "utf8");
+        await writeFile(path.join(setupDirectory, CAMPAIGN_CHARACTER_FILE), `${input.setupInput.character.trim()}\n`, "utf8");
+      }
       await writeFile(path.join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
       await writeFile(
         path.join(staging, "scenario.md"),
@@ -375,7 +476,13 @@ export class StateStore {
   }
 
   async archiveAndReset(): Promise<string | undefined> {
-    return this.withCampaignLock(() => this.archiveAndResetUnlocked());
+    if (this.catalogMetadataPath !== undefined) {
+      throw new Error("Catalog campaigns must be archived through the campaign catalog");
+    }
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("be archived through the legacy reset path");
+      return this.archiveAndResetUnlocked();
+    });
   }
 
   private async archiveAndResetUnlocked(): Promise<string | undefined> {
@@ -390,7 +497,10 @@ export class StateStore {
   }
 
   async setLanguage(language: LanguageCode): Promise<GameState> {
-    return this.withCampaignLock(() => this.setLanguageUnlocked(language));
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("change language");
+      return this.setLanguageUnlocked(language);
+    });
   }
 
   private async setLanguageUnlocked(language: LanguageCode): Promise<GameState> {
@@ -412,34 +522,33 @@ export class StateStore {
   // while another store instance owns the campaign lock. Multi-file snapshots
   // use load(), which holds the lock through recovery and every related read.
   private async readManifestUnlocked(): Promise<GameState> {
-    return ManifestSchema.parse(JSON.parse(
+    return this.validateCampaignIdentity(ManifestSchema.parse(JSON.parse(
       await readFile(path.join(this.currentDir, "manifest.json"), "utf8"),
-    ));
+    )));
   }
 
   async load(): Promise<LoadedCampaign> {
     return this.withCampaignLock(() => this.loadUnlocked());
   }
 
+  async campaignStartSettings(): Promise<CampaignStartSettings | undefined> {
+    const loaded = await this.load();
+    const setupDirectory = path.join(this.currentDir, CAMPAIGN_SETUP_DIRECTORY);
+    const premisePath = path.join(setupDirectory, CAMPAIGN_PREMISE_FILE);
+    const characterPath = path.join(setupDirectory, CAMPAIGN_CHARACTER_FILE);
+    if (!(await pathExists(premisePath)) || !(await pathExists(characterPath))) return undefined;
+    return {
+      premise: (await readFile(premisePath, "utf8")).trim(),
+      character: (await readFile(characterPath, "utf8")).trim(),
+      language: loaded.manifest.language,
+      worldRules: worldRulesFromScenario(loaded.scenario),
+    };
+  }
+
   private async loadUnlocked(): Promise<LoadedCampaign> {
     await this.recoverReplacementUnlocked();
     await this.recoverCommitUnlocked();
-    const manifest = await this.readManifestUnlocked();
-    const entityDir = path.join(this.currentDir, "entities");
-    const names = (await readdir(entityDir)).filter((name) => name.endsWith(".md")).sort();
-    const entities = new Map<string, Entity>();
-    const entityFiles = new Map<string, string>();
-    for (const name of names) {
-      const entity = parseEntity(await readFile(path.join(entityDir, name), "utf8"));
-      if (entities.has(entity.id)) throw new Error(`Duplicate entity ID ${entity.id}`);
-      entities.set(entity.id, entity);
-      entityFiles.set(entity.id, name);
-    }
-    const scenario = await readFile(path.join(this.currentDir, "scenario.md"), "utf8");
-    const threads = parseThreads(await readFile(path.join(this.currentDir, "threads.md"), "utf8"));
-    const chronicle = parseChronicle(await readFile(path.join(this.currentDir, "chronicle.md"), "utf8"));
-    assertCampaignStateConsistency(manifest, entities, threads, chronicle);
-    return { manifest, entities, entityFiles, scenario, threads, chronicle };
+    return loadCampaignDirectory(this.currentDir, this.campaignId);
   }
 
   async getPending(): Promise<PendingTurn | undefined> {
@@ -454,7 +563,10 @@ export class StateStore {
   }
 
   async setPendingRequest(pending: PendingRequest): Promise<void> {
-    return this.withCampaignLock(() => this.setPendingRequestUnlocked(pending));
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("prepare a request");
+      return this.setPendingRequestUnlocked(pending);
+    });
   }
 
   private async setPendingRequestUnlocked(pending: PendingRequest): Promise<void> {
@@ -463,7 +575,10 @@ export class StateStore {
   }
 
   async discardPendingRequest(): Promise<void> {
-    return this.withCampaignLock(() => this.discardPendingRequestUnlocked());
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("discard a request");
+      return this.discardPendingRequestUnlocked();
+    });
   }
 
   private async discardPendingRequestUnlocked(): Promise<void> {
@@ -479,6 +594,7 @@ export class StateStore {
   private async recoverCommitUnlocked(): Promise<void> {
     const pending = await this.getPendingUnlocked();
     if (!pending || pending.kind !== "commit") return;
+    await this.assertWritable("recover a commit");
     await executePendingCommit(this.currentDir, this.pendingPath, pending);
   }
 
@@ -487,7 +603,10 @@ export class StateStore {
   }
 
   async commitTurnWithResult(committed: CommittedTurn): Promise<CommitTurnResult> {
-    return this.withCampaignLock(() => this.commitTurnWithResultUnlocked(committed));
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("commit a turn");
+      return this.commitTurnWithResultUnlocked(committed);
+    });
   }
 
   private async commitTurnWithResultUnlocked(committed: CommittedTurn): Promise<CommitTurnResult> {
@@ -607,9 +726,15 @@ export class StateStore {
     return this.withCampaignLock(async () => {
       const loaded = await this.loadUnlocked();
       const logs = await this.recentTurnLogsUnlocked(loaded.manifest.turn + 1);
+      const player = loaded.entities.get(loaded.manifest.playerId);
+      if (!player) throw new Error("Campaign player entity is missing");
       return {
         state: loaded.manifest,
-        turns: logs.map((log) => parsePlayerVisibleTurn(log, loaded.manifest.language)),
+        playerName: player.name,
+        turns: logs.map((log) => ({
+          ...parsePlayerVisibleTurn(log, loaded.manifest.language),
+          generation: replyGeneration(parseTurnGenerationMetadata(log)),
+        })),
       };
     });
   }

@@ -1,5 +1,6 @@
 import path from "node:path";
 import * as p from "@clack/prompts";
+import { CampaignCatalog, type CampaignCatalogSummary } from "../campaign-catalog.js";
 import { DungeonEngine } from "../engine.js";
 import { loadProjectEnv } from "../env.js";
 import { loadAppConfig, saveAppConfig, type LanguageCode } from "../language.js";
@@ -7,7 +8,7 @@ import { createProvider as createLlmProvider, loadProviderConfig } from "../prov
 import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import { StateStore } from "../store.js";
 import { atomicWriteJson } from "../persistence/files.js";
-import type { GameEngine, LlmProvider } from "../types.js";
+import type { GameEngine, LlmProvider, NewGameInput } from "../types.js";
 import { resolveWorldProfile, saveWorldProfile, type ResolvedWorldProfile } from "../world-profile.js";
 import { takePrompt } from "./prompt.js";
 
@@ -16,6 +17,16 @@ interface CliProjectPaths {
   providerConfig: string;
   dataRoot: string;
   evaluationsRoot: string;
+}
+
+export interface CliCampaignSession {
+  campaignId: string;
+  engine: GameEngine;
+}
+
+export interface CliSetupSession {
+  config: ProviderConfig;
+  engine: GameEngine;
 }
 
 function projectPaths(root: string): CliProjectPaths {
@@ -40,11 +51,14 @@ export class CliProjectContext {
       await p.select({
         message: "Choose a provider",
         options: [
-          { value: "gemini", label: "Google", hint: "recommended · GEMINI_API_KEY" },
+          { value: "gemini", label: "Google Gemini", hint: "recommended · GEMINI_API_KEY" },
           { value: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY" },
+          { value: "openai", label: "OpenAI", hint: "OPENAI_API_KEY" },
+          { value: "anthropic", label: "Anthropic", hint: "ANTHROPIC_API_KEY" },
+          { value: "deepseek", label: "DeepSeek", hint: "DEEPSEEK_API_KEY · strict-schema test required" },
         ],
       }),
-    ) as "openrouter" | "gemini";
+    ) as ProviderConfig["provider"];
     const model = takePrompt(
       await p.text({
         message: "Model ID",
@@ -69,19 +83,29 @@ export class CliProjectContext {
       p.log.warn("This model is unverified. It may reject the enforced schemas or behave differently in play.");
     }
     await atomicWriteJson(this.paths.providerConfig, config);
-    const keyName = provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
-    if (this.environment[keyName]) p.log.success(`${keyName} is present.`);
-    else p.log.warn(`${keyName} is not set. Export it before starting a game.`);
+    const keyName: Record<ProviderConfig["provider"], string> = {
+      gemini: "GEMINI_API_KEY",
+      openrouter: "OPENROUTER_API_KEY",
+      openai: "OPENAI_API_KEY",
+      anthropic: "ANTHROPIC_API_KEY",
+      deepseek: "DEEPSEEK_API_KEY",
+    };
+    if (this.environment[keyName[provider]]) p.log.success(`${keyName[provider]} is present.`);
+    else p.log.warn(`${keyName[provider]} is not set. Add it to .env before starting a game.`);
     p.outro(`Saved ${path.relative(this.paths.root, this.paths.providerConfig)}`);
     return config;
   }
 
   async providerConfig(): Promise<ProviderConfig> {
+    return await this.savedProviderConfig() ?? this.configureProvider();
+  }
+
+  private async savedProviderConfig(): Promise<ProviderConfig | undefined> {
     try {
       return await loadProviderConfig(this.paths.providerConfig);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return this.configureProvider();
+      return undefined;
     }
   }
 
@@ -89,12 +113,51 @@ export class CliProjectContext {
     return createLlmProvider(config, this.environment);
   }
 
-  async createEngine(): Promise<GameEngine> {
+  private async campaignCatalog(defaultProviderConfig?: ProviderConfig): Promise<CampaignCatalog> {
+    const config = defaultProviderConfig ?? await this.savedProviderConfig();
+    return new CampaignCatalog(this.paths.dataRoot, config === undefined
+      ? {}
+      : { defaultProviderConfig: config });
+  }
+
+  async campaigns(): Promise<CampaignCatalogSummary[]> {
+    return (await this.campaignCatalog()).listCampaigns();
+  }
+
+  async createEngine(campaignId: string): Promise<GameEngine> {
+    const catalog = await this.campaignCatalog();
+    const store = await catalog.openCampaign(campaignId);
+    let config = await catalog.providerConfig(campaignId);
+    if (!config) {
+      config = await this.providerConfig();
+      await catalog.updateProviderConfig(campaignId, config);
+    }
+    return new DungeonEngine(store, this.createProvider(config));
+  }
+
+  async createCampaignSession(input: NewGameInput, config?: ProviderConfig): Promise<CliCampaignSession> {
+    const selectedConfig = ProviderConfigSchema.parse(config ?? await this.providerConfig());
+    const created = await (await this.campaignCatalog(selectedConfig)).createCampaign(input, {
+      providerConfig: selectedConfig,
+    });
+    return {
+      campaignId: created.campaignId,
+      engine: new DungeonEngine(created.store, this.createProvider(selectedConfig)),
+    };
+  }
+
+  async createSetupSession(): Promise<CliSetupSession> {
     const config = await this.providerConfig();
-    return new DungeonEngine(
-      new StateStore(this.paths.dataRoot),
-      this.createProvider(config),
-    );
+    // Setup generation does not read or mutate campaign state. The disposable
+    // store keeps the engine boundary intact without reserving a campaign that
+    // the user may reject during preview.
+    return {
+      config,
+      engine: new DungeonEngine(
+        new StateStore(path.join(this.paths.dataRoot, ".setup-preview")),
+        this.createProvider(config),
+      ),
+    };
   }
 
   async language(): Promise<LanguageCode> {
@@ -103,8 +166,6 @@ export class CliProjectContext {
 
   async setLanguage(language: LanguageCode): Promise<void> {
     await saveAppConfig(this.paths.root, { language });
-    const store = new StateStore(this.paths.dataRoot);
-    if (await store.hasCurrentGame()) await store.setLanguage(language);
   }
 
   async worldProfile(language?: LanguageCode): Promise<ResolvedWorldProfile> {

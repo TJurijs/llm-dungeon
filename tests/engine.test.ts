@@ -129,6 +129,7 @@ describe("turn engine", () => {
     expect(result).toEqual({
       kind: "question",
       answer: "You can attempt one primary action while under immediate pressure.",
+      generation: { provider: "fake", model: "fake-model" },
     });
     expect(rolls).toBe(0);
     expect(provider.requests).toHaveLength(1);

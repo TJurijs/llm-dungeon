@@ -21,8 +21,9 @@ observable behavior and documented invariants during refactors.
 - An ordinary turn uses one DM generation. A checked turn uses one adjudication
   generation and one locked-outcome resolution generation. Bounded recovery
   calls are exceptional failure handling, not normal gameplay.
-- There is one active campaign, archived replacement runs, no rewind, and no
-  resurrection through undo. Death ends play while preserving inspection data.
+- Several resumable campaigns may coexist, each with one forward-only save.
+  Archived campaigns are read-only, with no rewind or resurrection through
+  undo. Death ends a campaign while preserving inspection data.
 - All uncertainty uses the shared d100 mechanic. Combat is not a separate rules
   engine and has no hit points or initiative.
 - State is Markdown-first with a small structured mechanical layer. Do not
@@ -30,8 +31,10 @@ observable behavior and documented invariants during refactors.
   product authorization.
 - Established durable state outranks recent prose, player claims, and model
   improvisation.
-- Gemini and OpenRouter are the supported providers. The API command is a
-  placeholder, not an invitation to design a public API during unrelated work.
+- Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek are the supported
+  providers. A provider/model may be selected only after its strict multilingual
+  compatibility probe passes. The API command is a placeholder, not an
+  invitation to design a public API during unrelated work.
 - The application and gameplay contract are V1. The npm package is private and
   intentionally has no public module exports; do not infer an API surface from
   internal TypeScript modules.
@@ -54,10 +57,15 @@ observable behavior and documented invariants during refactors.
 - `src/types.ts` contains reusable interfaces, including `GameEngine` and
   `LlmProvider`.
 - `src/llm/gameplay-protocol.ts` is the exact Gameplay Contract V1 wire
-  contract. Both providers must use the same schema and deterministic decoder.
+  contract. Every provider must use the same schema and deterministic decoder.
 - `src/llm/structured-generation.ts` owns bounded transient/schema recovery;
   `src/llm/structured-error.ts` classifies structured failures.
-- `src/providers.ts` translates the shared request into Gemini/OpenRouter calls.
+- `src/llm-model-catalog.ts` owns the five public provider definitions, curated
+  and custom model IDs, compatibility lifecycle, and the browser default model.
+  It persists no credentials; `config/provider.json` remains the terminal
+  configuration rather than a second authority for the browser model catalog.
+- `src/providers.ts` translates the shared request into Google Gemini,
+  OpenRouter, OpenAI, Anthropic, and DeepSeek calls.
 - `src/connection-probe.ts` exercises the real setup and gameplay schemas for
   provider compatibility checks.
 - `src/prompts.ts` is the internal Prompt Suite V1 facade. `src/prompts/`
@@ -80,14 +88,20 @@ observable behavior and documented invariants during refactors.
 - `src/inspection.ts` owns the player-safe Character, Location, and Story
   threads projections. `src/cli/inspection.ts` renders those structured views
   in the terminal; presentation surfaces must not reconstruct state from prose.
-- `src/store.ts` orchestrates the active/archive layout, structured inspection,
-  appeal evidence context, and deterministic gameplay context.
+- `src/campaign-catalog.ts` owns the scan-based registry of independent
+  campaign stores, per-campaign provider configuration, archival, and safe
+  migration from the legacy active/archive layout.
+- `src/store.ts` owns one campaign's durable state, structured inspection,
+  appeal evidence context, and deterministic gameplay context. A catalog-owned
+  store validates its campaign identity and read-only status.
 - `src/persistence/markdown.ts` owns serialization and parsing of durable files.
 - `src/persistence/files.ts` owns shared atomic writes and filesystem probes;
   `src/persistence/pending.ts` validates recoverable pending requests and commits.
 - `src/persistence/lock.ts` owns crash-recoverable cross-process exclusion.
   `src/persistence/commit.ts` preflights and executes manifest-last commits;
-  `src/persistence/replacement.ts` validates and recovers campaign replacement.
+  `src/persistence/campaign-catalog.ts` owns catalog metadata plus recoverable
+  creation and legacy-layout migration intents. `src/persistence/replacement.ts`
+  remains only for compatibility with pre-catalog replacement recovery.
 - `src/domain/ids.ts` owns canonical names and durable ID allocation. Entity
   filename encoding lives with the Markdown persistence codec.
 - `src/domain/transaction.ts` is the atomic transaction facade;
@@ -114,7 +128,7 @@ observable behavior and documented invariants during refactors.
   regression coverage here before changing a hard-won invariant.
 - `dist/` is generated. Never edit it directly.
 - `data/` and `evaluations/runs/` are local runtime artifacts. Do not delete or
-  rewrite the user's active campaign or evaluation history during refactoring.
+  rewrite the user's campaign catalog or evaluation history during refactoring.
 
 Keep dependency flow pointed inward:
 
@@ -158,9 +172,14 @@ browser code.
 - A prepared commit is written to `pending-turn.json`, writes non-manifest files
   first, commits the manifest last, and can be replayed idempotently. Validate
   its complete plan before mutation and require exactly the target turn log.
-- Campaign mutations are serialized across processes with the filesystem lock.
-  Accepted replacement is staged before archival and guarded by durable intent
-  that recovery can complete or restore.
+- Mutations within one campaign are serialized across processes with that
+  campaign's filesystem lock. Catalog creation, archival, configuration, and
+  migration use the catalog lock; different campaigns may generate in parallel.
+- Accepted setup is persisted in a secret-free creation intent before its store
+  is published. Recovery must finish or conservatively preserve an interrupted
+  creation, and retrying the same browser draft must not create a duplicate.
+- Legacy replacement recovery must settle before catalog migration. Catalog
+  migration uses a durable intent and remains idempotent after interruption.
 - Never alter an already committed turn during recovery.
 - Appeals are append-only corrections. A targeted turn supplies evidence but is
   never rewritten; current durable state and later committed consequences
@@ -180,8 +199,11 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
 
 ## Protocol and provider invariants
 
-- Gameplay Contract V1 is strict and flat. Provider JSON Schema, wire Zod
-  schema, decoder, and domain Zod schema form one chain; do not bypass a layer.
+- Gameplay Contract V1 is strict and flat. Provider output constraints, wire
+  Zod schema, decoder, and domain Zod schema form one chain; do not bypass a
+  layer. DeepSeek's documented JSON Object mode receives the exact schema and a
+  deterministic example in the prompt, then relies on the same strict local
+  wire validation; it is not a schema-less or free-form fallback.
 - Keep the implementation at the unversioned
   `src/llm/gameplay-protocol.ts` path. Do not restore old contract modules or
   parallel compatibility paths unless a real persisted format requires them.
@@ -210,7 +232,7 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
 Changing the wire format is not a casual refactor. If a change is unavoidable:
 
 1. deliberately increment `GAMEPLAY_PROTOCOL_VERSION` and its schema names;
-2. update both providers and the connection probe;
+2. update every provider and the connection probe;
 3. update prompts, wire/domain codecs, telemetry, and tests together;
 4. retain readable failure diagnostics;
 5. run the live all-profile acceptance evaluation.
@@ -261,7 +283,7 @@ new facts.
 ## Evaluation invariants
 
 - Evaluation sessions use isolated stores under `evaluations/runs`; they never
-  mutate `data/current`.
+  mutate the player campaign catalog under `data/campaigns`.
 - Parallelism is bounded and all workers share one reservation-based cost
   manager.
 - Run IDs are collision-resistant and one filesystem lock protects each run
@@ -317,22 +339,36 @@ and do not use destructive Git commands to manufacture a clean tree.
 - Commander help groups commands under Game, Configuration, Evaluation,
   Interfaces, and Future. In-game help groups inspection, appeal, recovery, and
   campaign actions. Keep additions in the matching group.
-- Browser controls group Play/New campaign under Campaign, provider/world/
-  language under Configuration, and self-play under Testing.
+- The browser uses a campaign sidebar and chat-like main pane. New campaign
+  setup collects premise, character, and language, then uses the configured
+  default provider/model. World and DM style is collapsed, prefilled from the
+  selected language's global profile, and may be customized for that campaign.
+- Settings separates global language/world defaults from `.env` key presence,
+  available models, default model selection, and compatibility testing.
+  Temperature and output limits remain internal. Existing campaigns retain
+  their own provider/model, language, and world profile, and the composer model
+  selector updates only the selected campaign.
+- The player-safe campaign setup view may expose only the effective starting
+  premise, character concept, language, and immutable world/DM-style snapshot.
+  Older campaigns without a durable setup snapshot report it as unavailable.
+- Campaign archival uses an in-app confirmation dialog, never a native browser
+  confirmation.
 - The World & DM style editor changes only the selected language's creative
   future-campaign profile. It must not expose editing of core prompt, protocol,
   mechanics, or state-authority rules.
-- The browser prompt inspector is read-only and renders static templates with
-  safe placeholders; never expose composed live prompts or campaign secrets.
+- Prompt inspection and self-play evaluation remain terminal/developer tools;
+  do not expose them through browser routes or controls. Static prompt previews
+  must never compose live campaign context or secrets.
 - Browser inspection has exactly three player-safe views: Character (including
   inventory), Location, and Story threads. Location exposes only player-safe
   location state; omit co-located entities and loose location inventory until
   the domain has explicit visibility tracking. Keep transcript reconstruction
   separate from state inspection.
-- Ask and appeal icons only prefill a general or turn-referenced command in the
-  action field. They must never send, commit, or silently mutate state on click.
-- The browser activity log is an inspectable local audit trail, not a public API
-  console. Keys remain redacted.
+- The global Ask and Appeal icons only prefill a command in the action field.
+  They must never send, commit, or silently mutate state on click.
+- Permanent deletion is available only for archived campaigns, requires the
+  exact campaign title in both the UI and server request, and removes the
+  matching browser cache.
 - Browser draft/status/turn/transcript/inspection responses are player-safe
   projections. Do not expose setup secrets, prepared writes, raw state
   operations, or alternate check stakes through presentation endpoints.
@@ -386,7 +422,7 @@ A refactor is complete when:
 
 - ownership boundaries are clearer and obsolete code is removed;
 - terminal and Web CLI still operate over the same engine;
-- active-save compatibility and pending-turn recovery are preserved or migrated
+- campaign compatibility and pending-turn recovery are preserved or migrated
   explicitly;
 - keys and user runtime data remain untouched;
 - all local verification commands pass;

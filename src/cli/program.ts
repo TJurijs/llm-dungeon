@@ -25,26 +25,44 @@ export function createCliProgram(project: CliProjectContext): Command {
     .version(APPLICATION_VERSION);
 
   program
-    .command("play")
-    .description("Create or resume the current campaign")
+    .command("play [campaign]")
+    .description("Create, choose, or open an unarchived campaign")
     .helpGroup("Game")
-    .action(() => game.play());
+    .action((campaign?: string) => game.play(campaign));
 
   program
     .command("new")
-    .description("Archive the current campaign and create another")
+    .description("Create and play an additional campaign")
     .helpGroup("Game")
     .action(() => game.newGame());
 
   program
+    .command("campaigns")
+    .description("List campaigns and their resumable or archived state")
+    .helpGroup("Game")
+    .action(async () => {
+      const campaigns = await project.campaigns();
+      if (campaigns.length === 0) {
+        console.log("No campaigns yet.");
+        return;
+      }
+      console.log(campaigns.map((campaign) => [
+        campaign.campaignId,
+        campaign.archived ? "archived" : campaign.status,
+        `turn ${campaign.turn}`,
+        campaign.title,
+      ].join("\t")).join("\n"));
+    });
+
+  program
     .command("configure")
-    .description("Configure the LLM provider and model")
+    .description("Configure the default provider and model for new campaigns")
     .helpGroup("Configuration")
     .action(async () => { await project.configureProvider(); });
 
   program
     .command("language [language]")
-    .description(`Show or set the game language (${Object.keys(LANGUAGES).join(", ")})`)
+    .description(`Show or set the default language for new campaigns (${Object.keys(LANGUAGES).join(", ")})`)
     .helpGroup("Configuration")
     .action(async (value?: string) => {
       if (!value) {
@@ -53,12 +71,12 @@ export function createCliProgram(project: CliProjectContext): Command {
       }
       const language = LanguageCodeSchema.parse(value.toLowerCase());
       await project.setLanguage(language);
-      p.log.success(`Language set to ${language}. New narration will use it from the next turn.`);
+      p.log.success(`Default language set to ${language}. New campaigns will use it.`);
     });
 
   const world = program
     .command("world")
-    .description("Inspect or edit language-specific world and DM-style guidance")
+    .description("Inspect or edit future-campaign world and DM-style guidance")
     .helpGroup("Configuration");
 
   world
@@ -147,7 +165,7 @@ export function createCliProgram(project: CliProjectContext): Command {
       });
       console.log(terminalBanner("Browser terminal companion"));
       console.log(`${terminalHeading("Web CLI ready")} http://${options.host}:${options.port}`);
-      console.log(terminalStyle.dim("Keys entered in the browser remain in this process only. Press Ctrl+C to stop."));
+      console.log(terminalStyle.dim("Provider keys are read from .env at startup. Press Ctrl+C to stop."));
     });
 
   program

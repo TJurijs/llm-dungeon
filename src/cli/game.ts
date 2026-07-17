@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as p from "@clack/prompts";
 import { parseAppealCommand } from "../appeal.js";
+import type { CampaignCatalogSummary } from "../campaign-catalog.js";
 import { parseQuestionCommand } from "../question.js";
 import type { LanguageCode } from "../language.js";
 import { formatCheck } from "../mechanics.js";
@@ -11,7 +12,7 @@ import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
 import { terminalBanner, terminalHeading, terminalPrompt, terminalRule, terminalStyle } from "../terminal-style.js";
 import type { GameEngine, GenerationMetadata, StateView, TurnResult } from "../types.js";
-import type { CliProjectContext } from "./project-context.js";
+import type { CliCampaignSession, CliProjectContext } from "./project-context.js";
 import { takePrompt } from "./prompt.js";
 import { inspectionTitle, renderInspection } from "./inspection.js";
 
@@ -52,31 +53,55 @@ Recovery
   :discard    Discard an uncommitted action without changing the world
 
 Campaign
-  :new        Archive this campaign and create a new one
+  :switch     Switch to another unarchived campaign
+  :new        Create and switch to another campaign
   :help       Show this help
   :quit       Leave the game`;
 
 export class HumanGameCli {
-  constructor(private readonly project: CliProjectContext) {}
+  constructor(
+    private readonly project: CliProjectContext,
+    private readonly chooseCampaign: (campaigns: CampaignCatalogSummary[]) => Promise<string> = async (campaigns) => takePrompt(
+      await p.select({
+        message: "Choose a campaign",
+        options: campaigns.map((campaign) => ({
+          value: campaign.campaignId,
+          label: campaign.title,
+          hint: `turn ${campaign.turn} · ${campaign.status}`,
+        })),
+      }),
+    ),
+  ) {}
 
-  async play(): Promise<void> {
-    await this.playLoop(await this.project.createEngine());
+  async play(campaignId?: string): Promise<void> {
+    const selected = await this.selectCampaign(campaignId);
+    await this.playLoop(selected ?? await this.setupNewGame());
   }
 
   async newGame(): Promise<void> {
-    const engine = await this.project.createEngine();
-    const replaceCurrent = await engine.hasCurrentGame();
-    if (replaceCurrent) {
-      const confirmed = takePrompt(
-        await p.confirm({
-          message: "Archive the current campaign and start a new one?",
-          initialValue: false,
-        }),
-      );
-      if (!confirmed) return;
+    await this.playLoop(await this.setupNewGame());
+  }
+
+  private async selectCampaign(
+    campaignId?: string,
+    excludedCampaignId?: string,
+  ): Promise<CliCampaignSession | undefined> {
+    const campaigns = (await this.project.campaigns())
+      .filter((campaign) => !campaign.archived && campaign.campaignId !== excludedCampaignId);
+    if (campaignId) {
+      if (!campaigns.some((campaign) => campaign.campaignId === campaignId)) {
+        throw new Error(`Unarchived campaign ${campaignId} was not found`);
+      }
+      return { campaignId, engine: await this.project.createEngine(campaignId) };
     }
-    await this.setupNewGame(engine, replaceCurrent);
-    await this.playLoop(engine);
+    if (campaigns.length === 0) return undefined;
+    const selectedId = campaigns.length === 1
+      ? campaigns[0]!.campaignId
+      : await this.chooseCampaign(campaigns);
+    if (!campaigns.some((campaign) => campaign.campaignId === selectedId)) {
+      throw new Error(`Campaign choice ${selectedId} is not available`);
+    }
+    return { campaignId: selectedId, engine: await this.project.createEngine(selectedId) };
   }
 
   private async readMaybeFile(value: string | undefined): Promise<string> {
@@ -150,13 +175,12 @@ export class HumanGameCli {
     }
   }
 
-  private async setupNewGame(engine: GameEngine, replaceCurrent: boolean): Promise<void> {
-    const draft = await this.acceptedSetupDraft(engine);
-    // The active campaign remains authoritative throughout generation and
-    // preview. Archival starts only after the player accepts a valid draft.
-    if (replaceCurrent && await engine.hasCurrentGame()) await engine.replaceGame(draft);
-    else await engine.createGame(draft);
+  private async setupNewGame(): Promise<CliCampaignSession> {
+    const setupSession = await this.project.createSetupSession();
+    const draft = await this.acceptedSetupDraft(setupSession.engine);
+    const session = await this.project.createCampaignSession(draft, setupSession.config);
     console.log(`\n${draft.setup.openingNarration.trim()}\n`);
+    return session;
   }
 
   private printTurn(result: TurnResult): void {
@@ -220,10 +244,11 @@ export class HumanGameCli {
     }
   }
 
-  private async playLoop(engine: GameEngine): Promise<void> {
+  private async playLoop(initialSession: CliCampaignSession): Promise<void> {
+    let session = initialSession;
+    let engine = session.engine;
     console.log(terminalBanner());
     if (!(await this.handleRecovery(engine))) return;
-    if (!(await engine.hasCurrentGame())) await this.setupNewGame(engine, false);
     const readline = createInterface({ input, output });
     console.log(`${terminalStyle.dim("Type :help for commands. Ctrl+C or :quit leaves the game.")}\n`);
     try {
@@ -245,6 +270,7 @@ export class HumanGameCli {
           const spin = p.spinner();
           spin.start("Retrying...");
           try {
+            engine = await this.project.createEngine(session.campaignId);
             const result = await engine.resumePendingTurn();
             spin.stop("Turn committed.");
             this.printTurn(result);
@@ -265,13 +291,20 @@ export class HumanGameCli {
           continue;
         }
         if (action === ":new") {
-          const confirmed = takePrompt(
-            await p.confirm({
-              message: "Archive this campaign and start a new one?",
-              initialValue: false,
-            }),
-          );
-          if (confirmed) await this.setupNewGame(engine, true);
+          session = await this.setupNewGame();
+          engine = session.engine;
+          continue;
+        }
+        if (action === ":switch") {
+          const selected = await this.selectCampaign(undefined, session.campaignId);
+          if (!selected) {
+            p.log.info("No other unarchived campaign is available.");
+            continue;
+          }
+          if (!(await this.handleRecovery(selected.engine))) continue;
+          session = selected;
+          engine = selected.engine;
+          p.log.success(`Switched to ${selected.campaignId}.`);
           continue;
         }
         let question: ReturnType<typeof parseQuestionCommand>;
@@ -285,6 +318,7 @@ export class HumanGameCli {
           const spin = p.spinner();
           spin.start("The dungeon master considers your question...");
           try {
+            engine = await this.project.createEngine(session.campaignId);
             const result = await engine.ask(question);
             spin.stop("Question answered; no turn advanced.");
             console.log(`\n${terminalHeading("Dungeon Master", "answer — no turn")}\n\n${result.answer.trim()}\n\n${terminalRule()}\n`);
@@ -305,6 +339,7 @@ export class HumanGameCli {
           const spin = p.spinner();
           spin.start("The dungeon master reviews the committed record...");
           try {
+            engine = await this.project.createEngine(session.campaignId);
             const result = await engine.appeal(appeal);
             spin.stop("Appeal committed.");
             this.printTurn(result);
@@ -324,6 +359,7 @@ export class HumanGameCli {
         const spin = p.spinner();
         spin.start("The dungeon master considers the world...");
         try {
+          engine = await this.project.createEngine(session.campaignId);
           const result = await engine.play(action);
           spin.stop("Turn committed.");
           this.printTurn(result);

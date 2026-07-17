@@ -47,6 +47,7 @@ import type {
   TurnResult,
 } from "./types.js";
 import type { PendingRequest } from "./persistence/pending.js";
+import { replyGeneration } from "./campaign-cost.js";
 
 type CommitRequest =
   | { kind: "gameplay"; action: string }
@@ -183,7 +184,15 @@ export class DungeonEngine implements GameEngine {
         temperature: 0.2,
         maxOutputTokens: 2_000,
       });
-      return { kind: "question", answer: result.data.answer };
+      return {
+        kind: "question",
+        answer: result.data.answer,
+        generation: replyGeneration({
+          provider: result.provider,
+          model: result.model,
+          ...(result.usage ? { usage: result.usage } : {}),
+        }),
+      };
     });
   }
 

@@ -3,288 +3,342 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>llm-dungeon web-cli</title>
+  <meta name="color-scheme" content="dark">
+  <title>llm-dungeon</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <span class="sigil">◆</span>
-      <strong>llm-dungeon</strong>
-      <span class="subtitle">web-cli</span>
-    </div>
-    <div class="status-row">
-      <span id="provider-status" class="status">provider: loading</span>
-      <span id="campaign-status" class="status">campaign: loading</span>
-      <span id="task-status" class="status">evaluation: idle</span>
-    </div>
-  </header>
-
-  <main class="workspace">
-    <section class="terminal-wrap">
-      <div class="terminal-title">
-        <span>TERMINAL OUTPUT</span>
-        <div class="terminal-actions">
-          <button id="command-log-toggle" class="command-log-button" aria-haspopup="dialog"><span id="command-log-label">activity log</span> <span id="command-count">0</span></button>
-          <button id="clear-terminal" class="quiet" hidden>clear</button>
-        </div>
+  <div class="app-shell">
+    <aside id="campaign-sidebar" class="sidebar" aria-label="Campaigns">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true">◆</span>
+        <strong>llm-dungeon</strong>
+        <button id="close-sidebar" class="icon-button" type="button" aria-label="Close campaigns" title="Close campaigns" aria-controls="campaign-sidebar" aria-expanded="true">
+          <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+            <path d="M8.5 4v16"></path>
+          </svg>
+        </button>
       </div>
-      <div id="terminal" data-pristine="true" aria-live="polite">
-        <section class="terminal-welcome">
-          <div class="terminal-welcome-title"><span>◆</span> LLM DUNGEON <small>WEB-CLI ONLINE</small></div>
-          <p>Configure a provider, create or resume a campaign, then enter any action.</p>
-        </section>
-      </div>
-    </section>
 
-    <div id="workspace-resizer" class="workspace-resizer" role="separator" aria-label="Resize terminal and controls" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="64" tabindex="0" title="Drag to resize · Double-click to reset"><span></span></div>
+      <button id="new-campaign" class="new-campaign-button" type="button">
+        <span aria-hidden="true">＋</span>
+        <span data-i18n="newCampaign">New campaign</span>
+      </button>
 
-    <aside class="controls">
-      <nav class="tabs" role="tablist" aria-label="Control panels">
-        <div class="tab-group tab-group-campaign" role="presentation">
-          <span id="tab-group-campaign-label" class="tab-group-label">Campaign</span>
-          <div class="tab-group-controls">
-            <div class="tab-group-tabs" role="presentation">
-              <button id="tab-game" type="button" role="tab" aria-controls="panel-game" aria-describedby="tab-group-campaign-label" aria-selected="true" tabindex="0" data-panel="game" class="active">Play</button>
-              <button id="tab-campaign" type="button" role="tab" aria-controls="panel-campaign" aria-describedby="tab-group-campaign-label" aria-selected="false" tabindex="-1" data-panel="campaign">New campaign</button>
-            </div>
-          </div>
-        </div>
-        <div class="tab-group tab-group-configuration" role="presentation">
-          <span id="tab-group-configuration-label" class="tab-group-label">Configuration</span>
-          <div class="tab-group-controls">
-            <div class="tab-group-tabs" role="presentation">
-              <button id="tab-provider" type="button" role="tab" aria-controls="panel-provider" aria-describedby="tab-group-configuration-label" aria-selected="false" tabindex="-1" data-panel="provider">Provider & key</button>
-              <button id="tab-world" type="button" role="tab" aria-controls="panel-world" aria-describedby="tab-group-configuration-label" aria-selected="false" tabindex="-1" data-panel="world">World rules</button>
-            </div>
-            <label class="language-picker" for="language-select"><span>Language</span>
-              <select id="language-select" aria-label="Game and interface language">
-                <option value="en">English</option>
-                <option value="ru">Русский</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <div class="tab-group tab-group-testing" role="presentation">
-          <span id="tab-group-testing-label" class="tab-group-label">Testing</span>
-          <div class="tab-group-controls">
-            <div class="tab-group-tabs" role="presentation">
-              <button id="tab-evaluations" type="button" role="tab" aria-controls="panel-evaluations" aria-describedby="tab-group-testing-label" aria-selected="false" tabindex="-1" data-panel="evaluations">Auto-runs</button>
-            </div>
-          </div>
-        </div>
+      <nav class="campaign-navigation" aria-label="Campaign list">
+        <div class="sidebar-section-heading" data-i18n="campaigns">Campaigns</div>
+        <div id="campaign-list" class="campaign-list" aria-live="polite"></div>
+        <details id="archived-campaigns" class="archived-campaigns" hidden>
+          <summary><span data-i18n="archived">Archived</span> <span id="archived-count" class="count-badge">0</span></summary>
+          <div id="archived-campaign-list" class="campaign-list archived-list"></div>
+        </details>
       </nav>
-      <section id="panel-game" class="panel active" role="tabpanel" aria-labelledby="tab-game" tabindex="0">
-        <h1>Play</h1>
-        <p id="game-summary" class="state-card">Loading campaign state…</p>
-        <div class="action-label-row">
-          <label for="action">What do you do?</label>
-          <span class="action-prefill-controls">
-            <button id="ask-generic" class="action-prefill-button ask-button" type="button" aria-label="Ask the DM without advancing the turn" title="Prefill an out-of-character question" disabled>
-              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="9"></circle>
-                <path d="M9.4 9a2.8 2.8 0 1 1 4.45 2.27c-.9.64-1.35 1.1-1.35 2.23"></path>
-                <path d="M12.5 17h.01"></path>
+
+      <div class="sidebar-footer">
+        <button id="open-settings" class="sidebar-link" type="button">
+          <span aria-hidden="true">⚙</span>
+          <span data-i18n="settings">Settings</span>
+        </button>
+      </div>
+    </aside>
+
+    <div id="sidebar-resizer" class="panel-resizer sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize campaigns" tabindex="0"></div>
+
+    <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close campaigns" tabindex="-1" hidden></button>
+
+    <main class="main-pane">
+      <section id="chat-view" class="app-view chat-view" aria-labelledby="campaign-title">
+        <header class="chat-header">
+          <button id="open-sidebar" class="icon-button sidebar-opener sidebar-open-button" type="button" aria-label="Open campaigns" title="Open campaigns" aria-controls="campaign-sidebar" aria-expanded="false">
+            <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+              <path d="M8.5 4v16"></path>
+            </svg>
+          </button>
+          <div class="campaign-heading">
+            <h1 id="campaign-title" tabindex="-1">llm-dungeon</h1>
+            <p id="campaign-meta" class="campaign-meta"></p>
+          </div>
+          <div class="chat-header-actions">
+            <button id="open-campaign-setup" class="icon-button subtle-icon-button" type="button" aria-label="Campaign setup" title="Campaign setup" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path>
+                <circle cx="16" cy="7" r="2"></circle>
+                <circle cx="8" cy="17" r="2"></circle>
               </svg>
             </button>
-            <button id="appeal-generic" class="action-prefill-button appeal-button" type="button" aria-label="Appeal a state or DM mistake" title="Prefill a general appeal" disabled>
-              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-                <path d="M12 3 2.7 20h18.6L12 3Z"></path>
-                <path d="M12 9v5"></path>
-                <path d="M12 17h.01"></path>
+            <button id="open-inspection" class="icon-button" type="button" aria-label="Campaign state" title="Campaign state" aria-controls="inspection-panel" aria-expanded="false" disabled>
+              <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+                <path d="M15.5 4v16"></path>
               </svg>
             </button>
-          </span>
-        </div>
-        <textarea id="action" rows="6" placeholder="I approach the hooded traveler and ask why they have been watching the door."></textarea>
-        <div class="button-row">
-          <button id="play" class="primary">Send action</button>
-        </div>
-        <p class="hint">Ctrl/⌘ + Enter sends the action. Rolls and modifiers appear in the output.</p>
-        <p id="pending-help" class="hint hidden"><b>Pending recovery:</b> Enter <code>:retry</code> to resume it or <code>:discard</code> to remove it without changing world state.</p>
-        <h2>Inspect</h2>
-        <div class="inspection-switcher" id="inspect-buttons" role="group" aria-label="Inspection views">
-          <button type="button" data-view="character" aria-controls="inspection-output" aria-pressed="false">Character</button>
-          <button type="button" data-view="location" aria-controls="inspection-output" aria-pressed="false">Location</button>
-          <button type="button" data-view="threads" aria-controls="inspection-output" aria-pressed="false">Story threads</button>
-        </div>
-        <section id="inspection-output" class="inspection-output" role="region" aria-label="Campaign inspection" aria-busy="false" hidden></section>
-        <div class="campaign-secondary-actions">
-          <button id="export-campaign" class="export-action" type="button">
-            <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-              <path d="M7 3.5h7l4 4v13H7z"></path>
-              <path d="M14 3.5v4h4"></path>
-              <path d="M12.5 10v6"></path>
-              <path d="m10 13.5 2.5 2.5 2.5-2.5"></path>
-            </svg>
-            <span id="export-campaign-label">Export campaign log (.md)</span>
-          </button>
-          <button id="archive" class="archive-action" type="button">
-            <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-              <path d="M4 7.5h16l-1 12H5l-1-12Z"></path>
-              <path d="M3 4.5h18v3H3z"></path>
-              <path d="M12 10v6"></path>
-              <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
-            </svg>
-            <span id="archive-label">Archive campaign…</span>
-          </button>
-        </div>
-      </section>
-
-      <section id="panel-campaign" class="panel" role="tabpanel" aria-labelledby="tab-campaign" tabindex="0" hidden>
-        <h1>New campaign</h1>
-        <label for="premise">Premise / scenario (optional)</label>
-        <textarea id="premise" rows="6" placeholder="Default: A classical opening in a tavern, with immediate but optional possibilities."></textarea>
-        <label for="character">Character concept (optional)</label>
-        <textarea id="character" rows="6" placeholder="Default: A grounded adventurer with two useful traits and one complicating trait."></textarea>
-        <button id="generate-campaign" class="primary">Generate preview</button>
-        <div id="draft-controls" class="hidden">
-          <label class="check"><input id="archive-on-confirm" type="checkbox"><span>Archive the current campaign if one exists</span></label>
-          <div class="button-row">
-            <button id="confirm-campaign" class="primary">Accept & begin</button>
-            <button id="regenerate-campaign">Regenerate</button>
-          </div>
-        </div>
-      </section>
-
-      <section id="panel-provider" class="panel" role="tabpanel" aria-labelledby="tab-provider" tabindex="0" hidden>
-        <h1>Provider & key</h1>
-        <p class="notice">Browser-entered keys stay only in this server process and are never written to files or returned by the API.</p>
-        <div id="schema-compatibility" class="capability-card untested" aria-live="polite">
-          <strong id="schema-compatibility-title">Structured output required</strong>
-          <p id="schema-compatibility-detail">The selected model must support JSON-schema-constrained output. Run Test connection after changing provider or model.</p>
-          <small id="schema-compatibility-rule">Unsupported models fail closed; the game never falls back to unrestricted JSON.</small>
-        </div>
-        <label for="provider">Provider</label>
-        <select id="provider">
-          <option value="gemini">Google — recommended</option>
-          <option value="openrouter">OpenRouter</option>
-        </select>
-        <label for="model">Model ID</label>
-        <div class="model-picker" data-model-picker data-recommended="google/gemini-3.5-flash">
-          <div class="model-picker-field">
-            <input id="model" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="model-options" aria-describedby="model-guidance" autocomplete="off" spellcheck="false" placeholder="Search or enter a model ID">
-            <button class="model-picker-toggle" type="button" aria-label="Show model options" aria-controls="model-options" tabindex="-1">▾</button>
-          </div>
-          <div id="model-options" class="model-picker-menu" role="listbox" hidden></div>
-        </div>
-        <p id="model-guidance" class="hint model-guidance" aria-live="polite"></p>
-        <div class="two-col">
-          <div><label for="temperature">Temperature</label><input id="temperature" type="number" min="0" max="2" step="0.1" value="0.8"></div>
-          <div><label for="max-tokens">Max output tokens</label><input id="max-tokens" type="number" min="256" max="32000" value="4000"></div>
-        </div>
-        <label for="api-key">Session API key <span class="muted">leave blank to use .env</span></label>
-        <input id="api-key" type="password" autocomplete="off" placeholder="Optional session override">
-        <div class="button-row">
-          <button id="save-provider" class="primary">Save config</button>
-          <button id="test-provider">Test connection</button>
-        </div>
-        <p id="key-status" class="hint"></p>
-      </section>
-
-      <section id="panel-evaluations" class="panel" role="tabpanel" aria-labelledby="tab-evaluations" tabindex="0" hidden>
-        <h1>Self-play auto-runs</h1>
-        <p id="evaluation-provider" class="notice">Auto-runs use the saved provider configuration.</p>
-        <div class="two-col">
-          <div><label for="max-cost">Cost ceiling ($)</label><input id="max-cost" type="number" min="0.01" step="0.01" value="5"></div>
-          <div><label for="sessions">Sessions</label><input id="sessions" type="number" min="1" max="100" value="1"></div>
-          <div><label for="turns">Turns / session</label><input id="turns" type="number" min="1" max="200" value="20"></div>
-          <div><label for="concurrency">Parallel sessions</label><input id="concurrency" type="number" min="1" max="10" value="3"></div>
-          <fieldset id="profile-control" class="wide profile-control">
-            <legend>Player profile pool</legend>
-            <p id="profile-help" class="hint">Select one or more. Sessions rotate through profiles in the order you select them.</p>
-            <details id="profile-dropdown" class="profile-multiselect">
-              <summary id="profile-selection-summary" aria-label="Selected player profiles">Curious explorer</summary>
-              <div id="profile-pool" class="profile-pool">
-                <label class="profile-option"><input type="checkbox" value="curious-explorer" checked><span><b>Curious explorer</b><small>Explores and follows discoveries</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="social-manipulator"><span><b>Social manipulator</b><small>Bargains, deceives, and builds alliances</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="cautious-investigator"><span><b>Cautious investigator</b><small>Verifies clues and prepares carefully</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="reckless-adventurer"><span><b>Reckless adventurer</b><small>Takes bold risks and escalates danger</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="combat-focused"><span><b>Combat focused</b><small>Favors force and adapts to injuries</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="creative-problem-solver"><span><b>Creative problem solver</b><small>Combines tools and environment</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="rule-challenger"><span><b>Rule challenger</b><small>Tests impossible or unsupported claims</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="long-term-planner"><span><b>Long-term planner</b><small>Tracks goals, promises, and consequences</small></span></label>
-                <label class="profile-option"><input type="checkbox" value="chaotic"><span><b>Chaotic</b><small>Stress-tests gibberish, nonsense, and invented items</small></span></label>
+            <details id="campaign-menu" class="campaign-menu">
+              <summary class="icon-button" aria-label="Campaign actions">•••</summary>
+              <div class="menu-popover">
+                <button id="export-campaign" type="button" disabled data-i18n="exportCampaign">Export campaign log</button>
+                <button id="archive-campaign" class="danger" type="button" disabled data-i18n="archiveCampaign">Archive campaign</button>
               </div>
             </details>
-            <p id="profile-order" class="profile-order" aria-live="polite"></p>
-          </fieldset>
-        </div>
-        <label for="player-model">Simulated-player model <span class="muted">optional override</span></label>
-        <div class="model-picker" data-model-picker data-recommended="google/gemini-3.1-flash-lite">
-          <div class="model-picker-field">
-            <input id="player-model" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="player-model-options" autocomplete="off" spellcheck="false" placeholder="google/gemini-3.1-flash-lite — recommended">
-            <button class="model-picker-toggle" type="button" aria-label="Show model options" aria-controls="player-model-options" tabindex="-1">▾</button>
           </div>
-          <div id="player-model-options" class="model-picker-menu" role="listbox" hidden></div>
+        </header>
+
+        <div id="chat-scroll" class="chat-scroll">
+          <div id="chat-empty" class="empty-state">
+            <span class="empty-sigil" aria-hidden="true">◆</span>
+            <h2 data-i18n="welcomeTitle">Your stories live here</h2>
+            <p data-i18n="welcomeBody">Create a campaign to begin, or choose one from the sidebar.</p>
+            <button id="empty-new-campaign" class="primary" type="button" data-i18n="newCampaign">New campaign</button>
+          </div>
+          <div id="chat-log" class="chat-log" role="log" aria-label="Campaign transcript" aria-relevant="additions" aria-busy="false" hidden></div>
         </div>
-        <p id="player-model-schema-hint" class="hint">A player-model override must also support schema-constrained JSON output.</p>
-        <button id="start-evaluation" class="primary">Start bounded auto-run</button>
-        <h2>Run artifacts</h2>
-        <label for="run-select">Run</label>
-        <select id="run-select"><option value="">No runs yet</option></select>
-        <div class="button-grid">
-          <button id="show-report">Show report</button>
-          <button id="resume-run">Resume run</button>
-          <button id="regenerate-report">Regenerate report</button>
-        </div>
-        <label for="session-select">Session</label>
-        <select id="session-select"><option value="">Select a run</option></select>
-        <div class="button-row">
-          <button id="show-transcript">Transcript</button>
-          <button id="show-evaluation">AI evaluation</button>
+
+        <footer id="composer-wrap" class="composer-wrap" hidden>
+          <div id="pending-banner" class="pending-banner" role="status" hidden></div>
+          <div class="composer">
+            <textarea id="action" rows="1" maxlength="10000" aria-label="What do you do?" placeholder="What do you do?"></textarea>
+            <div class="composer-actions">
+              <div class="prefill-actions">
+                <button id="ask-generic" class="prefill-button ask-button" type="button" disabled>
+                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M9.4 9a2.8 2.8 0 1 1 4.45 2.27c-.9.64-1.35 1.1-1.35 2.23"></path>
+                    <path d="M12.5 17h.01"></path>
+                  </svg>
+                  <span data-i18n="ask">Ask</span>
+                </button>
+                <button id="appeal-generic" class="prefill-button appeal-button" type="button" disabled>
+                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+                    <path d="M12 3 2.7 20h18.6L12 3Z"></path>
+                    <path d="M12 9v5"></path>
+                    <path d="M12 17h.01"></path>
+                  </svg>
+                  <span data-i18n="appeal">Appeal</span>
+                </button>
+              </div>
+              <label class="composer-model-picker" for="campaign-model">
+                <span class="sr-only" data-i18n="model">Model</span>
+                <select id="campaign-model" aria-label="Model for this campaign" disabled></select>
+              </label>
+              <span id="composer-hint" class="composer-hint"></span>
+              <button id="send-action" class="send-button" type="button" aria-label="Send action" disabled>
+                <span data-i18n="send">Send</span>
+                <span aria-hidden="true">↑</span>
+              </button>
+            </div>
+          </div>
+        </footer>
+      </section>
+
+      <section id="setup-view" class="app-view form-view" aria-labelledby="setup-title" hidden>
+        <header class="form-header">
+          <button class="icon-button sidebar-opener sidebar-open-button" type="button" aria-label="Open campaigns" title="Open campaigns" aria-controls="campaign-sidebar" aria-expanded="false">
+            <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+              <path d="M8.5 4v16"></path>
+            </svg>
+          </button>
+          <div>
+            <h1 id="setup-title" tabindex="-1" data-i18n="createAdventure">Create your adventure</h1>
+            <p data-i18n="createAdventureHint">Give the dungeon master a direction, or leave the fields blank for a classic opening.</p>
+          </div>
+        </header>
+        <div class="form-scroll">
+          <form id="campaign-setup-form" class="settings-card setup-card">
+            <label for="premise" data-i18n="premise">Premise or scenario</label>
+            <textarea id="premise" rows="5" maxlength="100000"></textarea>
+
+            <label for="character" data-i18n="characterConcept">Character concept</label>
+            <textarea id="character" rows="5" maxlength="100000"></textarea>
+
+            <label for="setup-language" data-i18n="language">Language</label>
+            <select id="setup-language"></select>
+
+            <details id="setup-model-settings" class="advanced-settings">
+              <summary data-i18n="model">Model</summary>
+              <div class="advanced-content field-grid">
+                <div>
+                  <label for="setup-provider" data-i18n="provider">Provider</label>
+                  <select id="setup-provider"></select>
+                </div>
+                <div>
+                  <label for="setup-model" data-i18n="model">Model</label>
+                  <select id="setup-model"></select>
+                </div>
+              </div>
+              <p class="field-hint" data-i18n="modelSetupHint">Prefilled from the global default. This model generates the opening and can be changed later.</p>
+            </details>
+
+            <details id="setup-world-settings" class="advanced-settings">
+              <summary data-i18n="worldStyle">World and DM style</summary>
+              <div class="advanced-content">
+                <label class="sr-only" for="setup-world" data-i18n="worldStyle">World and DM style</label>
+                <textarea id="setup-world" rows="14" maxlength="500000" spellcheck="false"></textarea>
+                <p class="field-hint" data-i18n="worldSetupHint">Prefilled from global defaults. Changes apply only to this campaign.</p>
+              </div>
+            </details>
+
+            <p id="setup-key-warning" class="inline-notice warning" hidden></p>
+            <div class="form-actions">
+              <button id="generate-campaign" class="primary" type="submit" data-i18n="generatePreview">Generate preview</button>
+            </div>
+          </form>
+
+          <section id="campaign-preview" class="settings-card campaign-preview" aria-labelledby="preview-title" hidden>
+            <div class="preview-eyebrow" data-i18n="preview">Preview</div>
+            <h2 id="preview-title" tabindex="-1"></h2>
+            <div class="preview-section">
+              <h3 data-i18n="character">Character</h3>
+              <strong id="preview-player"></strong>
+              <p id="preview-description"></p>
+              <div id="preview-traits" class="trait-list"></div>
+            </div>
+            <div class="preview-section">
+              <h3 data-i18n="opening">Opening</h3>
+              <p id="preview-opening" class="narrative-text"></p>
+            </div>
+            <details class="scenario-preview">
+              <summary data-i18n="scenarioDetails">Scenario details</summary>
+              <pre id="preview-scenario"></pre>
+            </details>
+            <div class="form-actions preview-actions">
+              <button id="accept-campaign" class="primary" type="button" data-i18n="acceptBegin">Accept and begin</button>
+              <button id="regenerate-campaign" type="button" data-i18n="regenerate">Regenerate</button>
+              <button id="edit-campaign" class="quiet" type="button" data-i18n="editSetup">Edit setup</button>
+            </div>
+          </section>
         </div>
       </section>
 
-      <section id="panel-world" class="panel" role="tabpanel" aria-labelledby="tab-world" tabindex="0" hidden>
-        <h1>World & DM style</h1>
-        <p class="notice">This creative Markdown controls setting, tone, pacing, and boundaries for future campaigns. Engine rules and protocols remain protected.</p>
-        <p id="world-profile-meta" class="hint" aria-live="polite"></p>
-        <label for="world-markdown">Creative profile Markdown</label>
-        <textarea id="world-markdown" rows="28" spellcheck="false"></textarea>
-        <button id="save-world" class="primary">Save creative profile</button>
-        <h2 id="prompt-inspector-title">Prompt inspector</h2>
-        <p id="prompt-inspector-notice" class="hint">Read-only static templates with safe placeholders. Live campaign context and secrets are never exposed here.</p>
-        <div class="prompt-inspector-controls">
-          <label for="prompt-phase">Prompt phase</label>
-          <select id="prompt-phase">
-            <option value="dm-system">DM system</option>
-            <option value="setup">Campaign setup</option>
-            <option value="adjudication">Turn adjudication</option>
-            <option value="difficulty">Check difficulty</option>
-            <option value="resolution">Locked resolution</option>
-            <option value="question">Out-of-character question</option>
-            <option value="appeal">Appeal review</option>
-            <option value="schema-repair">Schema repair</option>
-            <option value="domain-correction">Domain correction</option>
-            <option value="simulated-player">Simulated player</option>
-            <option value="judge">Evaluation judge</option>
-            <option value="connection-probe">Provider probe</option>
-          </select>
-          <button id="show-prompt" type="button">Show prompt</button>
-        </div>
-        <pre id="prompt-preview" class="prompt-preview" tabindex="0">Choose a phase to inspect its static template.</pre>
-      </section>
-    </aside>
-  </main>
+      <section id="settings-view" class="app-view form-view" aria-labelledby="settings-title" hidden>
+        <header class="form-header">
+          <button class="icon-button sidebar-opener sidebar-open-button" type="button" aria-label="Open campaigns" title="Open campaigns" aria-controls="campaign-sidebar" aria-expanded="false">
+            <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+              <path d="M8.5 4v16"></path>
+            </svg>
+          </button>
+          <div>
+            <h1 id="settings-title" tabindex="-1" data-i18n="settings">Settings</h1>
+            <p data-i18n="settingsHint">Global defaults shape new campaigns. LLM providers control tested and available models.</p>
+          </div>
+        </header>
+        <div class="form-scroll settings-shell">
+          <nav class="settings-navigation" aria-label="Settings sections" data-i18n-aria-label="settingsSections">
+            <span class="settings-navigation-heading" data-i18n="settings">Settings</span>
+            <button class="settings-navigation-item" type="button" data-settings-section="defaults" aria-current="page" aria-controls="settings-defaults-panel">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.5 12h17M12 3.5c2.2 2.3 3.3 5.1 3.3 8.5S14.2 18.2 12 20.5M12 3.5C9.8 5.8 8.7 8.6 8.7 12s1.1 6.2 3.3 8.5"></path></svg>
+              <span data-i18n="globalDefaults">Global defaults</span>
+            </button>
+            <button class="settings-navigation-item" type="button" data-settings-section="providers" aria-controls="settings-providers-panel">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1.5"></rect><rect x="4" y="14" width="16" height="6" rx="1.5"></rect><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"></path></svg>
+              <span data-i18n="llmProviders">LLM providers</span>
+            </button>
+          </nav>
 
-  <dialog id="command-log-dialog" class="command-dialog">
-    <div class="command-dialog-head">
+          <div class="settings-content">
+            <section id="settings-defaults-panel" class="settings-card settings-panel" data-settings-panel="defaults" aria-labelledby="world-settings-title">
+              <h2 id="world-settings-title" data-i18n="globalDefaults">Global defaults</h2>
+              <p class="field-hint" data-i18n="globalDefaultsHint">Used when creating a new campaign. Existing campaigns are unchanged.</p>
+              <label for="settings-language" data-i18n="defaultLanguage">Default language</label>
+              <select id="settings-language"></select>
+              <label for="settings-world" data-i18n="worldStyle">World and DM style</label>
+              <textarea id="settings-world" rows="18" maxlength="500000" spellcheck="false"></textarea>
+              <p id="world-source" class="field-hint"></p>
+              <div class="form-actions">
+                <button id="save-world" class="primary" type="button" data-i18n="saveGlobalDefaults">Save global defaults</button>
+              </div>
+            </section>
+
+            <section id="settings-providers-panel" class="settings-card settings-panel llm-settings-card" data-settings-panel="providers" aria-labelledby="llm-settings-title" hidden>
+              <h2 id="llm-settings-title" data-i18n="llmProviders">LLM providers</h2>
+              <p class="field-hint" data-i18n="llmConfigurationHint">Use a temporary session key here or configure .env. Test a model before using it in a campaign.</p>
+              <p id="llm-pricing-hint" class="field-hint llm-pricing-hint"></p>
+              <p class="field-hint llm-quality-legend" data-i18n="qualityLegend">Quality: High — strongest; Medium — balanced; Low — budget.</p>
+              <p id="llm-default-summary" class="llm-default-summary"></p>
+              <div id="llm-providers" class="llm-provider-list" aria-live="polite"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="inspection-resizer" class="panel-resizer inspection-resizer" role="separator" aria-orientation="vertical" aria-label="Resize campaign state" tabindex="0" hidden></div>
+    <aside id="inspection-panel" class="state-dock" aria-labelledby="inspection-title" hidden>
+    <header class="dialog-header">
       <div>
-        <span class="eyebrow">WEB-CLI</span>
-        <h2>Activity log</h2>
+        <span class="eyebrow" data-i18n="campaignState">Campaign state</span>
+        <h2 id="inspection-title" data-i18n="character">Character</h2>
       </div>
-      <button id="command-log-close" class="quiet" aria-label="Close activity log">close</button>
+      <button id="close-inspection" class="icon-button" type="button" aria-label="Close campaign state" title="Close campaign state" aria-controls="inspection-panel" aria-expanded="true">
+        <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect>
+          <path d="M15.5 4v16"></path>
+        </svg>
+      </button>
+    </header>
+    <div id="inspection-tabs" class="inspection-tabs" role="tablist" aria-label="Campaign state views">
+      <button type="button" role="tab" data-view="character" aria-selected="true" data-i18n="character">Character</button>
+      <button type="button" role="tab" data-view="location" aria-selected="false" data-i18n="location">Location</button>
+      <button type="button" role="tab" data-view="threads" aria-selected="false" data-i18n="storyThreads">Story threads</button>
     </div>
-    <p class="hint">A local audit trail of actions performed through this interface. API keys are always redacted.</p>
-    <pre id="command-log">No activity recorded yet.</pre>
-    <div class="button-row command-dialog-actions">
-      <button id="copy-command-log">Copy</button>
-      <button id="clear-command-log" class="danger subtle">Clear activity</button>
-    </div>
+    <div id="inspection-output" class="inspection-output" role="tabpanel" aria-live="polite"></div>
+    </aside>
+  </div>
+
+  <dialog id="campaign-setup-dialog" class="confirmation-dialog campaign-setup-dialog" aria-labelledby="campaign-setup-dialog-title">
+    <header class="dialog-header">
+      <div>
+        <span class="eyebrow" data-i18n="startedWith">Started with</span>
+        <h2 id="campaign-setup-dialog-title" data-i18n="campaignSetup">Campaign setup</h2>
+      </div>
+      <button id="close-campaign-setup" class="icon-button" type="button" aria-label="Close campaign setup">×</button>
+    </header>
+    <div id="campaign-setup-content" class="confirmation-body campaign-setup-content" aria-live="polite"></div>
   </dialog>
 
-  <div id="busy" class="busy hidden"><span></span><b>Working…</b></div>
+  <dialog id="archive-campaign-dialog" class="confirmation-dialog" aria-labelledby="archive-dialog-title">
+    <form id="archive-campaign-form" method="dialog">
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow" data-i18n="campaign">Campaign</span>
+          <h2 id="archive-dialog-title" data-i18n="archiveCampaign">Archive campaign</h2>
+        </div>
+        <button id="cancel-archive-campaign-x" class="icon-button" type="button" aria-label="Cancel archiving">×</button>
+      </header>
+      <div class="confirmation-body">
+        <p data-i18n="archiveConfirm">Archive this campaign? It will become read-only and cannot be resumed.</p>
+      </div>
+      <div class="confirmation-actions">
+        <button id="cancel-archive-campaign" type="button" data-i18n="cancel">Cancel</button>
+        <button id="confirm-archive-campaign" class="danger" type="submit" data-i18n="archiveCampaign">Archive campaign</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-campaign-dialog" class="confirmation-dialog" aria-labelledby="delete-dialog-title">
+    <form id="delete-campaign-form" method="dialog">
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow" data-i18n="permanentDeletion">Permanent deletion</span>
+          <h2 id="delete-dialog-title" data-i18n="deleteCampaign">Delete campaign</h2>
+        </div>
+        <button id="cancel-delete-campaign-x" class="icon-button" type="button" aria-label="Cancel deletion">×</button>
+      </header>
+      <div class="confirmation-body">
+        <p id="delete-campaign-warning"></p>
+        <label for="delete-campaign-confirmation" data-i18n="typeCampaignTitle">Type the campaign title to confirm</label>
+        <input id="delete-campaign-confirmation" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="confirmation-actions">
+        <button id="cancel-delete-campaign" type="button" data-i18n="cancel">Cancel</button>
+        <button id="confirm-delete-campaign" class="danger" type="submit" disabled data-i18n="deleteForever">Delete forever</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

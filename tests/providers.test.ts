@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { GeminiProvider, OpenRouterProvider } from "../src/providers.js";
+import {
+  AnthropicProvider,
+  DeepSeekProvider,
+  GeminiProvider,
+  OpenAIProvider,
+  OpenRouterProvider,
+  createProvider,
+  providerSupportsTemperature,
+} from "../src/providers.js";
 import { TurnDecisionSchema } from "../src/schemas.js";
 import {
   GAMEPLAY_PROTOCOL_VERSION,
@@ -86,6 +94,12 @@ describe("provider adapters", () => {
       new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
     ["Gemini", (apiKey: string, fetchMock: typeof fetch) =>
       new GeminiProvider("gemini-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock)],
+    ["OpenAI", (apiKey: string, fetchMock: typeof fetch) =>
+      new OpenAIProvider("gpt-4o", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
+    ["Anthropic", (apiKey: string, fetchMock: typeof fetch) =>
+      new AnthropicProvider("claude-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/messages", fetchMock)],
+    ["DeepSeek", (apiKey: string, fetchMock: typeof fetch) =>
+      new DeepSeekProvider("deepseek-chat", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
   ])("redacts the configured API key from %s HTTP failures", async (_name, createProvider) => {
     const apiKey = "test-key-that-must-not-escape";
     const fetchMock = vi.fn(async () => new Response(
@@ -134,6 +148,12 @@ describe("provider adapters", () => {
       new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
     ["Gemini", (apiKey: string, fetchMock: typeof fetch) =>
       new GeminiProvider("gemini-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock)],
+    ["OpenAI", (apiKey: string, fetchMock: typeof fetch) =>
+      new OpenAIProvider("gpt-4o", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
+    ["Anthropic", (apiKey: string, fetchMock: typeof fetch) =>
+      new AnthropicProvider("claude-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/messages", fetchMock)],
+    ["DeepSeek", (apiKey: string, fetchMock: typeof fetch) =>
+      new DeepSeekProvider("deepseek-chat", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
   ])("redacts the configured API key from %s network exceptions", async (_name, createProvider) => {
     const apiKey = "network-key-that-must-not-escape";
     const fetchMock = vi.fn(async () => {
@@ -169,6 +189,369 @@ describe("provider adapters", () => {
     expect(result.data).toEqual({ answer: "yes" });
     expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4, billedCostUsd: 0.000123 });
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("maps every provider to its dedicated environment key", () => {
+    const defaults = { temperature: 0.8, maxOutputTokens: 1000 };
+    expect(createProvider(
+      { provider: "gemini", model: "gemini-model", ...defaults },
+      { GEMINI_API_KEY: "gemini-key" },
+    )).toBeInstanceOf(GeminiProvider);
+    expect(createProvider(
+      { provider: "openrouter", model: "vendor/model", ...defaults },
+      { OPENROUTER_API_KEY: "openrouter-key" },
+    )).toBeInstanceOf(OpenRouterProvider);
+    expect(createProvider(
+      { provider: "openai", model: "gpt-4o", ...defaults },
+      { OPENAI_API_KEY: "openai-key" },
+    )).toBeInstanceOf(OpenAIProvider);
+    expect(createProvider(
+      { provider: "anthropic", model: "claude-model", ...defaults },
+      { ANTHROPIC_API_KEY: "anthropic-key" },
+    )).toBeInstanceOf(AnthropicProvider);
+    expect(createProvider(
+      { provider: "deepseek", model: "deepseek-chat", ...defaults },
+      { DEEPSEEK_API_KEY: "deepseek-key" },
+    )).toBeInstanceOf(DeepSeekProvider);
+    expect(() => createProvider(
+      { provider: "openai", model: "gpt-4o", ...defaults },
+      {},
+    )).toThrow("OPENAI_API_KEY is not set");
+  });
+
+  it("adapts optional fields to OpenAI strict schema and restores null to omission locally", async () => {
+    const optionalAnswerSchema = z.object({
+      answer: z.string(),
+      note: z.string().optional(),
+    }).strict();
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.max_completion_tokens).toBe(777);
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body.temperature).toBe(0.4);
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: { name: "optional_answer", strict: true },
+      });
+      const schema = body.response_format.json_schema.schema;
+      expect(schema.required).toEqual(["answer", "note"]);
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.properties.note.anyOf).toEqual([{ type: "string" }, { type: "null" }]);
+      expect(JSON.stringify(schema)).not.toContain('"$schema"');
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes","note":null}' } }],
+        usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-4o",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    const result = await provider.generateStructured({
+      schemaName: "optional_answer",
+      schema: optionalAnswerSchema,
+      system: "system",
+      prompt: "prompt",
+      temperature: 0.4,
+      maxOutputTokens: 777,
+    });
+    expect(result.data).toEqual({ answer: "yes" });
+    expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 4, totalTokens: 12 });
+  });
+
+  it("preserves Gameplay Contract V1 through OpenAI's strict schema projection", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      const schema = body.response_format.json_schema.schema;
+      expect(schema.required).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA.required);
+      expect(schema.properties.decision.enum).toEqual(["resolved", "check_required"]);
+      expect(schema.properties.effects.items.additionalProperties).toBe(false);
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-4o",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
+      provider: "openai",
+      protocolVersion: 1,
+      data: { kind: "resolved", operations: [] },
+    });
+  });
+
+  it("uses Anthropic Messages structured output with its explicit schema projection", async () => {
+    const constrainedSchema = z.object({
+      id: z.string().regex(/^[a-z]+$/).min(2),
+      kind: z.enum(["person", "creature"]),
+      quantity: z.number().int().min(1).max(20),
+      entries: z.array(z.string()).max(3),
+    }).strict();
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-api-key")).toBe("anthropic-key");
+      expect(headers.get("anthropic-version")).toBe("2023-06-01");
+      expect(headers.get("authorization")).toBeNull();
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body).toMatchObject({
+        model: "claude-model",
+        system: "system",
+        messages: [{ role: "user", content: "prompt" }],
+        max_tokens: 900,
+        temperature: 0.7,
+      });
+      expect(body.output_config.format.type).toBe("json_schema");
+      const schema = body.output_config.format.schema;
+      expect(schema.required).toEqual(["id", "kind", "quantity", "entries"]);
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.properties.id).not.toHaveProperty("pattern");
+      expect(schema.properties.kind.enum).toEqual(["person", "creature"]);
+      expect(schema.properties.quantity.type).toBe("integer");
+      expect(schema.properties.quantity).not.toHaveProperty("minimum");
+      expect(schema.properties.quantity).not.toHaveProperty("maximum");
+      expect(schema.properties.entries).not.toHaveProperty("maxItems");
+      return new Response(JSON.stringify({
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: '{"id":"hero","kind":"person","quantity":1,"entries":["one"]}' }],
+        usage: { input_tokens: 12, output_tokens: 7 },
+      }), { status: 200 });
+    });
+    const provider = new AnthropicProvider(
+      "claude-model",
+      "anthropic-key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      fetchMock as typeof fetch,
+    );
+    const result = await provider.generateStructured({
+      schemaName: "constrained",
+      schema: constrainedSchema,
+      system: "system",
+      prompt: "prompt",
+      temperature: 0.7,
+      maxOutputTokens: 900,
+    });
+    expect(result.data.quantity).toBe(1);
+    expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 7, totalTokens: 19 });
+  });
+
+  it("preserves required wire vocabulary while projecting unsupported Anthropic constraints", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      const schema = body.output_config.format.schema;
+      expect(schema.required).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA.required);
+      expect(schema.properties.failureCampaignStatus.enum).toEqual(["none", "dead", "ended"]);
+      expect(schema.properties.effects.items.additionalProperties).toBe(false);
+      expect(schema.properties.difficulty).not.toHaveProperty("minimum");
+      expect(schema.properties.difficulty).not.toHaveProperty("maximum");
+      return new Response(JSON.stringify({
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: JSON.stringify(resolvedWire()) }],
+      }), { status: 200 });
+    });
+    const provider = new AnthropicProvider(
+      "claude-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
+      provider: "anthropic",
+      protocolVersion: 1,
+      data: { kind: "resolved", operations: [] },
+    });
+  });
+
+  it("uses DeepSeek JSON Object mode while preserving the exact local gameplay contract", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.response_format).toEqual({ type: "json_object" });
+      expect(body.messages[0].content).toContain("DEEPSEEK JSON OUTPUT CONTRACT");
+      expect(body.messages[0].content).toContain("Schema name: turn_decision_v1");
+      expect(body.messages[0].content).toContain('\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]}');
+      expect(body.messages[0].content).toContain("Example JSON object with the required shape:");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } }],
+        usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 },
+      }), { status: 200 });
+    });
+    const provider = new DeepSeekProvider(
+      "deepseek-v4-flash",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
+      provider: "deepseek",
+      protocolVersion: 1,
+      structuredMode: "json_object_local_schema",
+      data: { kind: "resolved", operations: [] },
+      usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a valid DeepSeek JSON object that violates the local schema", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: '{\"answer\":42}' } }],
+    }), { status: 200 }));
+    const provider = new DeepSeekProvider(
+      "deepseek-v4-pro",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+
+    let failure: unknown;
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(z.ZodError);
+    expect(structuredFailureDetails(failure)).toMatchObject({
+      parsedResponse: { answer: 42 },
+      structuredMode: "json_object_local_schema",
+    });
+  });
+
+  it("omits unsupported temperature controls for reasoning model families", async () => {
+    expect(providerSupportsTemperature("openai", "gpt-5.6")).toBe(false);
+    expect(providerSupportsTemperature("openrouter", "openai/o3-mini")).toBe(false);
+    expect(providerSupportsTemperature("deepseek", "deepseek-reasoner")).toBe(false);
+    expect(providerSupportsTemperature("deepseek", "deepseek-v4-flash")).toBe(false);
+    expect(providerSupportsTemperature("anthropic", "claude-opus-4-8")).toBe(false);
+    expect(providerSupportsTemperature("openai", "gpt-4o")).toBe(true);
+
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.max_completion_tokens).toBe(1000);
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.6",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("disables default Kimi reasoning so structured output retains its token budget", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body.plugins).toEqual([{ id: "response-healing" }]);
+      expect(body.provider).toEqual({ require_parameters: true });
+      expect(body.messages[0].content).toContain("OPENROUTER JSON OUTPUT CONTRACT");
+      expect(body.messages[0].content).toContain("JSON Schema:");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "moonshotai/kimi-k2.6",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("omits temperature for Claude Opus 4.8", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("temperature");
+      return new Response(JSON.stringify({
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: '{"answer":"yes"}' }],
+      }), { status: 200 });
+    });
+    const provider = new AnthropicProvider(
+      "claude-opus-4-8",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("classifies OpenAI and Anthropic refusals as content blocks with usage", async () => {
+    const openAi = new OpenAIProvider(
+      "gpt-4o",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      vi.fn(async () => new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { refusal: "Cannot comply." } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+      }), { status: 200 })) as typeof fetch,
+    );
+    const anthropic = new AnthropicProvider(
+      "claude-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      vi.fn(async () => new Response(JSON.stringify({
+        stop_reason: "refusal",
+        content: [{ type: "text", text: "Cannot comply." }],
+        usage: { input_tokens: 6, output_tokens: 3 },
+      }), { status: 200 })) as typeof fetch,
+    );
+
+    for (const provider of [openAi, anthropic]) {
+      let failure: unknown;
+      try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+      expect(failure).toMatchObject({ kind: "content_block", retryable: false });
+      expect(structuredFailureDetails(failure)?.usage?.inputTokens).toBeGreaterThan(0);
+    }
+  });
+
+  it("retains usage and truncation classification for incomplete OpenAI and Anthropic JSON", async () => {
+    const openAi = new OpenAIProvider(
+      "gpt-4o",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      vi.fn(async () => new Response(JSON.stringify({
+        choices: [{ finish_reason: "length", message: { content: '{"answer":' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 100, total_tokens: 105 },
+      }), { status: 200 })) as typeof fetch,
+    );
+    const anthropic = new AnthropicProvider(
+      "claude-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      vi.fn(async () => new Response(JSON.stringify({
+        stop_reason: "max_tokens",
+        content: [{ type: "text", text: '{"answer":' }],
+        usage: { input_tokens: 6, output_tokens: 100 },
+      }), { status: 200 })) as typeof fetch,
+    );
+
+    for (const provider of [openAi, anthropic]) {
+      let failure: unknown;
+      try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+      expect(failure).toMatchObject({ kind: "malformed_json", retryable: true });
+      expect((failure as Error).message).toContain("truncated");
+      expect(structuredFailureDetails(failure)?.usage?.outputTokens).toBe(100);
+    }
   });
 
   it("uses the Gemini-compatible schema projection for Gemini routed through OpenRouter", async () => {

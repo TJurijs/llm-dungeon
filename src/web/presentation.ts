@@ -37,7 +37,13 @@ export function setupPreview(setup: SetupResult): unknown {
 
 /** Player-safe game response; alternate stakes and state operations stay server-side. */
 export function playerTurnResponse(result: TurnResult | QuestionResult): unknown {
-  if (result.kind === "question") return { kind: result.kind, answer: result.answer };
+  if (result.kind === "question") {
+    return {
+      kind: result.kind,
+      answer: result.answer,
+      ...(result.generation ? { generation: result.generation } : {}),
+    };
+  }
   return {
     turn: result.turn,
     kind: result.kind,

@@ -25,6 +25,7 @@ describe("campaign Markdown export", () => {
   it("renders the complete player-visible story, checks, and appeals", () => {
     const snapshot: CampaignLogSnapshot = {
       state: state(),
+      playerName: "Elian Voss",
       turns: [
         {
           turn: 0,
@@ -69,6 +70,7 @@ describe("campaign Markdown export", () => {
   it("uses campaign-language copy and creates filesystem-safe Unicode filenames", () => {
     const markdown = renderCampaignMarkdown({
       state: state({ title: "Эхо: Чужих / Мыслей", language: "ru", status: "ended" }),
+      playerName: "Элиан Восс",
       turns: [],
     });
 

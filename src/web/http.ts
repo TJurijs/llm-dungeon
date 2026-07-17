@@ -56,7 +56,7 @@ export function sendTextDownload(
 /** Enforce the local Web CLI's JSON and same-origin mutation boundary. */
 export function rejectUnsafeMutation(request: IncomingMessage, response: ServerResponse): boolean {
   const method = request.method ?? "GET";
-  if (method !== "POST" && method !== "PUT") return false;
+  if (method !== "POST" && method !== "PUT" && method !== "DELETE") return false;
   const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     sendJson(response, 415, { error: "Mutating requests require Content-Type: application/json" });

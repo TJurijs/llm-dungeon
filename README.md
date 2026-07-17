@@ -1,89 +1,45 @@
 # llm-dungeon
 
 `llm-dungeon` is a local, persistent LLM dungeon master for free-form fantasy
-play. It runs in a terminal or browser, supports Gemini and OpenRouter, and
-keeps the campaign in human-readable files.
+play. It supports Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek,
+runs in a browser or terminal, and keeps every campaign in readable
+Markdown-first files.
 
-The current release includes:
-
-- persistent campaigns with crash recovery;
-- one shared d100 mechanic for uncertain actions;
-- character, location, inventory, and story-thread inspection;
-- append-only appeals for reviewing possible DM or state mistakes;
-- English and Russian gameplay;
-- isolated, cost-limited AI self-play evaluation;
-- terminal and browser interfaces over the same campaign.
+Each campaign has one forward-only save. You can keep several campaigns and
+switch between them, but there is no rewind or undo.
 
 ## Requirements
 
 - Node.js 22 or newer
 - npm
-- A Gemini or OpenRouter API key
+- A key for at least one supported provider
 
-Gemini `gemini-3.5-flash` is the recommended, playtested DM model. OpenRouter
-support is available, but results depend on the selected model.
+Gemini `gemini-3.5-flash` is the recommended, playtested DM model. Other models
+must support the application's required structured schemas.
 
-## Install and configure
+## Install
 
 ```bash
 npm install
 cp .env.example .env
-npm run dev -- configure
 ```
 
-Add the key for the provider you use to `.env`:
+Put your provider key in `.env`:
 
 ```dotenv
 GEMINI_API_KEY=your_key_here
 OPENROUTER_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+DEEPSEEK_API_KEY=
 ```
 
-Keep `.env` local. API keys are not stored in campaign or evaluation files.
+Keys are read from `.env` when the application starts and are never saved with
+campaigns. Restart the application after changing them. You can also enter a
+temporary key under **Settings → LLM providers**; it stays only in server memory
+until restart and overrides the matching `.env` key for that session.
 
-## Play in the terminal
-
-Start or resume the active campaign:
-
-```bash
-npm run dev
-```
-
-Useful commands:
-
-```bash
-npm run dev -- play                 # Start or resume
-npm run dev -- new                  # Archive the current campaign and start another
-npm run dev -- configure            # Change provider or model
-npm run dev -- language             # Show the current language
-npm run dev -- language ru          # Switch narration to Russian
-npm run dev -- world show           # Show the current world and DM style
-npm run dev -- world set rules.md   # Use a Markdown profile for future campaigns
-npm run dev -- prompts list         # List inspectable prompt phases
-npm run dev -- prompts show setup   # Show a safe static prompt preview
-```
-
-During play, enter actions as ordinary text. In-game commands are:
-
-```text
-:character                       Show character state and inventory
-:location                        Show the current location
-:threads                         Show story threads
-:ask <question>                  Ask the DM without advancing the campaign
-:appeal <explanation>            Review a possible mistake
-:appeal --turn N <explanation>   Review a specific committed turn
-:retry                           Retry an uncommitted action or appeal
-:discard                         Discard an uncommitted action or appeal
-:new                             Archive this campaign and begin another
-:help                            Show help
-:quit                            Exit without deleting the campaign
-```
-
-There is no undo or rewind. Appeals add a review turn and never rewrite an
-already committed turn.
-
-## Use the browser interface
-
-Start the local Web CLI:
+## Browser
 
 ```bash
 npm run web-cli
@@ -91,66 +47,89 @@ npm run web-cli
 
 Open [http://127.0.0.1:4317](http://127.0.0.1:4317).
 
-The browser interface can:
+- Use **New campaign** to choose a premise, character, and language. It uses
+  the configured default model. World and DM style is prefilled from global
+  defaults and can be customized for that campaign.
+- Select campaigns in the left sidebar. Different campaigns can generate at
+  the same time.
+- Change the current campaign's model from the selector beside the chat input.
+- Use **Settings → Global defaults** for language and world style, and
+  **Settings → LLM providers** for models. Provider settings show which `.env`
+  keys are present, accept temporary session keys, show quality ratings and
+  rounded 50-turn estimates from OpenRouter rates, and let you test, enable,
+  and choose a default model. A model is selectable only after its compatibility
+  test passes.
+  The five provider cards are built in; use **Model ID → Test & add** at the
+  bottom of a card for a model that is not in its suggested list.
+- **Ask** answers a question without advancing or saving a turn. **Appeal** adds
+  an administrative review turn without rewriting earlier turns.
+- Campaign state docks on the right with Character, Location, and Story views.
+  Drag either divider to resize the campaign list or state dock.
+- Archived campaigns are readable and exportable, but cannot be resumed. Use
+  the trash icon beside an archived campaign to delete it permanently.
 
-- create, resume, and play campaigns;
-- configure and test providers and models;
-- select language and edit world/DM style for future campaigns;
-- inspect character, location, and story state;
-- recover pending actions with `:retry` or `:discard`;
-- ask out-of-character questions without advancing a turn;
-- submit appeals;
-- export the complete player-safe campaign log as a shareable Markdown file;
-- show cumulative campaign generation cost beside campaign status;
-- run and inspect self-play evaluations.
-
-Campaign cost uses exact billed cost returned by OpenRouter when available.
-Gemini and older saved turns are estimated from provider token usage and the
-built-in standard-tier price table, so the browser marks those totals with
-`≈`. Prompt-inspector previews also list their editable source files relative
-to the project root. Campaign exports include the opening, player actions,
-checks, narration, summaries, and appeals, but omit secrets, state operations,
-provider metadata, and token/cost details.
-
-Leave the browser session-key field blank to use the matching key from `.env`.
-Keys entered in the browser stay only in the running server process. Stop the
-server with `Ctrl+C`.
-
-To use a different address or port:
+Stop the server with `Ctrl+C`. To use another address or port:
 
 ```bash
 npm run dev -- web-cli --host 127.0.0.1 --port 4317
 ```
 
-## Build and run production output
+## Terminal
 
 ```bash
-npm run build
-npm start
+npm run dev                         # Choose, resume, or create a campaign
+npm run dev -- play [campaign-id]  # Open a campaign
+npm run dev -- campaigns           # List campaigns
+npm run dev -- new                 # Create an additional campaign
+npm run dev -- configure           # Set provider/model defaults
+npm run dev -- language ru         # Set the default for new campaigns
+npm run dev -- world show          # Show world and DM-style defaults
+npm run dev -- world set rules.md  # Replace defaults from Markdown
+npm run dev -- prompts list        # List prompt previews
+npm run dev -- prompts show setup  # Render a safe static preview
 ```
 
-For the compiled browser interface:
+During play:
 
-```bash
-npm run start:web-cli
+```text
+:character                       Show character and inventory
+:location                        Show the current location
+:threads                         Show story threads
+:ask <question>                  Ask without advancing the campaign
+:appeal <explanation>            Review a possible mistake
+:appeal --turn N <explanation>   Review a committed turn
+:retry                           Retry an uncommitted request
+:discard                         Discard an uncommitted request
+:switch                          Switch to another resumable campaign
+:new                             Create and switch to another campaign
+:help                            Show help
+:quit                            Exit
 ```
+
+Prompt inspection and self-play evaluation are developer tools available only
+through the terminal.
+
+DeepSeek uses its documented JSON Object mode, receives the complete gameplay
+schema and a matching example in its system instruction, and is then validated
+against the same strict local wire and domain schemas as every other provider.
+Its models become available only after passing the full multilingual setup and
+gameplay compatibility probe.
 
 ## Saves and recovery
 
-The active campaign is stored under `data/current/`. Replaced campaigns are
-archived under `data/archive/`. Do not edit or delete these folders while the
-game is running.
+Campaigns are stored under `data/campaigns/`. On first use, older
+`data/current/` and `data/archive/` layouts are migrated automatically; old
+archives remain read-only. Do not edit these folders while the application is
+running.
 
-If a provider call or commit is interrupted, restart the application. It will
-recover completed writes when possible and otherwise offer `:retry` or
-`:discard`. A rolled check keeps the same recorded roll after restart.
+After an interrupted provider call or commit, restart the application. It will
+recover completed writes when possible and otherwise offer retry or discard. A
+recorded d100 roll is reused after restart.
 
 ## Self-play evaluation
 
-Evaluations use isolated saves under `evaluations/runs/` and never change the
-active campaign. Always set a cost ceiling.
-
-Run a small evaluation:
+Evaluations use isolated saves under `evaluations/runs/` and never change a
+campaign. Always set a cost ceiling.
 
 ```bash
 npm run dev -- evaluate \
@@ -161,30 +140,22 @@ npm run dev -- evaluate \
   --player-profiles curious-explorer
 ```
 
-Available player profiles:
-
-```text
-curious-explorer
-social-manipulator
-cautious-investigator
-reckless-adventurer
-combat-focused
-creative-problem-solver
-rule-challenger
-long-term-planner
-chaotic
-```
-
-Resume an interrupted run or rebuild its report:
+Resume or rebuild a report with:
 
 ```bash
 npm run dev -- evaluate:resume <run-id>
 npm run dev -- evaluate:report <run-id>
 ```
 
-## Development
+## Build and development
 
-Run the complete local check before committing:
+```bash
+npm run build
+npm start
+npm run start:web-cli
+```
+
+Before committing:
 
 ```bash
 npm test -- --run
@@ -192,4 +163,4 @@ npm run typecheck
 npm run build
 ```
 
-Repository invariants and engineering guidance are documented in `AGENTS.md`.
+Engineering constraints are documented in `AGENTS.md`.

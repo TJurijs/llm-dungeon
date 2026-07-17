@@ -8,6 +8,8 @@ evaluations/runs/
 work/
 config/app.json
 config/provider.json
+config/llm-models.json
+config/.llm-models.lock
 config/world.md
 config/worlds/
 *.log

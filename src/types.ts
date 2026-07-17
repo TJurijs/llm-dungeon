@@ -33,7 +33,7 @@ export interface StructuredResult<T> {
   provider: string;
   model: string;
   rawText?: string;
-  structuredMode?: "exact_schema";
+  structuredMode?: "exact_schema" | "json_object_local_schema";
   protocolVersion?: number;
   usage?: Usage;
 }
@@ -49,6 +49,17 @@ export interface NewGameInput {
   worldRules: string;
   language?: LanguageCode;
   openingGeneration?: GenerationMetadata;
+  setupInput?: CampaignSetupInput;
+}
+
+export interface CampaignSetupInput {
+  premise: string;
+  character: string;
+}
+
+export interface CampaignStartSettings extends CampaignSetupInput {
+  language: LanguageCode;
+  worldRules: string;
 }
 
 export interface GenerationMetadata {
@@ -141,6 +152,14 @@ export interface TurnResult {
 export interface QuestionResult {
   kind: "question";
   answer: string;
+  generation?: ReplyGeneration;
+}
+
+export interface ReplyGeneration {
+  provider: string;
+  model: string;
+  costUsd?: number;
+  costBasis?: "exact" | "estimated";
 }
 
 export interface PlayerVisibleTurn {
@@ -151,10 +170,12 @@ export interface PlayerVisibleTurn {
   narration: string;
   summary: string;
   checkText?: string;
+  generation?: ReplyGeneration;
 }
 
 export interface CampaignLogSnapshot {
   state: GameState;
+  playerName: string;
   turns: PlayerVisibleTurn[];
 }
 

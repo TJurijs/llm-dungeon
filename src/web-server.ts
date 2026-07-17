@@ -1,38 +1,51 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { z } from "zod";
-import { DungeonEngine } from "./engine.js";
+import { CampaignCatalog, type CampaignCatalogSummary } from "./campaign-catalog.js";
 import { campaignMarkdownFilename, renderCampaignMarkdown } from "./campaign-export.js";
-import { probeProviderConnection } from "./connection-probe.js";
-import { loadProjectEnv } from "./env.js";
 import {
-  buildEvaluationConfig as createEvaluationConfig,
-  generateEvaluationReport,
-  PlayerProfileIdSchema,
-  readEvaluationManifest,
-  SelfPlayEvaluator,
-  type EvaluationConfig,
-  type EvaluationManifest,
-  type EvaluationProgressEvent,
-} from "./evaluation.js";
-import { LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
-import { inspectPrompt, PROMPT_PHASES } from "./prompt-inspection.js";
-import { createProvider, loadProviderConfig } from "./providers.js";
-import { ProviderConfigSchema, type ProviderConfig, type SetupResult } from "./schemas.js";
-import { StateStore } from "./store.js";
-import { atomicWriteJson } from "./persistence/files.js";
-import type { GenerationMetadata, LlmProvider, StateView } from "./types.js";
-import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
+  PROVIDER_COMPATIBILITY_FINGERPRINT,
+  probeProviderConnection,
+} from "./connection-probe.js";
+import { DungeonEngine } from "./engine.js";
+import { loadProjectEnv } from "./env.js";
+import { campaignSetupDefaults, LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
 import { parseAppealCommand } from "./appeal.js";
+import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
+import { createProvider, loadProviderConfig } from "./providers.js";
+import {
+  LLM_PROVIDER_DEFINITIONS,
+  RECOMMENDED_MODEL_SELECTION,
+  RETIRED_OPENROUTER_MIRRORS,
+  LlmProviderIdSchema,
+  LlmModelCatalog,
+  ModelSelectionSchema,
+  type LlmModelCatalogSnapshot,
+  type LlmProviderId,
+  type ModelSelection,
+} from "./llm-model-catalog.js";
+import { modelQualityRating, type ModelQualityRating } from "./model-quality.js";
 import { parseQuestionCommand } from "./question.js";
 import {
-  assertSafeId,
-  evaluationArtifactPath,
-  evaluationTranscriptPresentation,
-} from "./web/evaluation-artifacts.js";
+  ProviderConfigSchema,
+  SafeIdSchema,
+  type GameState,
+  type ProviderConfig,
+  type SetupResult,
+} from "./schemas.js";
+import { StateStore } from "./store.js";
+import type { CampaignCostSummary } from "./campaign-cost.js";
+import {
+  fetchOpenRouterPrices,
+  OpenRouterPricingCatalog,
+  type FiftyTurnEstimateBasis,
+  type ModelPriceEstimate,
+} from "./pricing.js";
+import type { GenerationMetadata, LlmProvider, StateView } from "./types.js";
+import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
+import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
 import { asError, readJsonBody, rejectUnsafeMutation, sendJson, sendTextDownload } from "./web/http.js";
 import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
@@ -42,81 +55,128 @@ export interface WebServerOptions {
   root: string;
   environment?: NodeJS.ProcessEnv;
   providerFactory?: ProviderFactory;
+  maxConcurrentCampaignOperations?: number;
+  pricingFetcher?: (() => Promise<unknown>) | false;
 }
 
-interface BackgroundTask {
-  id: string;
-  kind: "evaluation" | "resume";
-  runId: string;
-  status: "running" | "completed" | "completed_with_failures" | "cost_limit" | "failed";
-  startedAt: string;
-  completedAt?: string;
-  logs: string[];
-  sessionProgress: Record<string, EvaluationProgressEvent>;
-  error?: string;
-  reportPath?: string;
+interface SetupDraft {
+  setup: SetupResult;
+  generation: GenerationMetadata;
+  language: LanguageCode;
+  worldRules: string;
+  config: ProviderConfig;
+  premise: string;
+  character: string;
 }
 
-interface EvaluationRunInspectionFailure {
-  runId: string;
-  status: "inspection_failed";
-  totalEstimatedCostUsd: 0;
-  sessions: [];
-  inspectionError: string;
+interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerConfig"> {
+  busy: boolean;
+  pending: unknown;
+  campaignCost: CampaignCostSummary | null;
+  config: ProviderConfig | null;
 }
+
+class WebApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "WebApiError";
+  }
+}
+
+const SetupModelConfigSchema = z.union([
+  ModelSelectionSchema,
+  ProviderConfigSchema.strict(),
+]);
 
 const SetupDraftRequestSchema = z.object({
   premise: z.string().max(100_000).default(""),
   character: z.string().max(100_000).default(""),
+  language: LanguageCodeSchema.optional(),
+  worldRules: z.string().min(1).max(500_000).optional(),
+  config: SetupModelConfigSchema.optional(),
 }).strict();
 
-const EvaluationRequestSchema = z.object({
-  sessions: z.number().int().min(1).max(100).optional(),
-  turns: z.number().int().min(1).max(200).optional(),
-  concurrency: z.number().int().min(1).max(10).default(3),
-  maxCostUsd: z.number().positive().max(10_000).default(5),
-  playerProfiles: z.array(PlayerProfileIdSchema)
-    .min(1)
-    .max(PlayerProfileIdSchema.options.length)
-    .refine((profiles) => new Set(profiles).size === profiles.length, "Player profile pool cannot contain duplicates")
-    .default(["curious-explorer"]),
-  playerModel: z.string().trim().min(1).optional(),
-});
+const ModelEnabledRequestSchema = ModelSelectionSchema.extend({ enabled: z.boolean() }).strict();
+const SessionProviderKeyRequestSchema = z.object({
+  provider: LlmProviderIdSchema,
+  key: z.string().max(10_000),
+}).strict();
 
 const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
+const MAX_DRAFTS = 20;
+
+function statusFor(error: unknown): number {
+  if (error instanceof WebApiError) return error.status;
+  if (error instanceof z.ZodError) return 400;
+  const message = asError(error);
+  if (/was not found/i.test(message)) return 404;
+  if (/locked by another running process|another operation is still running|archived and cannot|read-only|unfinished request|uncommitted turn|campaign has ended/i.test(message)) {
+    return 409;
+  }
+  return 400;
+}
+
+function decodeCampaignId(segment: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    throw new WebApiError(400, "Campaign ID is not valid URL encoding");
+  }
+  const parsed = SafeIdSchema.safeParse(decoded);
+  if (!parsed.success || !parsed.data.startsWith("campaign:")) {
+    throw new WebApiError(400, "Campaign ID must be a safe campaign ID");
+  }
+  return parsed.data;
+}
+
+function campaignRoute(pathname: string): { campaignId: string; action: string } | undefined {
+  const match = /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup)$/.exec(pathname);
+  if (!match) return undefined;
+  return { campaignId: decodeCampaignId(match[1]!), action: match[2]! };
+}
 
 export class DungeonWebController {
   readonly providerConfigPath: string;
   readonly dataRoot: string;
-  readonly evaluationsRoot: string;
   readonly webRoot: string;
   private readonly environment: NodeJS.ProcessEnv;
-  private readonly runtimeKeys: NodeJS.ProcessEnv = {};
   private readonly providerFactory: ProviderFactory;
-  private readonly drafts = new Map<string, {
-    setup: SetupResult;
-    generation: GenerationMetadata;
-    language: LanguageCode;
-    worldRules: string;
-  }>();
-  private task: BackgroundTask | undefined;
-  private gameBusy = false;
+  private readonly operations: CampaignOperationCoordinator;
+  private readonly modelCatalog: LlmModelCatalog;
+  private readonly modelPricing: OpenRouterPricingCatalog;
+  private readonly sessionKeys = new Map<LlmProviderId, string>();
+  private readonly drafts = new Map<string, SetupDraft>();
+  private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
+  private campaignCatalog: CampaignCatalog | undefined;
 
   constructor(readonly root: string, options: Omit<WebServerOptions, "root"> = {}) {
     this.providerConfigPath = path.join(root, "config", "provider.json");
     this.dataRoot = path.join(root, "data");
-    this.evaluationsRoot = path.join(root, "evaluations");
     this.webRoot = path.join(root, "web");
     if (!options.environment) loadProjectEnv(root);
     this.environment = options.environment ?? process.env;
     this.providerFactory = options.providerFactory ?? ((config, environment) => createProvider(config, environment));
+    this.operations = new CampaignOperationCoordinator(options.maxConcurrentCampaignOperations ?? 3);
+    this.modelCatalog = new LlmModelCatalog(root, {
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+    });
+    const pricingFetcher = options.pricingFetcher === false
+      ? undefined
+      : options.pricingFetcher ?? (options.environment === undefined ? () => fetchOpenRouterPrices() : undefined);
+    this.modelPricing = new OpenRouterPricingCatalog(pricingFetcher);
   }
 
   private effectiveEnvironment(): NodeJS.ProcessEnv {
-    return { ...this.environment, ...this.runtimeKeys };
+    const environment = { ...this.environment };
+    for (const provider of LLM_PROVIDER_DEFINITIONS) {
+      const sessionKey = this.sessionKeys.get(provider.id);
+      if (sessionKey) environment[provider.envKey] = sessionKey;
+    }
+    return environment;
   }
 
-  private async config(): Promise<ProviderConfig> {
+  private async defaultConfig(): Promise<ProviderConfig> {
     return loadProviderConfig(this.providerConfigPath);
   }
 
@@ -124,154 +184,248 @@ export class DungeonWebController {
     return this.providerFactory(config, this.effectiveEnvironment());
   }
 
-  private async engine(): Promise<DungeonEngine> {
-    const config = await this.config();
-    return new DungeonEngine(new StateStore(this.dataRoot), this.provider(config));
-  }
-
-  private async currentStore(): Promise<StateStore> {
-    const store = new StateStore(this.dataRoot);
-    if (!(await store.hasCurrentGame())) {
-      throw new Error("No current campaign. Create one in the New campaign panel first.");
+  private async catalog(): Promise<CampaignCatalog> {
+    if (!this.campaignCatalog) {
+      const defaultProviderConfig = await this.defaultConfig().catch(() => undefined);
+      this.campaignCatalog = new CampaignCatalog(this.dataRoot, {
+        ...(defaultProviderConfig === undefined ? {} : { defaultProviderConfig }),
+      });
+      await this.campaignCatalog.ensureReady();
     }
-    return store;
-  }
-
-  private async withGameLock<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.gameBusy) throw new Error("Another campaign operation is still running");
-    this.gameBusy = true;
-    try {
-      return await operation();
-    } finally {
-      this.gameBusy = false;
-    }
+    return this.campaignCatalog;
   }
 
   private keyStatus(): Record<string, boolean> {
     const environment = this.effectiveEnvironment();
+    return Object.fromEntries(LLM_PROVIDER_DEFINITIONS.map((provider) => [
+      provider.id,
+      Boolean(environment[provider.envKey]),
+    ]));
+  }
+
+  private selection(config: Pick<ProviderConfig, "provider" | "model">): ModelSelection {
+    return ModelSelectionSchema.parse({ provider: config.provider, model: config.model });
+  }
+
+  private async modelSnapshot(): Promise<LlmModelCatalogSnapshot> {
+    const legacy = await this.defaultConfig().then((config) => this.selection(config)).catch(() => undefined);
+    return this.modelCatalog.snapshot(legacy);
+  }
+
+  private async llmPresentation(): Promise<{
+    defaultModel: ModelSelection | null;
+    pricingBasis: FiftyTurnEstimateBasis;
+    providers: Array<{
+      id: string;
+      label: string;
+      envKey: string;
+      keyPresent: boolean;
+      keySource: "session" | "environment" | "missing";
+      models: Array<{
+        id: string;
+        label: string;
+        status: string;
+        enabled: boolean;
+        available: boolean;
+        testedLanguages: LanguageCode[];
+        pricing?: ModelPriceEstimate;
+        quality?: ModelQualityRating;
+        recommended: boolean;
+        hidden: boolean;
+        error?: string;
+      }>;
+    }>;
+  }> {
+    const snapshot = await this.modelSnapshot();
+    const keys = this.keyStatus();
+    this.modelPricing.refreshInBackground();
     return {
-      openrouter: Boolean(environment.OPENROUTER_API_KEY),
-      gemini: Boolean(environment.GEMINI_API_KEY),
+      defaultModel: snapshot.defaultModel,
+      pricingBasis: this.modelPricing.basis(),
+      providers: snapshot.providers.map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        envKey: provider.envKey,
+        keyPresent: Boolean(keys[provider.id]),
+        keySource: this.sessionKeys.has(provider.id)
+          ? "session"
+          : keys[provider.id] ? "environment" : "missing",
+        models: provider.models.map((model) => {
+          const pricing = this.modelPricing.estimate(provider.id, model.model);
+          const quality = modelQualityRating(provider.id, model.model);
+          return {
+            id: model.model,
+            label: model.model,
+            status: model.state,
+            enabled: model.enabled,
+            available: model.state === "compatible" && model.enabled,
+            testedLanguages: model.test?.testedLanguages ?? [],
+            recommended: provider.id === RECOMMENDED_MODEL_SELECTION.provider
+              && model.model === RECOMMENDED_MODEL_SELECTION.model,
+            hidden: provider.id === "openrouter" && RETIRED_OPENROUTER_MIRRORS.has(model.model),
+            ...(pricing === undefined ? {} : { pricing }),
+            ...(quality === undefined ? {} : { quality }),
+            ...(model.test?.failureSummary === undefined ? {} : { error: model.test.failureSummary }),
+          };
+        }),
+      })),
     };
   }
 
-  private async buildEvaluationConfig(raw: unknown): Promise<EvaluationConfig> {
-    const request = EvaluationRequestSchema.parse(raw);
-    const dmConfig = await this.config();
-    return createEvaluationConfig({
-      dmConfig,
-      language: (await loadAppConfig(this.root)).language,
-      sessions: request.sessions,
-      turns: request.turns,
-      concurrency: request.concurrency,
-      maxCostUsd: request.maxCostUsd,
-      playerProfiles: request.playerProfiles,
-      playerModel: request.playerModel,
+  private requireProviderKey(selection: ModelSelection): void {
+    const definition = LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === selection.provider);
+    if (!definition || !this.effectiveEnvironment()[definition.envKey]) {
+      throw new WebApiError(409, `Add ${definition?.envKey ?? "the provider API key"} to .env and restart the server`);
+    }
+  }
+
+  private async configForSelection(selection: ModelSelection): Promise<ProviderConfig> {
+    const parsed = ModelSelectionSchema.parse(selection);
+    const current = await this.defaultConfig().catch(() => undefined);
+    return ProviderConfigSchema.parse({
+      provider: parsed.provider,
+      model: parsed.model,
+      temperature: current?.temperature ?? 0.8,
+      maxOutputTokens: current?.maxOutputTokens ?? 4_000,
+      ...(current?.provider === parsed.provider && current.endpoint !== undefined
+        ? { endpoint: current.endpoint }
+        : {}),
     });
   }
 
-  private launchTask(task: BackgroundTask, work: (progress: (event: EvaluationProgressEvent) => void) => Promise<string>): void {
-    if (this.task?.status === "running") throw new Error("An evaluation task is already running");
-    this.task = task;
-    const appendLog = (message: string): void => {
-      task.logs.push(`[${new Date().toLocaleTimeString()}] ${message}`);
-      if (task.logs.length > 500) task.logs.shift();
-    };
-    const progress = (event: EvaluationProgressEvent): void => {
-      const previous = task.sessionProgress[event.sessionId];
-      task.sessionProgress[event.sessionId] = event;
-      if (!previous || previous.phase !== event.phase || event.retries !== previous.retries) {
-        appendLog(`${event.sessionId}: ${event.message}`);
-      }
-    };
-    void work(progress).then((reportPath) => {
-      task.reportPath = reportPath;
-      task.completedAt = new Date().toISOString();
-      return readEvaluationManifest(path.join(this.evaluationsRoot, "runs", task.runId, "manifest.json"));
-    }).then((manifest) => {
-      const outcome = manifest.status;
-      task.status = outcome === "running" ? "completed" : outcome;
-      appendLog(`Evaluation finished: ${task.status}. Report: ${path.relative(this.root, task.reportPath!)}`);
-    }).catch((error: unknown) => {
-      task.status = "failed";
-      task.error = asError(error);
-      task.completedAt = new Date().toISOString();
-      appendLog(`Failed: ${task.error}`);
-    });
+  private async availableConfig(selection: ModelSelection, language: LanguageCode): Promise<ProviderConfig> {
+    const parsed = ModelSelectionSchema.parse(selection);
+    await this.modelCatalog.assertAvailable(parsed, language);
+    this.requireProviderKey(parsed);
+    return this.configForSelection(parsed);
   }
 
-  private async listEvaluationRuns(): Promise<Array<EvaluationManifest | EvaluationRunInspectionFailure>> {
-    const runsRoot = path.join(this.evaluationsRoot, "runs");
-    let names: Dirent[];
+  private safeProviderFailure(error: unknown): string {
+    let message = asError(error);
+    const environment = this.effectiveEnvironment();
+    for (const definition of LLM_PROVIDER_DEFINITIONS) {
+      const key = environment[definition.envKey];
+      if (key) message = message.replaceAll(key, "[redacted]");
+    }
+    return message.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500)
+      || "Provider compatibility test failed";
+  }
+
+  private async requireSummary(campaignId: string): Promise<CampaignCatalogSummary> {
+    const summary = (await (await this.catalog()).listCampaigns())
+      .find((candidate) => candidate.campaignId === campaignId);
+    if (!summary) throw new WebApiError(404, `Campaign ${campaignId} was not found`);
+    return summary;
+  }
+
+  private async readStore(summary: CampaignCatalogSummary): Promise<StateStore> {
+    const catalog = await this.catalog();
+    if (summary.archived) return catalog.readCampaign(summary.campaignId);
     try {
-      names = await readdir(runsRoot, { withFileTypes: true });
+      return await catalog.openCampaign(summary.campaignId);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      // A read may race with archival after the status summary was captured.
+      // Reopen read-only instead of failing the entire status/transcript request.
+      if (/archived and cannot be resumed/i.test(asError(error))) {
+        return catalog.readCampaign(summary.campaignId);
+      }
       throw error;
     }
-    const manifests = await Promise.all(names.filter((entry) => entry.isDirectory()).map(async (entry) => {
-      try {
-        return await readEvaluationManifest(path.join(runsRoot, entry.name, "manifest.json"));
-      } catch (error) {
-        return {
-          runId: entry.name,
-          status: "inspection_failed" as const,
-          totalEstimatedCostUsd: 0 as const,
-          sessions: [] as [],
-          inspectionError: asError(error),
-        };
-      }
-    }));
-    return manifests.sort((a, b) => {
-      const left = "startedAt" in a ? a.startedAt : a.runId;
-      const right = "startedAt" in b ? b.startedAt : b.runId;
-      return right.localeCompare(left);
-    });
   }
 
-  private async handleStatusApi(
-    method: string,
-    response: ServerResponse,
-    url: URL,
-  ): Promise<boolean> {
-    if (method !== "GET" || url.pathname !== "/api/status") return false;
-    let config: ProviderConfig | undefined;
-    try { config = await this.config(); } catch { /* First-run state. */ }
-    const store = new StateStore(this.dataRoot);
-    const hasGame = await store.hasCurrentGame();
-    let campaign: unknown;
-    let campaignCost: unknown;
-    let pending: unknown;
-    if (hasGame) {
-      if (this.gameBusy) {
-        campaign = await store.readManifest();
-      } else {
-        const snapshot = await this.withGameLock(async () => ({
-          campaign: (await store.load()).manifest,
-          cost: await store.campaignCost(),
-        }));
-        campaign = snapshot.campaign;
-        campaignCost = snapshot.cost;
-      }
-      pending = pendingStatus(await store.getPending());
+  private async campaignCost(summary: CampaignCatalogSummary, store: StateStore): Promise<CampaignCostSummary | null> {
+    const cached = this.costCache.get(summary.campaignId);
+    if (cached?.updatedAt === summary.updatedAt) return cached.cost;
+    if (this.operations.isBusy(summary.campaignId)) return cached?.cost ?? null;
+    try {
+      const cost = await store.campaignCost();
+      this.costCache.set(summary.campaignId, { updatedAt: summary.updatedAt, cost });
+      return cost;
+    } catch (error) {
+      if (/locked by another running process/i.test(asError(error))) return cached?.cost ?? null;
+      throw error;
     }
+  }
+
+  private async campaignPresentation(summary: CampaignCatalogSummary): Promise<CampaignPresentation> {
+    const store = await this.readStore(summary);
+    const { providerConfig, ...manifest } = summary;
+    return {
+      ...manifest,
+      busy: this.operations.isBusy(summary.campaignId),
+      pending: pendingStatus(await store.getPending()),
+      campaignCost: await this.campaignCost(summary, store),
+      config: providerConfig ?? null,
+    };
+  }
+
+  private async activeStore(campaignId: string): Promise<StateStore> {
+    const summary = await this.requireSummary(campaignId);
+    if (summary.archived) throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
+    return (await this.catalog()).openCampaign(campaignId);
+  }
+
+  private async confirmedCampaignResponse(requestId: string): Promise<{
+    state: GameState;
+    playerName: string;
+    openingNarration: string;
+    config: ProviderConfig | null;
+  } | undefined> {
+    const catalog = await this.catalog();
+    const created = await catalog.findCampaignByCreationRequest(requestId);
+    if (created === undefined) return undefined;
+    const snapshot = await created.store.campaignLogSnapshot();
+    const opening = snapshot.turns.find((turn) => turn.turn === 0);
+    return {
+      state: created.state,
+      playerName: snapshot.playerName,
+      openingNarration: opening?.narration ?? "",
+      config: await catalog.providerConfig(created.campaignId) ?? null,
+    };
+  }
+
+  private async runCampaign<T>(campaignId: string, operation: (engine: DungeonEngine, store: StateStore) => Promise<T>): Promise<T> {
+    if (this.operations.isBusy(campaignId)) {
+      throw new WebApiError(409, "Another operation is still running for this campaign");
+    }
+    try {
+      return await this.operations.run(campaignId, async () => {
+        const store = await this.activeStore(campaignId);
+        return store.withCampaignLock(async () => {
+          const metadata = await readCampaignMetadata(store.dataRoot);
+          if (metadata.archived) throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
+          const config = metadata.providerConfig;
+          if (!config) throw new WebApiError(409, "Choose a provider and model for this campaign before playing");
+          const engine = new DungeonEngine(store, this.provider(config));
+          return operation(engine, store);
+        });
+      });
+    } catch (error) {
+      if (/another operation is still running/i.test(asError(error))) {
+        throw new WebApiError(409, "Another operation is still running for this campaign");
+      }
+      throw error;
+    }
+  }
+
+  private async handleStatusApi(method: string, response: ServerResponse, url: URL): Promise<boolean> {
+    if (method !== "GET" || url.pathname !== "/api/status") return false;
+    const config = await this.defaultConfig().catch(() => null);
+    const language = (await loadAppConfig(this.root)).language;
+    const summaries = await (await this.catalog()).listCampaigns();
+    const llm = await this.llmPresentation();
     sendJson(response, 200, {
-      language: (await loadAppConfig(this.root)).language,
+      language,
       languages: Object.entries(LANGUAGES).map(([code, value]) => ({
         code,
         name: value.nativeName,
         setupDefaults: value.setupDefaults,
       })),
-      config: config ?? null,
+      config,
+      defaults: { language, config },
       keyStatus: this.keyStatus(),
-      game: {
-        exists: hasGame,
-        busy: this.gameBusy,
-        campaign: campaign ?? null,
-        campaignCost: campaignCost ?? null,
-        pending: pending ?? null,
-      },
-      evaluationTask: this.task ?? null,
+      llm,
+      campaigns: await Promise.all(summaries.map((summary) => this.campaignPresentation(summary))),
     });
     return true;
   }
@@ -283,104 +437,67 @@ export class DungeonWebController {
     url: URL,
   ): Promise<boolean> {
     if (url.pathname === "/api/config/language" && method === "PUT") {
-      const body = z.object({
-        language: LanguageCodeSchema,
-        applyToCurrent: z.boolean().default(true),
-      }).parse(await readJsonBody(request));
-      const update = async (): Promise<unknown> => {
-        await saveAppConfig(this.root, { language: body.language });
-        const store = new StateStore(this.dataRoot);
-        return body.applyToCurrent && await store.hasCurrentGame()
-          ? store.setLanguage(body.language)
-          : null;
-      };
-      const campaign = body.applyToCurrent ? await this.withGameLock(update) : await update();
-      sendJson(response, 200, { language: body.language, campaign });
+      const body = z.object({ language: LanguageCodeSchema }).strict().parse(await readJsonBody(request));
+      await saveAppConfig(this.root, { language: body.language });
+      sendJson(response, 200, { language: body.language });
       return true;
     }
 
-    if (url.pathname === "/api/config/provider" && method === "GET") {
-      const config = await this.config().catch(() => null);
-      sendJson(response, 200, { config, keyStatus: this.keyStatus() });
+    if (url.pathname === "/api/llm" && method === "GET") {
+      sendJson(response, 200, { llm: await this.llmPresentation() });
       return true;
     }
 
-    if (url.pathname === "/api/config/provider" && method === "PUT") {
-      const body = z.object({
-        provider: z.enum(["openrouter", "gemini"]),
-        model: z.string().trim().min(1),
-        temperature: z.number().min(0).max(2).default(0.8),
-        maxOutputTokens: z.number().int().min(256).max(32_000).default(4000),
-        endpoint: z.string().url().or(z.literal("")).optional(),
-        apiKey: z.string().trim().optional(),
-      }).parse(await readJsonBody(request));
-      const config = ProviderConfigSchema.parse({
-        provider: body.provider,
-        model: body.model,
-        temperature: body.temperature,
-        maxOutputTokens: body.maxOutputTokens,
-        ...(body.endpoint ? { endpoint: body.endpoint } : {}),
-      });
-      const keyName = body.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
-      if (body.apiKey !== undefined) {
-        if (body.apiKey) this.runtimeKeys[keyName] = body.apiKey;
-        else delete this.runtimeKeys[keyName];
+    if (url.pathname === "/api/llm/keys" && method === "PUT") {
+      const body = SessionProviderKeyRequestSchema.parse(await readJsonBody(request));
+      const key = body.key.trim();
+      if (key) this.sessionKeys.set(body.provider, key);
+      else this.sessionKeys.delete(body.provider);
+      sendJson(response, 200, { llm: await this.llmPresentation() });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/models/test" && method === "POST") {
+      const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      this.requireProviderKey(selection);
+      const config = await this.configForSelection(selection);
+      const operationId = `probe:${randomUUID()}`;
+      let result: Awaited<ReturnType<typeof probeProviderConnection>>;
+      try {
+        result = await this.operations.run(operationId, () =>
+          probeProviderConnection(this.providerFactory(config, this.effectiveEnvironment())));
+      } catch (error) {
+        const summary = this.safeProviderFailure(error);
+        await this.modelCatalog.recordTestFailure(selection, { failureSummary: summary });
+        sendJson(response, 200, { ok: false, provider: selection.provider, model: selection.model, error: summary });
+        return true;
       }
-      await atomicWriteJson(this.providerConfigPath, config);
-      sendJson(response, 200, {
-        config,
-        keyStatus: this.keyStatus(),
-        keyStorage: body.apiKey ? "memory_only" : body.apiKey === "" ? "environment" : "unchanged",
+      await this.modelCatalog.recordTestSuccess(selection, {
+        testedLanguages: result.testedLanguages,
       });
-      return true;
-    }
-
-    if (url.pathname === "/api/config/provider/test" && method === "POST") {
-      const saved = await this.config().catch(() => undefined);
-      const body = z.object({
-        provider: z.enum(["openrouter", "gemini"]).optional(),
-        model: z.string().trim().min(1).optional(),
-        temperature: z.number().min(0).max(2).optional(),
-        maxOutputTokens: z.number().int().min(256).max(32_000).optional(),
-        endpoint: z.string().url().or(z.literal("")).optional(),
-        apiKey: z.string().trim().optional(),
-      }).parse(await readJsonBody(request));
-      const candidate: Record<string, unknown> = {
-        ...(saved ?? {}),
-        ...(body.provider === undefined ? {} : { provider: body.provider }),
-        ...(body.model === undefined ? {} : { model: body.model }),
-        ...(body.temperature === undefined ? {} : { temperature: body.temperature }),
-        ...(body.maxOutputTokens === undefined ? {} : { maxOutputTokens: body.maxOutputTokens }),
-      };
-      if (body.endpoint === "") delete candidate.endpoint;
-      else if (body.endpoint !== undefined) candidate.endpoint = body.endpoint;
-      const config = ProviderConfigSchema.parse(candidate);
-      const environment = this.effectiveEnvironment();
-      const keyName = config.provider === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
-      if (body.apiKey) {
-        environment[keyName] = body.apiKey;
-      } else if (body.apiKey === "") {
-        const environmentKey = this.environment[keyName];
-        if (environmentKey) environment[keyName] = environmentKey;
-        else delete environment[keyName];
-      }
-      const result = await probeProviderConnection(this.providerFactory(config, environment));
       sendJson(response, 200, {
         ok: true,
         provider: result.provider,
         model: result.model,
         usage: result.usage ?? null,
-        structuredOutput: {
-          required: true,
-          compatibility: "compatible",
-          mode: result.structuredMode,
-          protocolVersion: result.protocolVersion,
-          testedSchemas: ["campaign_setup", "gameplay_contract_v1"],
-          providerRequirement: config.provider === "openrouter"
-            ? "The selected model route must support strict response_format=json_schema for campaign setup and gameplay."
-            : "The selected Gemini model must accept both provider-enforced campaign setup and Gameplay Contract V1 schemas.",
-        },
+        testedLanguages: result.testedLanguages,
+        protocolVersion: result.protocolVersion,
       });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/models" && method === "PUT") {
+      const body = ModelEnabledRequestSchema.parse(await readJsonBody(request));
+      const snapshot = await this.modelCatalog.setEnabled(this.selection(body), body.enabled);
+      sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/default" && method === "PUT") {
+      const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      this.requireProviderKey(selection);
+      await this.modelCatalog.setDefault(selection);
+      sendJson(response, 200, { saved: true, defaultModel: selection });
       return true;
     }
 
@@ -396,139 +513,196 @@ export class DungeonWebController {
       const body = z.object({
         language: LanguageCodeSchema.optional(),
         markdown: z.string().min(1).max(500_000),
-      }).parse(await readJsonBody(request));
+      }).strict().parse(await readJsonBody(request));
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       await saveWorldProfile(this.root, language, body.markdown);
       sendJson(response, 200, { saved: true, language, source: "localized_override" });
       return true;
     }
-
-    if (url.pathname === "/api/config/prompts" && method === "GET") {
-      const phase = z.enum(PROMPT_PHASES).parse(url.searchParams.get("phase") ?? "dm-system");
-      const configured = (await loadAppConfig(this.root)).language;
-      const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
-      sendJson(response, 200, inspectPrompt(phase, language));
-      return true;
-    }
     return false;
   }
 
-  private async handleCampaignApi(
+  private async handleCampaignCreationApi(
     method: string,
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
   ): Promise<boolean> {
-    if (url.pathname === "/api/campaign/draft" && method === "POST") {
+    if (url.pathname === "/api/campaigns/draft" && method === "POST") {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
-      const language = (await loadAppConfig(this.root)).language;
-      const draft = await this.withGameLock(async () => {
-        const worldRules = (await resolveWorldProfile(this.root, language)).markdown;
-        const engine = await this.engine();
-        const generated = await engine.generateSetupWithMetadata({ ...body, language, worldRules });
-        return { setup: generated.setup, generation: generated.generation, language, worldRules };
+      const language = body.language ?? (await loadAppConfig(this.root)).language;
+      const requestedSelection = body.config === undefined
+        ? (await this.modelSnapshot()).defaultModel
+        : this.selection(body.config);
+      if (requestedSelection === null) {
+        throw new WebApiError(409, "Test a compatible model and choose it as the default before creating a campaign");
+      }
+      const config = await this.availableConfig(requestedSelection, language);
+      const worldRules = body.worldRules ?? (await resolveWorldProfile(this.root, language)).markdown;
+      const defaults = campaignSetupDefaults(language);
+      const premise = body.premise.trim() || defaults.premise;
+      const character = body.character.trim() || defaults.characterConcept;
+      const operationId = `draft:${randomUUID()}`;
+      const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
+        const engine = new DungeonEngine(
+          new StateStore(path.join(this.dataRoot, ".drafts", operationId)),
+          this.provider(config),
+        );
+        const generated = await engine.generateSetupWithMetadata({
+          premise,
+          character,
+          language,
+          worldRules,
+        });
+        return { setup: generated.setup, generation: generated.generation, language, worldRules, config, premise, character };
       });
       const draftId = randomUUID();
-      this.drafts.clear();
       this.drafts.set(draftId, draft);
-      sendJson(response, 200, { draftId, setup: setupPreview(draft.setup) });
+      while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value!);
+      sendJson(response, 200, { draftId, setup: setupPreview(draft.setup), config, language });
       return true;
     }
 
-    if (url.pathname === "/api/campaign/confirm" && method === "POST") {
-      const body = z.object({ draftId: z.string().uuid(), archiveCurrent: z.boolean().default(false) }).parse(await readJsonBody(request));
+    if (url.pathname === "/api/campaigns/confirm" && method === "POST") {
+      const body = z.object({ draftId: z.string().uuid() }).strict().parse(await readJsonBody(request));
       const draft = this.drafts.get(body.draftId);
-      if (!draft) throw new Error("Campaign draft was not found; generate it again");
-      const { setup, generation, language, worldRules } = draft;
-      const state = await this.withGameLock(async () => {
-        const engine = await this.engine();
-        if (await engine.hasCurrentGame()) {
-          if (!body.archiveCurrent) throw new Error("A campaign already exists; confirm archival before starting another");
-          return engine.replaceGame({ setup, openingGeneration: generation, language, worldRules });
-        }
-        return engine.createGame({ setup, openingGeneration: generation, language, worldRules });
+      if (!draft) {
+        const replay = await this.confirmedCampaignResponse(body.draftId);
+        if (!replay) throw new WebApiError(404, "Campaign draft was not found; generate it again");
+        sendJson(response, 200, replay);
+        return true;
+      }
+      const created = await (await this.catalog()).createCampaign({
+        setup: draft.setup,
+        openingGeneration: draft.generation,
+        language: draft.language,
+        worldRules: draft.worldRules,
+        setupInput: { premise: draft.premise, character: draft.character },
+      }, {
+        providerConfig: draft.config,
+        requestId: body.draftId,
       });
-      this.drafts.delete(body.draftId);
-      sendJson(response, 200, { state, openingNarration: setup.openingNarration });
+      if (this.drafts.get(body.draftId) === draft) this.drafts.delete(body.draftId);
+      sendJson(response, 200, {
+        state: created.state,
+        playerName: draft.setup.player.name,
+        openingNarration: draft.setup.openingNarration,
+        config: draft.config,
+      });
       return true;
     }
     return false;
   }
 
-  private async handleGameApi(
+  private async handleScopedCampaignApi(
     method: string,
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
   ): Promise<boolean> {
-    if (url.pathname === "/api/game/play" && method === "POST") {
-      const body = z.object({ action: z.string().trim().min(1).max(10_000) }).parse(await readJsonBody(request));
-      const result = await this.withGameLock(async () => {
-        await this.currentStore();
-        const engine = await this.engine();
+    const route = campaignRoute(url.pathname);
+    if (!route) return false;
+    const { campaignId, action } = route;
+
+    if (action === "status" && method === "GET") {
+      sendJson(response, 200, { campaign: await this.campaignPresentation(await this.requireSummary(campaignId)) });
+      return true;
+    }
+
+    if (action === "setup" && method === "GET") {
+      const summary = await this.requireSummary(campaignId);
+      const store = await this.readStore(summary);
+      sendJson(response, 200, { setup: await store.campaignStartSettings() ?? null });
+      return true;
+    }
+
+    if (action === "play" && method === "POST") {
+      const body = z.object({ action: z.string().trim().min(1).max(10_000) }).strict().parse(await readJsonBody(request));
+      const result = await this.runCampaign(campaignId, async (engine) => {
         const question = parseQuestionCommand(body.action);
         if (question) return engine.ask(question);
         const appeal = parseAppealCommand(body.action);
         return appeal ? engine.appeal(appeal) : engine.play(body.action);
       });
+      this.costCache.delete(campaignId);
       sendJson(response, 200, playerTurnResponse(result));
       return true;
     }
 
-    if (url.pathname === "/api/game/retry" && method === "POST") {
-      const result = await this.withGameLock(async () => {
-        await this.currentStore();
-        return (await this.engine()).resumePendingTurn();
-      });
+    if (action === "retry" && method === "POST") {
+      const result = await this.runCampaign(campaignId, (engine) => engine.resumePendingTurn());
+      this.costCache.delete(campaignId);
       sendJson(response, 200, playerTurnResponse(result));
       return true;
     }
 
-    if (url.pathname === "/api/game/discard" && method === "POST") {
-      await this.withGameLock(async () => {
-        await this.currentStore();
-        await (await this.engine()).discardPendingTurn();
-      });
+    if (action === "discard" && method === "POST") {
+      await this.runCampaign(campaignId, async (engine) => { await engine.discardPendingTurn(); });
       sendJson(response, 200, { discarded: true });
       return true;
     }
 
-    if (url.pathname === "/api/game/archive" && method === "POST") {
-      await this.withGameLock(async () => {
-        await this.currentStore();
-        await (await this.engine()).archiveAndReset();
-      });
+    if (action === "archive" && method === "POST") {
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      await this.operations.run(campaignId, async () => { await (await this.catalog()).archiveCampaign(campaignId); });
       sendJson(response, 200, { archived: true });
       return true;
     }
 
-    if (url.pathname === "/api/game/inspect" && method === "GET") {
-      const view = url.searchParams.get("view") as StateView | null;
-      if (!view || !STATE_VIEWS.includes(view)) throw new Error("Invalid inspection view");
-      const inspection = await this.withGameLock(async () => {
-        await this.currentStore();
-        return (await this.engine()).inspect(view);
+    if (action === "delete" && method === "DELETE") {
+      const body = z.object({ title: z.string().min(1).max(10_000) }).strict().parse(await readJsonBody(request));
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      const summary = await this.requireSummary(campaignId);
+      if (!summary.archived) throw new WebApiError(409, "Archive the campaign before permanently deleting it");
+      if (body.title !== summary.title) throw new WebApiError(409, "Campaign title confirmation does not match");
+      await this.operations.run(campaignId, async () => { await (await this.catalog()).deleteArchivedCampaign(campaignId); });
+      this.costCache.delete(campaignId);
+      sendJson(response, 200, { deleted: true });
+      return true;
+    }
+
+    if (action === "config" && method === "PUT") {
+      const requested = SetupModelConfigSchema.parse(await readJsonBody(request));
+      const selection = this.selection(requested);
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      const saved = await this.operations.run(campaignId, async () => {
+        const store = await this.activeStore(campaignId);
+        if (await store.getPending()) {
+          throw new WebApiError(409, "Resolve or discard the pending turn before changing the model");
+        }
+        const manifest = await store.readManifest();
+        const config = await this.availableConfig(selection, manifest.language);
+        const catalog = await this.catalog();
+        return catalog.updateProviderConfig(campaignId, config);
       });
+      sendJson(response, 200, { config: saved });
+      return true;
+    }
+
+    if (action === "inspect" && method === "GET") {
+      const view = url.searchParams.get("view") as StateView | null;
+      if (!view || !STATE_VIEWS.includes(view)) throw new WebApiError(400, "Invalid inspection view");
+      const summary = await this.requireSummary(campaignId);
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign state is temporarily busy");
+      const inspection = await (await this.readStore(summary)).inspect(view);
       sendJson(response, 200, { inspection });
       return true;
     }
 
-    if (url.pathname === "/api/game/transcript" && method === "GET") {
-      const turns = await this.withGameLock(async () => {
-        await this.currentStore();
-        return (await this.engine()).recentTranscript();
-      });
-      sendJson(response, 200, { turns });
+    if (action === "transcript" && method === "GET") {
+      const summary = await this.requireSummary(campaignId);
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign transcript is temporarily busy");
+      const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
+      sendJson(response, 200, { playerName: snapshot.playerName, turns: snapshot.turns });
       return true;
     }
 
-    if (url.pathname === "/api/game/export" && method === "GET") {
+    if (action === "export" && method === "GET") {
       const format = url.searchParams.get("format") ?? "markdown";
-      if (format !== "markdown") throw new Error(`Unsupported campaign export format: ${format}`);
-      const snapshot = await this.withGameLock(async () => {
-        await this.currentStore();
-        return (await this.engine()).campaignLogSnapshot();
-      });
+      if (format !== "markdown") throw new WebApiError(400, `Unsupported campaign export format: ${format}`);
+      const summary = await this.requireSummary(campaignId);
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign export is temporarily busy");
+      const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
       sendTextDownload(
         response,
         200,
@@ -537,92 +711,7 @@ export class DungeonWebController {
       );
       return true;
     }
-    return false;
-  }
 
-  private async handleEvaluationApi(
-    method: string,
-    request: IncomingMessage,
-    response: ServerResponse,
-    url: URL,
-  ): Promise<boolean> {
-    if (url.pathname === "/api/evaluations/runs" && method === "GET") {
-      sendJson(response, 200, { runs: await this.listEvaluationRuns(), task: this.task ?? null });
-      return true;
-    }
-
-    if (url.pathname === "/api/evaluations/start" && method === "POST") {
-      if (this.task?.status === "running") throw new Error("An evaluation task is already running");
-      const config = await this.buildEvaluationConfig(await readJsonBody(request));
-      const environment = this.effectiveEnvironment();
-      const dm = this.providerFactory(config.dm.config, environment);
-      const player = this.providerFactory(config.player.config, environment);
-      const worldRules = (await resolveWorldProfile(this.root, config.language)).markdown;
-      const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
-      const task: BackgroundTask = { id: randomUUID(), kind: "evaluation", runId, status: "running", startedAt: new Date().toISOString(), logs: [], sessionProgress: {} };
-      this.launchTask(task, async (progress) => {
-        const result = await new SelfPlayEvaluator(this.root, this.evaluationsRoot, config, worldRules, dm, player, 0, progress).run(runId);
-        return result.reportPath;
-      });
-      sendJson(response, 202, { task, config });
-      return true;
-    }
-
-    if (url.pathname === "/api/evaluations/resume" && method === "POST") {
-      if (this.task?.status === "running") throw new Error("An evaluation task is already running");
-      const body = z.object({ runId: z.string() }).parse(await readJsonBody(request));
-      const runId = assertSafeId(body.runId, "run ID");
-      const runDir = path.join(this.evaluationsRoot, "runs", runId);
-      const manifest = await readEvaluationManifest(path.join(runDir, "manifest.json"));
-      const config = manifest.config;
-      const environment = this.effectiveEnvironment();
-      const task: BackgroundTask = { id: randomUUID(), kind: "resume", runId, status: "running", startedAt: new Date().toISOString(), logs: [], sessionProgress: {} };
-      this.launchTask(task, async (progress) => {
-        const resumed = new SelfPlayEvaluator(
-          this.root,
-          this.evaluationsRoot,
-          config,
-          await readFile(path.join(runDir, "world.md"), "utf8"),
-          this.providerFactory(config.dm.config, environment),
-          this.providerFactory(config.player.config, environment),
-          manifest.totalEstimatedCostUsd,
-          progress,
-        );
-        return (await resumed.run(runId)).reportPath;
-      });
-      sendJson(response, 202, { task });
-      return true;
-    }
-
-    if (url.pathname === "/api/evaluations/report" && method === "POST") {
-      const body = z.object({ runId: z.string() }).parse(await readJsonBody(request));
-      const runId = assertSafeId(body.runId, "run ID");
-      const reportPath = await generateEvaluationReport(path.join(this.evaluationsRoot, "runs", runId));
-      sendJson(response, 200, { report: await readFile(reportPath, "utf8") });
-      return true;
-    }
-
-    if (url.pathname === "/api/evaluations/artifact" && method === "GET") {
-      const runId = url.searchParams.get("runId") ?? "";
-      const kind = url.searchParams.get("kind") ?? "";
-      const sessionId = url.searchParams.get("sessionId") ?? undefined;
-      const target = evaluationArtifactPath(this.evaluationsRoot, runId, kind, sessionId);
-      const text = await readFile(target, "utf8");
-      if (kind === "transcript" && sessionId) {
-        const safeRunId = assertSafeId(runId, "run ID");
-        const safeSessionId = assertSafeId(sessionId, "session ID");
-        const presentation = await evaluationTranscriptPresentation(
-          this.evaluationsRoot,
-          safeRunId,
-          safeSessionId,
-          text,
-        );
-        sendJson(response, 200, { text, presentation });
-      } else {
-        sendJson(response, 200, { text });
-      }
-      return true;
-    }
     return false;
   }
 
@@ -630,10 +719,8 @@ export class DungeonWebController {
     const method = request.method ?? "GET";
     if (await this.handleStatusApi(method, response, url)) return;
     if (await this.handleConfigurationApi(method, request, response, url)) return;
-    if (await this.handleCampaignApi(method, request, response, url)) return;
-    if (await this.handleGameApi(method, request, response, url)) return;
-    if (await this.handleEvaluationApi(method, request, response, url)) return;
-
+    if (await this.handleCampaignCreationApi(method, request, response, url)) return;
+    if (await this.handleScopedCampaignApi(method, request, response, url)) return;
     sendJson(response, 404, { error: "Not found" });
   }
 
@@ -642,6 +729,11 @@ export class DungeonWebController {
       "/": { name: "index.html", type: "text/html; charset=utf-8" },
       "/index.html": { name: "index.html", type: "text/html; charset=utf-8" },
       "/app.js": { name: "app.js", type: "text/javascript; charset=utf-8" },
+      "/ui-copy.js": { name: "ui-copy.js", type: "text/javascript; charset=utf-8" },
+      "/ui-utils.js": { name: "ui-utils.js", type: "text/javascript; charset=utf-8" },
+      "/chat-ui.js": { name: "chat-ui.js", type: "text/javascript; charset=utf-8" },
+      "/inspection-ui.js": { name: "inspection-ui.js", type: "text/javascript; charset=utf-8" },
+      "/setup-settings.js": { name: "setup-settings.js", type: "text/javascript; charset=utf-8" },
       "/terminal-history.js": { name: "terminal-history.js", type: "text/javascript; charset=utf-8" },
       "/styles.css": { name: "styles.css", type: "text/css; charset=utf-8" },
     };
@@ -666,10 +758,11 @@ export function createDungeonWebServer(options: WebServerOptions): Server {
       if (url.pathname.startsWith("/api/")) {
         if (rejectUnsafeMutation(request, response)) return;
         await controller.api(request, response, url);
+      } else {
+        await controller.static(response, url.pathname);
       }
-      else await controller.static(response, url.pathname);
     } catch (error) {
-      sendJson(response, 400, { error: asError(error) });
+      sendJson(response, statusFor(error), { error: asError(error) });
     }
   });
 }
