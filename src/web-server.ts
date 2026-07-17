@@ -27,6 +27,7 @@ import {
   type ModelSelection,
 } from "./llm-model-catalog.js";
 import { modelQualityRating, type ModelQualityRating } from "./model-quality.js";
+import { modelSpeedRating, type ModelSpeedRating } from "./model-speed.js";
 import { parseQuestionCommand } from "./question.js";
 import {
   ProviderConfigSchema,
@@ -237,6 +238,7 @@ export class DungeonWebController {
         testedLanguages: LanguageCode[];
         pricing?: ModelPriceEstimate;
         quality?: ModelQualityRating;
+        speed?: ModelSpeedRating;
         recommended: boolean;
         hidden: boolean;
         error?: string;
@@ -261,6 +263,7 @@ export class DungeonWebController {
         models: provider.models.map((model) => {
           const pricing = this.modelPricing.estimate(provider.id, model.model);
           const quality = modelQualityRating(provider.id, model.model);
+          const speed = modelSpeedRating(provider.id, model.model);
           return {
             id: model.model,
             label: model.model,
@@ -273,6 +276,7 @@ export class DungeonWebController {
             hidden: provider.id === "openrouter" && RETIRED_OPENROUTER_MIRRORS.has(model.model),
             ...(pricing === undefined ? {} : { pricing }),
             ...(quality === undefined ? {} : { quality }),
+            ...(speed === undefined ? {} : { speed }),
             ...(model.test?.failureSummary === undefined
               ? {}
               : { error: this.safeError(model.test.failureSummary, "Provider compatibility test failed") }),

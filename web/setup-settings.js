@@ -308,6 +308,11 @@ export function createSetupSettingsController(dependencies) {
     return t(key || "qualityUnrated");
   }
 
+  function modelSpeedCopy(model) {
+    const key = { fast: "speedFast", average: "speedAverage", slow: "speedSlow" }[model.speed];
+    return t(key || "speedUnrated");
+  }
+
   function renderModelRow(provider, model, isDefault) {
     const isTesting = testingModels.has(modelTestKey(provider.id, model.model));
     const presentedModel = isTesting ? { ...model, status: "testing", available: false } : model;
@@ -327,6 +332,9 @@ export function createSetupSettingsController(dependencies) {
     if (model.error) statusBadge.title = model.error;
     metadata.append(statusBadge);
     metadata.append(createElement("span", `model-quality quality-${model.quality || "unrated"}`, modelQualityCopy(model)));
+    const speed = createElement("span", `model-speed speed-${model.speed || "unrated"}`, modelSpeedCopy(model));
+    speed.title = t("speedEstimateHint");
+    metadata.append(speed);
     const price = createElement("span", `model-price ${model.pricing ? "" : "unavailable"}`, modelPriceCopy(model));
     if (model.pricing) {
       price.title = `${model.pricing.sourceModel} · $${model.pricing.inputPerMillion}/M input · $${model.pricing.outputPerMillion}/M output`;

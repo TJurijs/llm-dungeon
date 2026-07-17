@@ -328,6 +328,8 @@ describe("multi-campaign Web server", () => {
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
       .find((model: any) => model.id === "gemini-3.5-flash").quality).toBe("high");
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
+      .find((model: any) => model.id === "gemini-3.5-flash").speed).toBe("fast");
+    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
       .find((model: any) => model.id === "gemini-3.5-flash").recommended).toBe(true);
     expect(status.llm.providers.find((provider: any) => provider.id === "openrouter").models
       .map((model: any) => model.id)).toEqual([

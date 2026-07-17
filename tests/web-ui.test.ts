@@ -231,6 +231,8 @@ describe("web UI copy", () => {
     expect(setup).toContain('"/api/llm/keys"');
     expect(setup).toContain("dataset.providerKeyForm");
     expect(setup).toContain("modelQualityCopy");
+    expect(setup).toContain("modelSpeedCopy");
+    expect(setup).toContain('speed.title = t("speedEstimateHint")');
     expect(setup).toContain('`model-recommended ${model.recommended ? "" : "is-empty"}`');
     expect(setup).toContain('if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")))');
     expect(setup).toContain('createElement("details", "llm-provider-tools")');
@@ -240,6 +242,8 @@ describe("web UI copy", () => {
     expect(setup).toContain("* 10) / 10");
     expect(UI_COPY.en.estimated50Turns).toBe("≈{price}");
     expect(UI_COPY.en.qualityLegend).toContain("High — strongest");
+    expect(UI_COPY.en.speedAverage).toBe("Average");
+    expect(UI_COPY.ru.speedSlow).toBe("Медленная");
     expect(setup).toContain("return status.llm?.defaultModel ?? null");
     expect(setup).not.toContain("status.llm?.defaultModel ?? (status.config");
     expect(setup).not.toContain("apiKey");

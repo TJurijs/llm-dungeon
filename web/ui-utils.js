@@ -53,6 +53,7 @@ export function llmModelEntries(llm, { availableOnly = false, requireKey = false
         testedLanguages,
         pricing: model.pricing,
         quality: model.quality,
+        speed: model.speed,
         recommended: Boolean(model.recommended),
         hidden: Boolean(model.hidden),
         error: model.error || model.test?.error,
