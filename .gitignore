@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 .DS_Store
 data/
 coverage/
@@ -10,6 +12,7 @@ config/app.json
 config/provider.json
 config/llm-models.json
 config/.llm-models.lock
+config/.llm-models.lock.reclaim-*
 config/world.md
 config/worlds/
 *.log

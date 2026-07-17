@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { z } from "zod";
 
 export function asError(error: unknown): string {
@@ -51,6 +52,60 @@ export function sendTextDownload(
     "X-Content-Type-Options": "nosniff",
   });
   response.end(text);
+}
+
+function requestHostname(value: string | undefined): string | undefined {
+  if (!value || value.length > 512) return undefined;
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      return undefined;
+    }
+    return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function configuredHostname(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!normalized || normalized.includes("/") || normalized.includes("@") || /\s/.test(normalized)) {
+    return undefined;
+  }
+  if (isIP(normalized) !== 0) return normalized;
+  return /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?))*$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname === "::1") return true;
+  if (isIP(hostname) !== 4) return false;
+  return hostname.split(".", 1)[0] === "127";
+}
+
+function isWildcardHostname(hostname: string): boolean {
+  return hostname === "0.0.0.0" || hostname === "::";
+}
+
+/** Reject Host-header and DNS-rebinding requests before serving reads or mutations. */
+export function rejectUntrustedHost(
+  request: IncomingMessage,
+  response: ServerResponse,
+  configuredHost: string,
+): boolean {
+  const requested = requestHostname(request.headers.host);
+  const configured = configuredHostname(configuredHost);
+  const trusted = requested !== undefined && configured !== undefined && (
+    isLoopbackHostname(configured)
+      ? isLoopbackHostname(requested)
+      : isWildcardHostname(configured)
+        ? isLoopbackHostname(requested) || isIP(requested) !== 0
+        : requested === configured
+  );
+  if (trusted) return false;
+  sendJson(response, 421, { error: "Request host is not allowed" });
+  return true;
 }
 
 /** Enforce the local Web CLI's JSON and same-origin mutation boundary. */

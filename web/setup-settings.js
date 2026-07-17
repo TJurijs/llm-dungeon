@@ -333,6 +333,7 @@ export function createSetupSettingsController(dependencies) {
     }
     metadata.append(price);
     copy.append(metadata);
+    if (model.error) copy.append(createElement("p", "llm-model-error", model.error));
 
     const actions = createElement("div", "llm-model-actions");
     const testButton = createElement("button", "quiet", t("testModel"));
@@ -462,15 +463,18 @@ export function createSetupSettingsController(dependencies) {
       testingModels.add(testKey);
       renderLlmConfiguration(true);
     }
-    await withButtonBusy(button, t("working"), async () => {
-      const result = await api(endpoint, { method, body: JSON.stringify(payload) });
-      await refreshStatus({ ensureFresh: true });
-      renderLlmConfiguration();
+    const restoreActionFocus = () => {
       const matchingActions = [...$("#llm-providers").querySelectorAll("[data-llm-action]")]
         .filter((candidate) => candidate.dataset.provider === payload.provider && candidate.dataset.model === payload.model);
       const focusTarget = matchingActions.find((candidate) => candidate.dataset.llmAction === focusAction && !candidate.disabled)
         ?? matchingActions.find((candidate) => !candidate.disabled);
       focusTarget?.focus({ preventScroll: true });
+    };
+    await withButtonBusy(button, t("working"), async () => {
+      const result = await api(endpoint, { method, body: JSON.stringify(payload) });
+      await refreshStatus({ ensureFresh: true });
+      renderLlmConfiguration();
+      if (!testKey) restoreActionFocus();
       if (inspectOk && result.ok === false) {
         const error = result.error || t("modelTestFailed");
         showToast(error, "error");
@@ -481,6 +485,7 @@ export function createSetupSettingsController(dependencies) {
       if (!testKey) return;
       testingModels.delete(testKey);
       renderLlmConfiguration(true);
+      restoreActionFocus();
     });
   }
 

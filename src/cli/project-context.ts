@@ -4,6 +4,8 @@ import { CampaignCatalog, type CampaignCatalogSummary } from "../campaign-catalo
 import { DungeonEngine } from "../engine.js";
 import { loadProjectEnv } from "../env.js";
 import { loadAppConfig, saveAppConfig, type LanguageCode } from "../language.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../connection-probe.js";
+import { LlmModelCatalog, ModelUnavailableError } from "../llm-model-catalog.js";
 import { createProvider as createLlmProvider, loadProviderConfig } from "../providers.js";
 import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import { StateStore } from "../store.js";
@@ -75,6 +77,7 @@ export class CliProjectContext {
       temperature: 0.8,
       maxOutputTokens: 4000,
     });
+    await this.assertTerminalModelAvailable(config);
     if (providerModel === "gemini-3.5-flash" || providerModel === "google/gemini-3.5-flash") {
       p.log.success("gemini-3.5-flash is the playtested, recommended DM model.");
     } else if (providerModel === "gemini-3.1-flash-lite" || providerModel === "google/gemini-3.1-flash-lite") {
@@ -97,7 +100,10 @@ export class CliProjectContext {
   }
 
   async providerConfig(): Promise<ProviderConfig> {
-    return await this.savedProviderConfig() ?? this.configureProvider();
+    const config = await this.savedProviderConfig();
+    if (config === undefined) return this.configureProvider();
+    await this.assertTerminalModelAvailable(config);
+    return config;
   }
 
   private async savedProviderConfig(): Promise<ProviderConfig | undefined> {
@@ -137,6 +143,7 @@ export class CliProjectContext {
 
   async createCampaignSession(input: NewGameInput, config?: ProviderConfig): Promise<CliCampaignSession> {
     const selectedConfig = ProviderConfigSchema.parse(config ?? await this.providerConfig());
+    await this.assertTerminalModelAvailable(selectedConfig);
     const created = await (await this.campaignCatalog(selectedConfig)).createCampaign(input, {
       providerConfig: selectedConfig,
     });
@@ -174,6 +181,25 @@ export class CliProjectContext {
 
   async saveWorldProfile(markdown: string, language?: LanguageCode): Promise<string> {
     return saveWorldProfile(this.paths.root, language ?? await this.language(), markdown);
+  }
+
+  private async assertTerminalModelAvailable(config: ProviderConfig): Promise<void> {
+    const selection = { provider: config.provider, model: config.model };
+    const catalog = new LlmModelCatalog(this.paths.root, {
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+      legacySelection: selection,
+    });
+    try {
+      await catalog.assertAvailable(selection, "en");
+      await catalog.assertAvailable(selection, "ru");
+    } catch (error) {
+      if (!(error instanceof ModelUnavailableError)) throw error;
+      throw new Error(
+        `Model ${config.provider}/${config.model} is not available for terminal use. `
+        + "Open the browser Settings page, test it in English and Russian, and enable it before selecting it in the terminal.",
+        { cause: error },
+      );
+    }
   }
 }
 

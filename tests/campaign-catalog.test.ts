@@ -48,11 +48,13 @@ describe("campaign catalog", () => {
   it("briefly waits for another process to finish a catalog operation", async () => {
     const dataRoot = await temporaryDataRoot();
     const catalog = new CampaignCatalog(dataRoot, { defaultProviderConfig: gemini });
-    const release = await acquireFileLock(catalog.lockPath, "Test catalog");
-    const listing = catalog.listCampaigns();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await release();
-    await expect(listing).resolves.toEqual([]);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const release = await acquireFileLock(catalog.lockPath, "Test catalog");
+      const listing = catalog.listCampaigns();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await release();
+      await expect(listing).resolves.toEqual([]);
+    }
   });
 
   it("queues overlapping in-process catalog access across instances", async () => {

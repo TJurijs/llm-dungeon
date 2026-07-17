@@ -75,6 +75,13 @@ describe("LLM provider definitions", () => {
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
       .toContain("gpt-5.6-sol");
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels).toEqual([
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
+    ]);
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels).toEqual([
+      "deepseek-v4-flash",
+    ]);
     expect(RECOMMENDED_MODEL_SELECTION).toEqual({ provider: "gemini", model: "gemini-3.5-flash" });
   });
 });
@@ -125,6 +132,20 @@ describe("LLM model catalog persistence", () => {
     expect(snapshot.providers.find((provider) => provider.id === "anthropic")?.models
       .filter((candidate) => candidate.model === custom.model)).toHaveLength(1);
     expect(model(snapshot, custom)).toMatchObject({ candidate: false, state: "untested", enabled: false });
+  });
+
+  it("preserves removed curated models only as non-candidate legacy selections", async () => {
+    const root = await temporaryProject();
+    const removed = { provider: "deepseek", model: "deepseek-v4-pro" } as const;
+
+    const snapshot = await catalog(root, { legacySelection: removed }).snapshot();
+
+    expect(model(snapshot, removed)).toMatchObject({
+      ...removed,
+      candidate: false,
+      state: "untested",
+      enabled: false,
+    });
   });
 
   it("merges newly shipped candidates into an existing catalog idempotently", async () => {

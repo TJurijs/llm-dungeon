@@ -1,9 +1,12 @@
 import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { CampaignCatalog } from "../src/campaign-catalog.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
+import { LlmModelCatalog } from "../src/llm-model-catalog.js";
 import { campaignScopePath } from "../src/persistence/campaign-catalog.js";
 import { createDungeonWebServer } from "../src/web-server.js";
 import { StateStore } from "../src/store.js";
@@ -181,6 +184,33 @@ async function json(base: string, route: string, method = "GET", body?: unknown)
   return value;
 }
 
+async function rawRequest(
+  base: string,
+  route: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<{ status: number; body: string }> {
+  const target = new URL(route, base);
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: `${target.pathname}${target.search}`,
+      method: options.method ?? "GET",
+      headers: options.headers,
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("error", reject);
+    if (options.body) request.write(options.body);
+    request.end();
+  });
+}
+
 const testedModels = new Set<string>();
 
 async function ensureModelAvailable(
@@ -210,7 +240,10 @@ async function createCampaign(
     worldRules: string;
     config: ProviderConfig;
   }> = {},
-): Promise<{ state: { campaignId: string; turn: number; language: string }; config: ProviderConfig }> {
+): Promise<{
+  state: { campaignId: string; title: string; turn: number; language: string };
+  config: Pick<ProviderConfig, "provider" | "model">;
+}> {
   const config = overrides.config ?? DEFAULT_CONFIG;
   await ensureModelAvailable(base, config);
   const draft = await json(base, "/api/campaigns/draft", "POST", {
@@ -262,7 +295,13 @@ describe("multi-campaign Web server", () => {
     const status = await json(base, "/api/status");
 
     expect(status.campaigns).toEqual([]);
-    expect(status.defaults).toEqual({ language: "en", config: DEFAULT_CONFIG });
+    expect(status.defaults).toEqual({
+      language: "en",
+      config: { provider: DEFAULT_CONFIG.provider, model: DEFAULT_CONFIG.model },
+    });
+    expect(JSON.stringify(status)).not.toContain('"temperature"');
+    expect(JSON.stringify(status)).not.toContain('"maxOutputTokens"');
+    expect(JSON.stringify(status)).not.toContain('"endpoint"');
     expect(status.keyStatus).toEqual({
       gemini: true,
       openrouter: false,
@@ -331,9 +370,11 @@ describe("multi-campaign Web server", () => {
     const first = await json(base, "/api/campaigns/confirm", "POST", { draftId: firstDraft.draftId });
     const second = await json(base, "/api/campaigns/confirm", "POST", { draftId: secondDraft.draftId });
 
-    expect(first.config).toEqual(firstConfig);
+    expect(firstDraft.config).toEqual({ provider: firstConfig.provider, model: firstConfig.model });
+    expect(secondDraft.config).toEqual({ provider: secondConfig.provider, model: secondConfig.model });
+    expect(first.config).toEqual({ provider: firstConfig.provider, model: firstConfig.model });
     expect(first.state.language).toBe("en");
-    expect(second.config).toEqual(secondConfig);
+    expect(second.config).toEqual({ provider: secondConfig.provider, model: secondConfig.model });
     expect(second.state.language).toBe("ru");
     expect(first.state.campaignId).not.toBe(second.state.campaignId);
     const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: DEFAULT_CONFIG });
@@ -359,8 +400,16 @@ describe("multi-campaign Web server", () => {
     });
     const status = await json(base, "/api/status");
     expect(status.campaigns).toEqual(expect.arrayContaining([
-      expect.objectContaining({ campaignId: first.state.campaignId, config: firstConfig, archived: false }),
-      expect.objectContaining({ campaignId: second.state.campaignId, config: secondConfig, archived: false }),
+      expect.objectContaining({
+        campaignId: first.state.campaignId,
+        config: { provider: firstConfig.provider, model: firstConfig.model },
+        archived: false,
+      }),
+      expect.objectContaining({
+        campaignId: second.state.campaignId,
+        config: { provider: secondConfig.provider, model: secondConfig.model },
+        archived: false,
+      }),
     ]));
   });
 
@@ -373,7 +422,7 @@ describe("multi-campaign Web server", () => {
       character: "One hero",
       language: "en",
       worldRules: "# One World\n",
-      config: DEFAULT_CONFIG,
+      config: { provider: DEFAULT_CONFIG.provider, model: DEFAULT_CONFIG.model },
     });
 
     const confirmations = await Promise.all([
@@ -560,6 +609,23 @@ describe("multi-campaign Web server", () => {
     expect((await fetch(`${base}${campaignRoute(first.state.campaignId, "transcript")}`)).status).toBe(404);
   });
 
+  it("can permanently delete an archived campaign with any valid persisted title", async () => {
+    const root = await fixtureRoot();
+    const title = `${"Long campaign title ".repeat(600)}\r\nFinal line`;
+    const setup = structuredClone(setupFixture);
+    setup.campaignTitle = title;
+    const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: DEFAULT_CONFIG });
+    const created = await catalog.createCampaign(
+      { setup, worldRules: "# Long title test\n" },
+      { providerConfig: DEFAULT_CONFIG },
+    );
+    await catalog.archiveCampaign(created.campaignId);
+    const { base } = await start(root);
+
+    expect(await json(base, campaignRoute(created.campaignId, "delete"), "DELETE", { title }))
+      .toEqual({ deleted: true });
+  });
+
   it("keeps turn, transcript, inspection, and export responses player-safe", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root, {
@@ -619,7 +685,7 @@ describe("multi-campaign Web server", () => {
     expect(status.campaigns).toContainEqual(expect.objectContaining({
       campaignId: state.campaignId,
       archived: false,
-      config: DEFAULT_CONFIG,
+      config: { provider: DEFAULT_CONFIG.provider, model: DEFAULT_CONFIG.model },
       pending: { kind: "action", phase: "requested", lockedRoll: false },
     }));
     expect(JSON.stringify(status)).not.toContain(privateAction);
@@ -661,6 +727,15 @@ describe("multi-campaign Web server", () => {
     const root = await fixtureRoot();
     const { base, environments } = await start(root, { environment: {} });
     const secret = "temporary-browser-secret";
+
+    const missing = await responseJson(base, "/api/llm/models/test", "POST", {
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toEqual({
+      error: "Configure OPENAI_API_KEY in Settings, or add it to .env and restart the server",
+    });
 
     const saved = await json(base, "/api/llm/keys", "PUT", { provider: "openai", key: secret });
     expect(JSON.stringify(saved)).not.toContain(secret);
@@ -716,6 +791,27 @@ describe("multi-campaign Web server", () => {
   it("preserves JSON/same-origin mutation protection and returns useful campaign ID errors", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root);
+    const port = new URL(base).port;
+    const originalWorld = await readFile(path.join(root, "config", "world.md"), "utf8");
+    const reboundRead = await rawRequest(base, "/api/status", {
+      headers: { Host: `attacker.example:${port}` },
+    });
+    expect(reboundRead.status).toBe(421);
+    const reboundMutation = await rawRequest(base, "/api/config/world", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Host: `attacker.example:${port}`,
+        Origin: `http://attacker.example:${port}`,
+        "Sec-Fetch-Site": "same-origin",
+      },
+      body: JSON.stringify({ markdown: "# Rebound overwrite" }),
+    });
+    expect(reboundMutation.status).toBe(421);
+    expect(await readFile(path.join(root, "config", "world.md"), "utf8")).toBe(originalWorld);
+    expect((await rawRequest(base, "/api/status", {
+      headers: { Host: `localhost:${port}` },
+    })).status).toBe(200);
     const foreign = await fetch(`${base}/api/config/world`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Origin: "https://malicious.example" },
@@ -739,5 +835,95 @@ describe("multi-campaign Web server", () => {
     expect((await fetch(`${base}/api/campaigns/${encodeURIComponent("campaign:missing")}/transcript`)).status).toBe(404);
     const traversal = await fetch(`${base}/api/campaigns/${encodeURIComponent("campaign:../../secret")}/transcript`);
     expect(traversal.status).toBe(400);
+  });
+
+  it("redacts and caps unexpected errors at the final browser boundary", async () => {
+    const root = await fixtureRoot();
+    const secret = "unexpected-secret+/=";
+    const { base } = await start(root, {
+      environment: { GEMINI_API_KEY: secret, ANTHROPIC_API_KEY: "\ud800" },
+      providerFactory: (config) => new WebFakeProvider(config.model, (request) => {
+        if (request.schemaName === "campaign_setup") {
+          throw new Error([
+            secret,
+            encodeURIComponent(secret),
+            root,
+            "internal detail ".repeat(80),
+          ].join("\n"));
+        }
+      }),
+    });
+    await ensureModelAvailable(base, DEFAULT_CONFIG);
+
+    const failure = await responseJson(base, "/api/campaigns/draft", "POST", {
+      premise: "A tavern.",
+      character: "A scout.",
+      language: "en",
+      worldRules: "# Test World\n",
+      config: DEFAULT_CONFIG,
+    });
+    expect(failure.status).toBe(400);
+    const body = await failure.json() as { error: string };
+    expect(body.error).toContain("[redacted]");
+    expect(body.error).toContain("[project]");
+    expect(body.error).not.toContain(secret);
+    expect(body.error).not.toContain(encodeURIComponent(secret));
+    expect(body.error).not.toContain("\n");
+    expect(body.error.length).toBeLessThanOrEqual(500);
+
+    const modelCatalog = new LlmModelCatalog(root, {
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+    });
+    await modelCatalog.recordTestFailure({
+      provider: DEFAULT_CONFIG.provider,
+      model: DEFAULT_CONFIG.model,
+    }, {
+      failureSummary: [
+        root,
+        encodeURIComponent(secret),
+        "https://user:private@example.invalid/v1?token=private#details",
+      ].join(" "),
+    });
+    const status = await json(base, "/api/status");
+    const storedError = status.llm.providers
+      .find((provider: any) => provider.id === DEFAULT_CONFIG.provider).models
+      .find((model: any) => model.id === DEFAULT_CONFIG.model).error as string;
+    expect(storedError).toContain("[project]");
+    expect(storedError).toContain("?[redacted]");
+    for (const hidden of [root, encodeURIComponent(secret), "user", "private", "token=private"]) {
+      expect(storedError).not.toContain(hidden);
+    }
+
+    const missingAsset = await fetch(`${base}/styles.css`);
+    const missingBody = await missingAsset.json() as { error: string };
+    expect(missingBody.error).toContain("[project]");
+    expect(missingBody.error).not.toContain(root);
+  });
+
+  it("projects internal provider configuration out of every status response", async () => {
+    const root = await fixtureRoot();
+    const internalConfig: ProviderConfig = {
+      ...DEFAULT_CONFIG,
+      model: "m".repeat(301),
+      endpoint: "https://user:private@example.invalid/v1?token=private",
+    };
+    await writeFile(path.join(root, "config", "provider.json"), JSON.stringify(internalConfig), "utf8");
+    const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: internalConfig });
+    const created = await catalog.createCampaign(
+      { setup: setupFixture, worldRules: "# Internal config test\n" },
+      { providerConfig: internalConfig },
+    );
+    const { base } = await start(root);
+
+    const status = await json(base, "/api/status");
+    const selection = { provider: internalConfig.provider, model: internalConfig.model };
+    expect(status.config).toEqual(selection);
+    expect(status.defaults.config).toEqual(selection);
+    expect(status.campaigns.find((campaign: any) => campaign.campaignId === created.campaignId).config)
+      .toEqual(selection);
+    const serialized = JSON.stringify(status);
+    for (const hidden of ["temperature", "maxOutputTokens", "endpoint", "user:private", "token=private"]) {
+      expect(serialized).not.toContain(hidden);
+    }
   });
 });

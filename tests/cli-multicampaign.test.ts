@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CampaignCatalog, type CampaignCatalogSummary } from "../src/campaign-catalog.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
 import { HumanGameCli } from "../src/cli/game.js";
 import { createCliProgram } from "../src/cli/program.js";
 import { CliProjectContext, type CliCampaignSession } from "../src/cli/project-context.js";
+import { LlmModelCatalog } from "../src/llm-model-catalog.js";
 import type { GameEngine } from "../src/types.js";
 import type { ProviderConfig } from "../src/schemas.js";
 import { setupFixture } from "./helpers.js";
@@ -24,6 +26,10 @@ const openRouter: ProviderConfig = {
   maxOutputTokens: 3000,
 };
 
+function modelSelection(config: ProviderConfig) {
+  return { provider: config.provider, model: config.model };
+}
+
 async function projectFixture(): Promise<{ root: string; project: CliProjectContext }> {
   const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-cli-campaigns-"));
   const paths = {
@@ -34,6 +40,11 @@ async function projectFixture(): Promise<{ root: string; project: CliProjectCont
   };
   await mkdir(path.dirname(paths.providerConfig), { recursive: true });
   await writeFile(paths.providerConfig, `${JSON.stringify(gemini, null, 2)}\n`, "utf8");
+  const modelCatalog = new LlmModelCatalog(root, {
+    testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+  });
+  await modelCatalog.recordTestSuccess(modelSelection(gemini), { testedLanguages: ["en", "ru"] });
+  await modelCatalog.recordTestSuccess(modelSelection(openRouter), { testedLanguages: ["en", "ru"] });
   return {
     root,
     project: new CliProjectContext(paths, {
@@ -66,6 +77,36 @@ function summary(
 }
 
 describe("multi-campaign terminal integration", () => {
+  it("rejects an unverified terminal default with browser verification guidance", async () => {
+    const { root, project } = await projectFixture();
+    const unverified = { ...gemini, model: "new-unverified-model" };
+    await writeFile(
+      path.join(root, "config", "provider.json"),
+      `${JSON.stringify(unverified, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(project.providerConfig()).rejects.toThrow(
+      /Open the browser Settings page, test it in English and Russian, and enable it/,
+    );
+  });
+
+  it("requires browser verification in both supported languages", async () => {
+    const { root, project } = await projectFixture();
+    const englishOnly = { ...gemini, model: "english-only-model" };
+    const modelCatalog = new LlmModelCatalog(root, {
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+    });
+    await modelCatalog.recordTestSuccess(modelSelection(englishOnly), { testedLanguages: ["en"] });
+    await writeFile(
+      path.join(root, "config", "provider.json"),
+      `${JSON.stringify(englishOnly, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(project.providerConfig()).rejects.toThrow(/test it in English and Russian/);
+  });
+
   it("opens each campaign with its persisted model while defaults affect only new campaigns", async () => {
     const { root, project } = await projectFixture();
     const dataRoot = path.join(root, "data");

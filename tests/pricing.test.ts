@@ -47,6 +47,8 @@ describe("model price estimates", () => {
     expect(modelQualityRating("openrouter", "google/gemini-3.1-flash-lite")).toBe("low");
     expect(modelQualityRating("anthropic", "claude-haiku-4-5")).toBe("medium");
     expect(modelQualityRating("openai", "gpt-5.6-sol")).toBe("high");
+    expect(modelQualityRating("anthropic", "claude-opus-4-8")).toBeUndefined();
+    expect(modelQualityRating("deepseek", "deepseek-v4-pro")).toBeUndefined();
     expect(modelQualityRating("openai", "unknown-model")).toBeUndefined();
   });
 });

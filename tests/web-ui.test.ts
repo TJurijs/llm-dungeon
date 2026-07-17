@@ -5,6 +5,7 @@ import { BrowserChatHistory, chatEntryPresentation, generationTooltip } from "..
 import { UI_COPY, localeCopy } from "../web/ui-copy.js";
 import {
   campaignCostText,
+  confirmationTitleValue,
   llmModelEntries,
   modelChoice,
   modelValue,
@@ -55,6 +56,7 @@ describe("web UI copy", () => {
     expect(html).toContain('id="open-campaign-setup"');
     expect(html).toContain('id="campaign-setup-dialog"');
     expect(html).toContain('id="archive-campaign-dialog"');
+    expect(html).toContain('<textarea id="delete-campaign-confirmation"');
     expect(html).toContain('data-i18n="globalDefaults"');
     expect(html).toContain('data-i18n="llmProviders"');
     expect(html).toContain('class="settings-navigation"');
@@ -97,6 +99,12 @@ describe("web UI copy", () => {
     expect(setup).toContain("testingModels.add(testKey)");
     expect(setup).toContain("testingModels.delete(testKey)");
     expect(setup).toContain('status: "testing"');
+    expect(setup).toContain('copy.append(createElement("p", "llm-model-error", model.error))');
+    expect(setup).toContain([
+      "testingModels.delete(testKey);",
+      "      renderLlmConfiguration(true);",
+      "      restoreActionFocus();",
+    ].join("\n"));
   });
 
   it("does not expose or record a browser activity log", async () => {
@@ -117,6 +125,9 @@ describe("web UI copy", () => {
     expect(styles).toContain("@media (max-width: 760px)");
     expect(styles).toContain("body.sidebar-open .sidebar");
     expect(styles).toContain("min-width: 44px; min-height: 42px");
+    expect(styles).toContain(".composer:focus-within { outline: 2px solid var(--accent)");
+    expect(styles).toContain(".chat-header-actions { min-width: 0; flex: 0 0 auto;");
+    expect(styles).toContain("--faint: #989a90;");
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(styles).toContain("body.inspection-open .app-shell");
     expect(styles).toContain("body.inspection-open #open-inspection { display: none; }");
@@ -132,6 +143,11 @@ describe("web UI copy", () => {
     expect(styles).toContain(".llm-provider-card[open]");
     expect(styles).toContain(".llm-provider-tools-panel");
     expect(styles).toContain(".composer-model-picker option");
+    expect(styles).toContain("@media (max-width: 1100px)");
+    expect(styles).toContain("@media (min-width: 761px) and (max-width: 1100px)");
+    expect(styles).toContain("@media (max-width: 900px)");
+    expect(styles).toContain(".inspection-resizer { display: none !important; }");
+    expect(styles).toContain(".llm-model-error { grid-column: 1 / -1;");
   });
 
   it("uses meaningful transcript identities and offers permanent deletion only beside archived campaigns", async () => {
@@ -150,12 +166,13 @@ describe("web UI copy", () => {
     expect(app).toContain('body.playerName.trim()');
     expect(app).toContain('deleteButton.dataset.deleteCampaignId = campaign.campaignId');
     expect(app).toContain('method: "DELETE"');
-    expect(app).toContain('event.target.value !== campaign.title');
+    expect(app).toContain("event.target.value !== confirmationTitleValue(campaign.title)");
     expect(app).not.toContain('confirm(formatTemplate("deleteCampaignConfirm"');
     expect(app).not.toContain("confirm(t(\"archiveConfirm\"))");
     expect(app).toContain('campaignApiPath(campaignId, "setup")');
     expect(app).toContain('$("#archive-campaign-dialog").showModal()');
     expect(styles).toContain(".delete-campaign-button svg");
+    expect(styles).toContain("#delete-campaign-warning { white-space: pre-wrap;");
   });
 
   it("keeps model IDs reversible and selects only tested, enabled models with keys", () => {
@@ -263,5 +280,10 @@ describe("web UI copy", () => {
     expect(campaignCostText(undefined, "Cost")).toBe("");
     expect(campaignCostText({ totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 0, basis: "exact" }, "Cost")).toBe("Cost $0.1250");
     expect(campaignCostText({ totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 1, basis: "estimated" }, "Cost")).toBe("Cost ≈$0.1250");
+  });
+
+  it("keeps every visible line of a persisted title typeable for deletion confirmation", () => {
+    expect(confirmationTitleValue("First\r\nSecond\rThird\nFourth"))
+      .toBe("First\nSecond\nThird\nFourth");
   });
 });

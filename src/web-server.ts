@@ -46,13 +46,15 @@ import {
 import type { GenerationMetadata, LlmProvider, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
-import { asError, readJsonBody, rejectUnsafeMutation, sendJson, sendTextDownload } from "./web/http.js";
+import { asError, readJsonBody, rejectUnsafeMutation, rejectUntrustedHost, sendJson, sendTextDownload } from "./web/http.js";
 import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
 type ProviderFactory = (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
+type BrowserModelSelection = Pick<ProviderConfig, "provider" | "model">;
 
 export interface WebServerOptions {
   root: string;
+  host?: string;
   environment?: NodeJS.ProcessEnv;
   providerFactory?: ProviderFactory;
   maxConcurrentCampaignOperations?: number;
@@ -73,7 +75,7 @@ interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerCon
   busy: boolean;
   pending: unknown;
   campaignCost: CampaignCostSummary | null;
-  config: ProviderConfig | null;
+  config: BrowserModelSelection | null;
 }
 
 class WebApiError extends Error {
@@ -207,6 +209,10 @@ export class DungeonWebController {
     return ModelSelectionSchema.parse({ provider: config.provider, model: config.model });
   }
 
+  private presentedSelection(config: Pick<ProviderConfig, "provider" | "model">): BrowserModelSelection {
+    return { provider: config.provider, model: config.model };
+  }
+
   private async modelSnapshot(): Promise<LlmModelCatalogSnapshot> {
     const legacy = await this.defaultConfig().then((config) => this.selection(config)).catch(() => undefined);
     return this.modelCatalog.snapshot(legacy);
@@ -265,7 +271,9 @@ export class DungeonWebController {
             hidden: provider.id === "openrouter" && RETIRED_OPENROUTER_MIRRORS.has(model.model),
             ...(pricing === undefined ? {} : { pricing }),
             ...(quality === undefined ? {} : { quality }),
-            ...(model.test?.failureSummary === undefined ? {} : { error: model.test.failureSummary }),
+            ...(model.test?.failureSummary === undefined
+              ? {}
+              : { error: this.safeError(model.test.failureSummary, "Provider compatibility test failed") }),
           };
         }),
       })),
@@ -275,7 +283,11 @@ export class DungeonWebController {
   private requireProviderKey(selection: ModelSelection): void {
     const definition = LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === selection.provider);
     if (!definition || !this.effectiveEnvironment()[definition.envKey]) {
-      throw new WebApiError(409, `Add ${definition?.envKey ?? "the provider API key"} to .env and restart the server`);
+      const keyName = definition?.envKey ?? "the provider API key";
+      throw new WebApiError(
+        409,
+        `Configure ${keyName} in Settings, or add it to .env and restart the server`,
+      );
     }
   }
 
@@ -300,15 +312,35 @@ export class DungeonWebController {
     return this.configForSelection(parsed);
   }
 
-  private safeProviderFailure(error: unknown): string {
+  safeError(error: unknown, fallback = "Request failed"): string {
     let message = asError(error);
     const environment = this.effectiveEnvironment();
     for (const definition of LLM_PROVIDER_DEFINITIONS) {
       const key = environment[definition.envKey];
-      if (key) message = message.replaceAll(key, "[redacted]");
+      if (key) {
+        message = message.replaceAll(key, "[redacted]");
+        try {
+          message = message.replaceAll(encodeURIComponent(key), "[redacted]");
+        } catch {
+          // Environment strings can contain invalid surrogate pairs.
+        }
+      }
     }
+    const resolvedRoot = path.resolve(this.root);
+    if (path.dirname(resolvedRoot) !== resolvedRoot) {
+      message = message.replaceAll(resolvedRoot, "[project]");
+    }
+    message = message.replace(/https?:\/\/[^\s"'<>]+/gi, (value) => {
+      try {
+        const url = new URL(value);
+        if (!url.username && !url.password && !url.search && !url.hash) return value;
+        return `${url.protocol}//${url.host}${url.pathname}${url.search ? "?[redacted]" : ""}${url.hash ? "#[redacted]" : ""}`;
+      } catch {
+        return value;
+      }
+    });
     return message.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500)
-      || "Provider compatibility test failed";
+      || fallback;
   }
 
   private async requireSummary(campaignId: string): Promise<CampaignCatalogSummary> {
@@ -355,7 +387,7 @@ export class DungeonWebController {
       busy: this.operations.isBusy(summary.campaignId),
       pending: pendingStatus(await store.getPending()),
       campaignCost: await this.campaignCost(summary, store),
-      config: providerConfig ?? null,
+      config: providerConfig === undefined ? null : this.presentedSelection(providerConfig),
     };
   }
 
@@ -369,7 +401,7 @@ export class DungeonWebController {
     state: GameState;
     playerName: string;
     openingNarration: string;
-    config: ProviderConfig | null;
+    config: BrowserModelSelection | null;
   } | undefined> {
     const catalog = await this.catalog();
     const created = await catalog.findCampaignByCreationRequest(requestId);
@@ -380,7 +412,9 @@ export class DungeonWebController {
       state: created.state,
       playerName: snapshot.playerName,
       openingNarration: opening?.narration ?? "",
-      config: await catalog.providerConfig(created.campaignId) ?? null,
+      config: await catalog.providerConfig(created.campaignId).then((config) => (
+        config === undefined ? null : this.presentedSelection(config)
+      )),
     };
   }
 
@@ -411,6 +445,7 @@ export class DungeonWebController {
   private async handleStatusApi(method: string, response: ServerResponse, url: URL): Promise<boolean> {
     if (method !== "GET" || url.pathname !== "/api/status") return false;
     const config = await this.defaultConfig().catch(() => null);
+    const presentedConfig = config === null ? null : this.presentedSelection(config);
     const language = (await loadAppConfig(this.root)).language;
     const summaries = await (await this.catalog()).listCampaigns();
     const llm = await this.llmPresentation();
@@ -421,8 +456,8 @@ export class DungeonWebController {
         name: value.nativeName,
         setupDefaults: value.setupDefaults,
       })),
-      config,
-      defaults: { language, config },
+      config: presentedConfig,
+      defaults: { language, config: presentedConfig },
       keyStatus: this.keyStatus(),
       llm,
       campaigns: await Promise.all(summaries.map((summary) => this.campaignPresentation(summary))),
@@ -467,7 +502,7 @@ export class DungeonWebController {
         result = await this.operations.run(operationId, () =>
           probeProviderConnection(this.providerFactory(config, this.effectiveEnvironment())));
       } catch (error) {
-        const summary = this.safeProviderFailure(error);
+        const summary = this.safeError(error, "Provider compatibility test failed");
         await this.modelCatalog.recordTestFailure(selection, { failureSummary: summary });
         sendJson(response, 200, { ok: false, provider: selection.provider, model: selection.model, error: summary });
         return true;
@@ -559,7 +594,12 @@ export class DungeonWebController {
       const draftId = randomUUID();
       this.drafts.set(draftId, draft);
       while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value!);
-      sendJson(response, 200, { draftId, setup: setupPreview(draft.setup), config, language });
+      sendJson(response, 200, {
+        draftId,
+        setup: setupPreview(draft.setup),
+        config: this.presentedSelection(config),
+        language,
+      });
       return true;
     }
 
@@ -587,7 +627,7 @@ export class DungeonWebController {
         state: created.state,
         playerName: draft.setup.player.name,
         openingNarration: draft.setup.openingNarration,
-        config: draft.config,
+        config: this.presentedSelection(draft.config),
       });
       return true;
     }
@@ -650,7 +690,7 @@ export class DungeonWebController {
     }
 
     if (action === "delete" && method === "DELETE") {
-      const body = z.object({ title: z.string().min(1).max(10_000) }).strict().parse(await readJsonBody(request));
+      const body = z.object({ title: z.string().min(1) }).strict().parse(await readJsonBody(request));
       if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
       const summary = await this.requireSummary(campaignId);
       if (!summary.archived) throw new WebApiError(409, "Archive the campaign before permanently deleting it");
@@ -675,7 +715,7 @@ export class DungeonWebController {
         const catalog = await this.catalog();
         return catalog.updateProviderConfig(campaignId, config);
       });
-      sendJson(response, 200, { config: saved });
+      sendJson(response, 200, { config: this.presentedSelection(saved) });
       return true;
     }
 
@@ -752,8 +792,10 @@ export class DungeonWebController {
 
 export function createDungeonWebServer(options: WebServerOptions): Server {
   const controller = new DungeonWebController(options.root, options);
+  const trustedHost = options.host ?? "127.0.0.1";
   return createServer(async (request, response) => {
     try {
+      if (rejectUntrustedHost(request, response, trustedHost)) return;
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname.startsWith("/api/")) {
         if (rejectUnsafeMutation(request, response)) return;
@@ -762,12 +804,12 @@ export function createDungeonWebServer(options: WebServerOptions): Server {
         await controller.static(response, url.pathname);
       }
     } catch (error) {
-      sendJson(response, statusFor(error), { error: asError(error) });
+      sendJson(response, statusFor(error), { error: controller.safeError(error) });
     }
   });
 }
 
-export async function startDungeonWebServer(options: WebServerOptions & { host?: string; port?: number }): Promise<Server> {
+export async function startDungeonWebServer(options: WebServerOptions & { port?: number }): Promise<Server> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4317;
   const server = createDungeonWebServer(options);

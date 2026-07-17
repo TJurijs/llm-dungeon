@@ -10,6 +10,10 @@ export function formatTemplate(copy, values = {}) {
   );
 }
 
+export function confirmationTitleValue(title) {
+  return String(title).replace(/\r\n?/g, "\n");
+}
+
 export function modelValue(provider, model) {
   return `${provider}\u0000${model}`;
 }

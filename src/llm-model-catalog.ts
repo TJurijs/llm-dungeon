@@ -100,13 +100,13 @@ export const LLM_PROVIDER_DEFINITIONS = [
     id: "anthropic",
     label: "Anthropic",
     envKey: "ANTHROPIC_API_KEY",
-    candidateModels: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-8"],
+    candidateModels: ["claude-sonnet-4-6", "claude-haiku-4-5"],
   },
   {
     id: "deepseek",
     label: "DeepSeek",
     envKey: "DEEPSEEK_API_KEY",
-    candidateModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    candidateModels: ["deepseek-v4-flash"],
   },
 ] as const satisfies readonly LlmProviderDefinition[];
 

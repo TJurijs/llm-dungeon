@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
@@ -7,6 +8,20 @@ interface LockOwner {
   token: string;
   createdAt: string;
 }
+
+interface LockSnapshot {
+  fingerprint: string;
+  modifiedAt: number;
+  owner: LockOwner | undefined;
+}
+
+type LockSnapshotResult =
+  | { kind: "missing" }
+  | { kind: "unstable" }
+  | { kind: "present"; snapshot: LockSnapshot };
+
+const INCOMPLETE_LOCK_GRACE_MS = 30_000;
+const MAX_RECLAIM_CLAIM_GENERATIONS = 1_000;
 
 function processIsRunning(pid: number): boolean {
   try {
@@ -17,18 +32,98 @@ function processIsRunning(pid: number): boolean {
   }
 }
 
-async function removeStaleLock(target: string): Promise<boolean> {
-  let owner: LockOwner | undefined;
+function parseLockOwner(contents: Buffer): LockOwner | undefined {
   try {
-    owner = JSON.parse(await readFile(target, "utf8")) as LockOwner;
+    const value = JSON.parse(contents.toString("utf8")) as Partial<LockOwner>;
+    if (!Number.isSafeInteger(value.pid) || value.pid! <= 0) return undefined;
+    if (typeof value.token !== "string" || !value.token) return undefined;
+    if (typeof value.createdAt !== "string" || !value.createdAt) return undefined;
+    return value as LockOwner;
   } catch {
-    // A creator can briefly own an empty lock file before its metadata lands.
+    return undefined;
   }
-  if (owner && Number.isInteger(owner.pid) && processIsRunning(owner.pid)) return false;
-  if (!owner) {
-    const ageMs = Date.now() - (await stat(target)).mtimeMs;
-    if (ageMs < 30_000) return false;
+}
+
+function sameFileVersion(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+async function readLockSnapshot(target: string): Promise<LockSnapshotResult> {
+  let before: Stats;
+  let contents: Buffer;
+  let after: Stats;
+  try {
+    before = await stat(target);
+    contents = await readFile(target);
+    after = await stat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+    throw error;
   }
+  if (!sameFileVersion(before, after)) return { kind: "unstable" };
+  const fileIdentity = JSON.stringify({
+    dev: after.dev,
+    ino: after.ino,
+    size: after.size,
+    mtimeMs: after.mtimeMs,
+    ctimeMs: after.ctimeMs,
+  });
+  return {
+    kind: "present",
+    snapshot: {
+      fingerprint: createHash("sha256").update(fileIdentity).update("\0").update(contents).digest("hex"),
+      modifiedAt: after.mtimeMs,
+      owner: parseLockOwner(contents),
+    },
+  };
+}
+
+function snapshotIsStale(snapshot: LockSnapshot): boolean {
+  if (snapshot.owner) return !processIsRunning(snapshot.owner.pid);
+  return Date.now() - snapshot.modifiedAt >= INCOMPLETE_LOCK_GRACE_MS;
+}
+
+async function claimStaleSnapshot(target: string, fingerprint: string): Promise<boolean> {
+  // Generations are intentionally append-only. Reusing or deleting one while
+  // its target snapshot can still exist would reintroduce an ABA cleanup race.
+  for (let generation = 0; generation < MAX_RECLAIM_CLAIM_GENERATIONS; generation += 1) {
+    const claimPath = `${target}.reclaim-${fingerprint}.${generation}`;
+    try {
+      const handle = await open(claimPath, "wx", 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify({
+          pid: process.pid,
+          token: randomUUID(),
+          createdAt: new Date().toISOString(),
+        })}\n`, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = await readLockSnapshot(claimPath);
+      if (existing.kind === "unstable") return false;
+      if (existing.kind === "missing") return false;
+      if (!snapshotIsStale(existing.snapshot)) return false;
+    }
+  }
+  throw new Error("Lock reclamation has too many abandoned claims");
+}
+
+async function removeStaleLock(target: string): Promise<boolean> {
+  const observed = await readLockSnapshot(target);
+  if (observed.kind === "missing") return true;
+  if (observed.kind === "unstable" || !snapshotIsStale(observed.snapshot)) return false;
+  if (!await claimStaleSnapshot(target, observed.snapshot.fingerprint)) return false;
+
+  const current = await readLockSnapshot(target);
+  if (current.kind === "missing") return true;
+  if (current.kind === "unstable" || current.snapshot.fingerprint !== observed.snapshot.fingerprint) return false;
   try {
     await unlink(target);
     return true;

@@ -11,6 +11,7 @@ import { createSetupSettingsController } from "./setup-settings.js";
 import { UI_COPY, localeCopy } from "./ui-copy.js";
 import {
   campaignCostText,
+  confirmationTitleValue,
   formatTemplate as fillTemplate,
   llmModelEntries,
   modelChoice,
@@ -989,13 +990,14 @@ function bindEvents() {
   $("#archive-campaign-dialog").addEventListener("close", () => { pendingArchiveCampaignId = null; });
   $("#delete-campaign-confirmation").addEventListener("input", (event) => {
     const campaign = campaignById(pendingDeleteCampaignId);
-    $("#confirm-delete-campaign").disabled = !campaign || event.target.value !== campaign.title;
+    $("#confirm-delete-campaign").disabled = !campaign
+      || event.target.value !== confirmationTitleValue(campaign.title);
   });
   $("#delete-campaign-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const campaignId = pendingDeleteCampaignId;
     const campaign = campaignById(campaignId);
-    if (!campaign || $("#delete-campaign-confirmation").value !== campaign.title) return;
+    if (!campaign || $("#delete-campaign-confirmation").value !== confirmationTitleValue(campaign.title)) return;
     closeDeleteCampaignDialog();
     deleteArchivedCampaign(campaignId);
   });
