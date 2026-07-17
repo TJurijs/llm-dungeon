@@ -76,6 +76,10 @@ ANTHROPIC_API_KEY=
 DEEPSEEK_API_KEY=
 ```
 
+For the simplest first run, configure `GEMINI_API_KEY`. Google Gemini is the
+recommended provider, and `gemini-3.5-flash` is the recommended, extensively
+playtested DM model.
+
 Shell environment variables take precedence over `.env`. The application reads
 `.env` at startup, so restart it after changing a key. Never commit, publish, or
 share this file.

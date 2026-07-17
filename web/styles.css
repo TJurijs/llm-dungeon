@@ -120,6 +120,9 @@ body.inspection-open #open-inspection { display: none; }
 .empty-state h2 { font-size: 1.55rem; }
 .empty-state p { max-width: 420px; color: var(--muted); }
 .empty-state button { min-width: 160px; min-height: 44px; margin-top: .8rem; }
+.provider-onboarding { max-width: 500px; }
+.provider-onboarding-guide { display: grid; gap: .55rem; margin: 1.1rem 0 .35rem; padding-left: 1.25rem; color: var(--muted); text-align: left; }
+.provider-onboarding-guide li::marker { color: var(--accent); }
 .chat-entry { position: relative; margin: 0 0 1.8rem; scroll-margin: 5rem; }
 .chat-entry-header { display: flex; align-items: center; gap: .55rem; margin-bottom: .45rem; color: var(--muted); font-size: .76rem; font-weight: 700; letter-spacing: .025em; }
 .chat-entry-icon { width: 25px; height: 25px; display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--accent); font-size: .68rem; }
@@ -206,7 +209,9 @@ body.inspection-open #open-inspection { display: none; }
 .llm-provider-card[open] > .llm-provider-header { border-bottom: 1px solid var(--line); }
 .llm-provider-card[open] > .llm-provider-header::before { transform: rotate(45deg); }
 .llm-provider-header > div { min-width: 0; flex: 1 1 auto; }
+.llm-provider-title { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
 .llm-provider-header h3 { margin: 0; color: var(--text); font-size: .92rem; letter-spacing: 0; text-transform: none; }
+.provider-recommended { color: var(--accent); font-size: .68rem; font-weight: 700; white-space: nowrap; }
 .llm-env-key { margin: .18rem 0 0; color: var(--faint); font: .7rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 .llm-key-status, .model-status, .model-quality { display: inline-flex; align-items: center; width: fit-content; padding: .14rem .42rem; border: 1px solid var(--line); border-radius: 999px; color: var(--faint); font-size: .66rem; white-space: nowrap; }
 .llm-key-status.success, .model-status.success { border-color: #49613a; color: var(--accent); }

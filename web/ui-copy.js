@@ -2,7 +2,10 @@ export const UI_COPY = {
   en: {
     newCampaign: "New campaign", campaigns: "Campaigns", archived: "Archived", settings: "Settings",
     noCampaigns: "No campaigns yet.", turn: "Turn", active: "active", dead: "dead", ended: "ended", archivedStatus: "archived", working: "Working",
-    welcomeTitle: "Your stories live here", welcomeBody: "Create a campaign to begin, or choose one from the sidebar.",
+    welcomeTitle: "Your stories live here", welcomeBody: "Create a campaign to begin, or choose one from the sidebar.", configureLlmProvider: "Configure LLM provider",
+    providerOnboardingTitle: "Connect an LLM provider", providerOnboardingBody: "llm-dungeon needs one provider key before it can create a campaign.",
+    providerOnboardingRecommendation: "Recommended: Google Gemini with gemini-3.5-flash.", providerOnboardingSupported: "Supported providers: Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek.",
+    providerOnboardingEnv: "Save a key in ./.env at the repository root, then restart the app.", providerOnboardingSession: "Or use the provider's ••• menu in Settings to enter a temporary session key. It stays only in server memory until restart.",
     model: "Model", provider: "Provider", campaign: "Campaign", campaignState: "Campaign state", campaignSetup: "Campaign setup", startedWith: "Started with", exportCampaign: "Export campaign log", archiveCampaign: "Archive campaign",
     ask: "Ask", appeal: "Appeal", send: "Send", actionPlaceholder: "What do you do?", submitHint: "{shortcut} to send",
     askGenericLabel: "Ask the DM without advancing the turn", askGenericTitle: "Prefill an out-of-character question; nothing is sent yet",
@@ -40,7 +43,10 @@ export const UI_COPY = {
   ru: {
     newCampaign: "Новая кампания", campaigns: "Кампании", archived: "Архив", settings: "Настройки",
     noCampaigns: "Кампаний пока нет.", turn: "Ход", active: "активна", dead: "персонаж погиб", ended: "завершена", archivedStatus: "в архиве", working: "Работаю",
-    welcomeTitle: "Здесь живут ваши истории", welcomeBody: "Создайте кампанию или выберите существующую в боковой панели.",
+    welcomeTitle: "Здесь живут ваши истории", welcomeBody: "Создайте кампанию или выберите существующую в боковой панели.", configureLlmProvider: "Настроить LLM-провайдера",
+    providerOnboardingTitle: "Подключите LLM-провайдера", providerOnboardingBody: "Для создания кампании llm-dungeon нужен ключ хотя бы одного провайдера.",
+    providerOnboardingRecommendation: "Рекомендуем: Google Gemini с моделью gemini-3.5-flash.", providerOnboardingSupported: "Поддерживаемые провайдеры: Google Gemini, OpenRouter, OpenAI, Anthropic и DeepSeek.",
+    providerOnboardingEnv: "Сохраните ключ в ./.env в корне репозитория и перезапустите приложение.", providerOnboardingSession: "Или откройте в Настройках меню ••• нужного провайдера и введите временный ключ сессии. Он хранится только в памяти сервера до перезапуска.",
     model: "Модель", provider: "Провайдер", campaign: "Кампания", campaignState: "Состояние кампании", campaignSetup: "Настройки кампании", startedWith: "Начальные настройки", exportCampaign: "Экспорт журнала", archiveCampaign: "Архивировать кампанию",
     ask: "Спросить", appeal: "Апелляция", send: "Отправить", actionPlaceholder: "Что вы делаете?", submitHint: "{shortcut} — отправить",
     askGenericLabel: "Задать мастеру вопрос без нового хода", askGenericTitle: "Вставить внеигровой вопрос; ничего не отправляется",

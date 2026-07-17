@@ -317,7 +317,9 @@ describe("multi-campaign Web server", () => {
       outputTokens: 110_000,
     });
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini"))
-      .toMatchObject({ envKey: "GEMINI_API_KEY", keyPresent: true, keySource: "environment" });
+      .toMatchObject({ envKey: "GEMINI_API_KEY", recommended: true, keyPresent: true, keySource: "environment" });
+    expect(status.llm.providers.filter((provider: any) => provider.recommended).map((provider: any) => provider.id))
+      .toEqual(["gemini"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
       .find((model: any) => model.id === "gemini-3.5-flash").pricing).toMatchObject({
         sourceModel: "google/gemini-3.5-flash",
@@ -333,10 +335,31 @@ describe("multi-campaign Web server", () => {
         "qwen/qwen3.7-plus",
         "x-ai/grok-4.5",
       ]);
+    expect(status.llm.providers.find((provider: any) => provider.id === "anthropic").models
+      .map((model: any) => model.id)).toContain("claude-opus-4-8");
+    expect(status.llm.providers.find((provider: any) => provider.id === "deepseek").models
+      .map((model: any) => model.id)).toContain("deepseek-v4-pro");
     expect(status.languages).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "en", name: "English", setupDefaults: expect.any(Object) }),
       expect.objectContaining({ code: "ru", name: "Русский", setupDefaults: expect.any(Object) }),
     ]));
+  });
+
+  it("pre-enables the recommended Gemini model without a key but keeps it unavailable until tested", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, { environment: {} });
+    const status = await json(base, "/api/status");
+    const gemini = status.llm.providers.find((provider: any) => provider.id === "gemini");
+    const recommended = gemini.models.find((model: any) => model.id === "gemini-3.5-flash");
+
+    expect(gemini).toMatchObject({ recommended: true, keyPresent: false, keySource: "missing" });
+    expect(recommended).toMatchObject({
+      recommended: true,
+      status: "untested",
+      enabled: true,
+      available: false,
+    });
+    expect(status.llm.defaultModel).toBeNull();
   });
 
   it("keeps multiple accepted drafts and snapshots each language, world, and model", async () => {

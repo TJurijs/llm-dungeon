@@ -6,6 +6,7 @@ import { UI_COPY, localeCopy } from "../web/ui-copy.js";
 import {
   campaignCostText,
   confirmationTitleValue,
+  hasConfiguredProviderKey,
   llmModelEntries,
   modelChoice,
   modelValue,
@@ -26,6 +27,9 @@ describe("web UI copy", () => {
     expect(UI_COPY.ru.submitHint).not.toContain("Ctrl/⌘");
     expect(localeCopy("ru", "exportCampaign")).toBe("Экспорт журнала");
     expect(localeCopy("unsupported", "newCampaign")).toBe("New campaign");
+    expect(hasConfiguredProviderKey({ providers: [] }, {})).toBe(false);
+    expect(hasConfiguredProviderKey({ providers: [{ keyPresent: true }] }, {})).toBe(true);
+    expect(hasConfiguredProviderKey({ providers: [] }, { gemini: true })).toBe(true);
     expect(app).toContain('campaignApiPath(campaignId, "export")');
   });
 
@@ -33,6 +37,9 @@ describe("web UI copy", () => {
     const html = await readFile(path.join(process.cwd(), "web", "index.html"), "utf8");
     expect(html).toContain('id="campaign-sidebar" class="sidebar"');
     expect(html).toContain('id="new-campaign"');
+    expect(html).toContain('id="provider-onboarding" class="provider-onboarding" hidden');
+    expect(html).toContain('data-i18n="providerOnboardingSupported"');
+    expect(html).toContain("./.env");
     expect(html).toContain('id="campaign-list"');
     expect(html).toContain('id="chat-log" class="chat-log" role="log"');
     expect(html).toContain('id="campaign-setup-form"');
@@ -225,6 +232,7 @@ describe("web UI copy", () => {
     expect(setup).toContain("dataset.providerKeyForm");
     expect(setup).toContain("modelQualityCopy");
     expect(setup).toContain('`model-recommended ${model.recommended ? "" : "is-empty"}`');
+    expect(setup).toContain('if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")))');
     expect(setup).toContain('createElement("details", "llm-provider-tools")');
     expect(setup).toContain("createOverflowIcon");
     expect(setup).toContain('row.classList.add("is-default")');
@@ -240,6 +248,9 @@ describe("web UI copy", () => {
     expect(setup).toContain("if (requestId !== setupGenerationSequence) return;");
     expect(setup).toContain('$("#campaign-setup-form").addEventListener("input", invalidateDraft)');
     expect(app).toContain("const currentConfig = campaign?.config ?? status.llm?.defaultModel ?? status.config;");
+    expect(app).toContain("hasConfiguredProviderKey(status.llm, status.keyStatus)");
+    expect(app).toContain('setupSettings.selectSettingsSection("providers")');
+    expect(app).toContain("recommendedCard.open = true");
     expect(app).toContain('body: JSON.stringify(choice)');
     expect(app).not.toContain("campaignModelConfig");
   });

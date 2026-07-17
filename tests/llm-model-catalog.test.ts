@@ -63,6 +63,8 @@ describe("LLM provider definitions", () => {
       "ANTHROPIC_API_KEY",
       "DEEPSEEK_API_KEY",
     ]);
+    expect(LLM_PROVIDER_DEFINITIONS.filter((provider) => provider.recommended).map((provider) => provider.id))
+      .toEqual(["gemini"]);
     for (const provider of LLM_PROVIDER_DEFINITIONS) {
       expect(provider.label).not.toBe("");
       expect(provider.candidateModels.length).toBeGreaterThan(0);
@@ -78,9 +80,11 @@ describe("LLM provider definitions", () => {
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels).toEqual([
       "claude-sonnet-4-6",
       "claude-haiku-4-5",
+      "claude-opus-4-8",
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels).toEqual([
       "deepseek-v4-flash",
+      "deepseek-v4-pro",
     ]);
     expect(RECOMMENDED_MODEL_SELECTION).toEqual({ provider: "gemini", model: "gemini-3.5-flash" });
   });
@@ -105,8 +109,10 @@ describe("LLM model catalog persistence", () => {
     expect(model(snapshot, { provider: "gemini", model: "gemini-3.5-flash" })).toMatchObject({
       candidate: true,
       state: "untested",
-      enabled: false,
+      enabled: true,
     });
+    await expect(registry.assertAvailable({ provider: "gemini", model: "gemini-3.5-flash" }, "en"))
+      .rejects.toMatchObject({ reason: "untested" });
 
     const persistedPath = path.join(root, "config", "llm-models.json");
     const firstWrite = await readFile(persistedPath, "utf8");
@@ -136,7 +142,7 @@ describe("LLM model catalog persistence", () => {
 
   it("preserves removed curated models only as non-candidate legacy selections", async () => {
     const root = await temporaryProject();
-    const removed = { provider: "deepseek", model: "deepseek-v4-pro" } as const;
+    const removed = { provider: "deepseek", model: "deepseek-v3-pro" } as const;
 
     const snapshot = await catalog(root, { legacySelection: removed }).snapshot();
 

@@ -13,6 +13,7 @@ import {
   campaignCostText,
   confirmationTitleValue,
   formatTemplate as fillTemplate,
+  hasConfiguredProviderKey,
   llmModelEntries,
   modelChoice,
   modelValue,
@@ -118,10 +119,21 @@ function applyLocale(language) {
   $("#cancel-delete-campaign-x").setAttribute("aria-label", t("cancelDeletion"));
   setPrefillButtonCopy($("#ask-generic"), "ask");
   setPrefillButtonCopy($("#appeal-generic"), "appeal");
+  syncProviderOnboarding();
   setupSettings?.refreshSetupPlaceholders();
   setupSettings?.syncLlm(true);
   renderSidebar();
   return true;
+}
+
+function syncProviderOnboarding() {
+  const configured = hasConfiguredProviderKey(status.llm, status.keyStatus);
+  $("#campaign-welcome").hidden = !configured;
+  $("#provider-onboarding").hidden = configured;
+  $("#new-campaign-icon").textContent = configured ? "＋" : "⚙";
+  const label = t(configured ? "newCampaign" : "configureLlmProvider");
+  $("#new-campaign-label").textContent = label;
+  $("#empty-new-campaign").textContent = label;
 }
 
 function setPrefillButtonCopy(button, kind) {
@@ -547,6 +559,24 @@ function beginNewCampaign() {
   showView("setup");
 }
 
+function openProviderSettings() {
+  showView("settings", { focus: false });
+  setupSettings.selectSettingsSection("providers");
+  const recommendedProvider = status.llm?.providers?.find((provider) => provider.recommended);
+  const recommendedCard = [...document.querySelectorAll("[data-provider-details]")]
+    .find((card) => card.dataset.providerDetails === recommendedProvider?.id);
+  if (recommendedCard) recommendedCard.open = true;
+  $("#llm-settings-title").focus({ preventScroll: true });
+}
+
+function handleCampaignCta() {
+  if (!hasConfiguredProviderKey(status.llm, status.keyStatus)) {
+    openProviderSettings();
+    return;
+  }
+  beginNewCampaign();
+}
+
 async function reconcileTranscript(campaignId) {
   const campaign = campaignById(campaignId);
   if (!campaign) return;
@@ -588,6 +618,7 @@ async function performStatusRefresh() {
   const previousCampaigns = JSON.stringify(campaigns);
   const next = await api("/api/status");
   status = { ...status, ...next };
+  syncProviderOnboarding();
   const nextCampaigns = sortCampaigns(next.campaigns);
   const campaignsChanged = previousCampaigns !== JSON.stringify(nextCampaigns);
   setupSettings.syncLanguages();
@@ -946,8 +977,8 @@ const setupSettings = createSetupSettingsController({
 });
 
 function bindEvents() {
-  $("#new-campaign").addEventListener("click", beginNewCampaign);
-  $("#empty-new-campaign").addEventListener("click", beginNewCampaign);
+  $("#new-campaign").addEventListener("click", handleCampaignCta);
+  $("#empty-new-campaign").addEventListener("click", handleCampaignCta);
   $("#open-settings").addEventListener("click", () => showView("settings"));
   $("#campaign-list").addEventListener("click", handleCampaignListClick);
   $("#archived-campaign-list").addEventListener("click", handleCampaignListClick);

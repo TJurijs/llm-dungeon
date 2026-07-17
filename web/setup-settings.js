@@ -388,7 +388,10 @@ export function createSetupSettingsController(dependencies) {
       card.open = openProviders.has(provider.id);
       const header = createElement("summary", "llm-provider-header");
       const heading = createElement("div", "");
-      heading.append(createElement("h3", "", provider.label || provider.id));
+      const title = createElement("div", "llm-provider-title");
+      title.append(createElement("h3", "", provider.label || provider.id));
+      if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")));
+      heading.append(title);
       heading.append(createElement("p", "llm-env-key", `${t("environmentVariable")}: ${provider.envKey}`));
       const keyCopy = provider.keySource === "session"
         ? t("sessionKeyDetected")
@@ -636,5 +639,5 @@ export function createSetupSettingsController(dependencies) {
     syncSetupModelControls();
   }
 
-  return { begin, bind, loadSettings, refreshSetupPlaceholders, syncLanguages, syncLlm };
+  return { begin, bind, loadSettings, refreshSetupPlaceholders, selectSettingsSection, syncLanguages, syncLlm };
 }

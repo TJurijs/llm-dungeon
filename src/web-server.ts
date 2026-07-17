@@ -225,6 +225,7 @@ export class DungeonWebController {
       id: string;
       label: string;
       envKey: string;
+      recommended: boolean;
       keyPresent: boolean;
       keySource: "session" | "environment" | "missing";
       models: Array<{
@@ -252,6 +253,7 @@ export class DungeonWebController {
         id: provider.id,
         label: provider.label,
         envKey: provider.envKey,
+        recommended: provider.recommended,
         keyPresent: Boolean(keys[provider.id]),
         keySource: this.sessionKeys.has(provider.id)
           ? "session"

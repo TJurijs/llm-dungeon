@@ -23,6 +23,12 @@ export function modelChoice(value) {
   return provider && model ? { provider, model } : null;
 }
 
+export function hasConfiguredProviderKey(llm, keyStatus) {
+  if (keyStatus && Object.values(keyStatus).some(Boolean)) return true;
+  return (Array.isArray(llm?.providers) ? llm.providers : [])
+    .some((provider) => Boolean(provider.keyPresent));
+}
+
 export function llmModelEntries(llm, { availableOnly = false, requireKey = false, language, includeHidden = false } = {}) {
   const providers = Array.isArray(llm?.providers) ? llm.providers : [];
   return providers.flatMap((provider) => {

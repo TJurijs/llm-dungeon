@@ -22,8 +22,8 @@
       </div>
 
       <button id="new-campaign" class="new-campaign-button" type="button">
-        <span aria-hidden="true">＋</span>
-        <span data-i18n="newCampaign">New campaign</span>
+        <span id="new-campaign-icon" aria-hidden="true">＋</span>
+        <span id="new-campaign-label">New campaign</span>
       </button>
 
       <nav class="campaign-navigation" aria-label="Campaign list">
@@ -87,9 +87,21 @@
         <div id="chat-scroll" class="chat-scroll">
           <div id="chat-empty" class="empty-state">
             <span class="empty-sigil" aria-hidden="true">◆</span>
-            <h2 data-i18n="welcomeTitle">Your stories live here</h2>
-            <p data-i18n="welcomeBody">Create a campaign to begin, or choose one from the sidebar.</p>
-            <button id="empty-new-campaign" class="primary" type="button" data-i18n="newCampaign">New campaign</button>
+            <div id="campaign-welcome">
+              <h2 data-i18n="welcomeTitle">Your stories live here</h2>
+              <p data-i18n="welcomeBody">Create a campaign to begin, or choose one from the sidebar.</p>
+            </div>
+            <div id="provider-onboarding" class="provider-onboarding" hidden>
+              <h2 data-i18n="providerOnboardingTitle">Connect an LLM provider</h2>
+              <p data-i18n="providerOnboardingBody">llm-dungeon needs one provider key before it can create a campaign.</p>
+              <ul class="provider-onboarding-guide">
+                <li data-i18n="providerOnboardingRecommendation">Recommended: Google Gemini with gemini-3.5-flash.</li>
+                <li data-i18n="providerOnboardingSupported">Supported providers: Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek.</li>
+                <li data-i18n="providerOnboardingEnv">Save a key in ./.env at the repository root, then restart the app.</li>
+                <li data-i18n="providerOnboardingSession">Or use the provider's ••• menu in Settings to enter a temporary session key. It stays only in server memory until restart.</li>
+              </ul>
+            </div>
+            <button id="empty-new-campaign" class="primary" type="button">New campaign</button>
           </div>
           <div id="chat-log" class="chat-log" role="log" aria-label="Campaign transcript" aria-relevant="additions" aria-busy="false" hidden></div>
         </div>
@@ -252,7 +264,7 @@
             </section>
 
             <section id="settings-providers-panel" class="settings-card settings-panel llm-settings-card" data-settings-panel="providers" aria-labelledby="llm-settings-title" hidden>
-              <h2 id="llm-settings-title" data-i18n="llmProviders">LLM providers</h2>
+              <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
               <p class="field-hint" data-i18n="llmConfigurationHint">Use a temporary session key here or configure .env. Test a model before using it in a campaign.</p>
               <p id="llm-pricing-hint" class="field-hint llm-pricing-hint"></p>
               <p class="field-hint llm-quality-legend" data-i18n="qualityLegend">Quality: High — strongest; Medium — balanced; Low — budget.</p>

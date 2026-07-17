@@ -54,6 +54,7 @@ export interface LlmProviderDefinition {
   id: LlmProviderId;
   label: string;
   envKey: string;
+  recommended: boolean;
   candidateModels: readonly string[];
 }
 
@@ -78,12 +79,14 @@ export const LLM_PROVIDER_DEFINITIONS = [
     id: "gemini",
     label: "Google Gemini",
     envKey: "GEMINI_API_KEY",
+    recommended: true,
     candidateModels: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"],
   },
   {
     id: "openrouter",
     label: "OpenRouter",
     envKey: "OPENROUTER_API_KEY",
+    recommended: false,
     candidateModels: [
       "moonshotai/kimi-k2.6",
       "qwen/qwen3.7-plus",
@@ -94,19 +97,22 @@ export const LLM_PROVIDER_DEFINITIONS = [
     id: "openai",
     label: "OpenAI",
     envKey: "OPENAI_API_KEY",
+    recommended: false,
     candidateModels: ["gpt-5.6-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5-mini", "gpt-4.1"],
   },
   {
     id: "anthropic",
     label: "Anthropic",
     envKey: "ANTHROPIC_API_KEY",
-    candidateModels: ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    recommended: false,
+    candidateModels: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-8"],
   },
   {
     id: "deepseek",
     label: "DeepSeek",
     envKey: "DEEPSEEK_API_KEY",
-    candidateModels: ["deepseek-v4-flash"],
+    recommended: false,
+    candidateModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
   },
 ] as const satisfies readonly LlmProviderDefinition[];
 
@@ -139,11 +145,14 @@ const PersistedModelSchema = ModelSelectionSchema.extend({
   enabled: z.boolean(),
   test: ModelTestMetadataSchema.optional(),
 }).strict().superRefine((entry, context) => {
-  if (entry.enabled && entry.state !== "compatible") {
+  const preEnabledRecommendation = entry.state === "untested"
+    && entry.provider === RECOMMENDED_MODEL_SELECTION.provider
+    && entry.model === RECOMMENDED_MODEL_SELECTION.model;
+  if (entry.enabled && entry.state !== "compatible" && !preEnabledRecommendation) {
     context.addIssue({
       code: "custom",
       path: ["enabled"],
-      message: "only compatible models may be enabled",
+      message: "only compatible models or the untested recommended model may be enabled",
     });
   }
   if (entry.state !== "untested" && entry.test === undefined) {
@@ -208,6 +217,7 @@ export interface CatalogProvider {
   id: LlmProviderId;
   label: string;
   envKey: string;
+  recommended: boolean;
   models: CatalogModel[];
 }
 
@@ -264,8 +274,13 @@ function safeFailureSummary(value: string): string {
   return summary;
 }
 
+function isRecommended(selection: ModelSelection): boolean {
+  return selection.provider === RECOMMENDED_MODEL_SELECTION.provider
+    && selection.model === RECOMMENDED_MODEL_SELECTION.model;
+}
+
 function untestedModel(selection: ModelSelection): PersistedModel {
-  return { ...selection, state: "untested", enabled: false };
+  return { ...selection, state: "untested", enabled: isRecommended(selection) };
 }
 
 function isCurrentTest(
@@ -536,6 +551,7 @@ export class LlmModelCatalog {
         id: definition.id,
         label: definition.label,
         envKey: definition.envKey,
+        recommended: definition.recommended,
         models: catalog.models
           .filter((model) => model.provider === definition.id)
           .map((model) => ({
