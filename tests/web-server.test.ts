@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CampaignCatalog } from "../src/campaign-catalog.js";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
 import { LlmModelCatalog } from "../src/llm-model-catalog.js";
+import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
+import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
 import { campaignScopePath } from "../src/persistence/campaign-catalog.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "../src/playtest/packages.js";
 import { createDungeonWebServer } from "../src/web-server.js";
 import { StateStore } from "../src/store.js";
 import type { ProviderConfig } from "../src/schemas.js";
@@ -149,6 +152,7 @@ interface StartOptions {
   environment?: NodeJS.ProcessEnv;
   providerFactory?: (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
   maxConcurrentCampaignOperations?: number;
+  openAiModelsFetcher?: ((apiKey: string) => Promise<ReadonlySet<string>>) | false;
 }
 
 async function start(root: string, options: StartOptions = {}) {
@@ -157,6 +161,7 @@ async function start(root: string, options: StartOptions = {}) {
     root,
     environment: options.environment ?? DEFAULT_TEST_ENVIRONMENT,
     maxConcurrentCampaignOperations: options.maxConcurrentCampaignOperations,
+    openAiModelsFetcher: options.openAiModelsFetcher ?? false,
     providerFactory: options.providerFactory ?? ((config, environment) => {
       environments.push(environment);
       return new WebFakeProvider(config.model);
@@ -216,12 +221,14 @@ const testedModels = new Set<string>();
 async function ensureModelAvailable(
   base: string,
   config: Pick<ProviderConfig, "provider" | "model">,
+  language: "en" | "ru" = "en",
 ): Promise<void> {
-  const key = `${base}\u0000${config.provider}\u0000${config.model}`;
+  const key = `${base}\u0000${config.provider}\u0000${config.model}\u0000${language}`;
   if (testedModels.has(key)) return;
   const result = await json(base, "/api/llm/models/test", "POST", {
     provider: config.provider,
     model: config.model,
+    language,
   });
   if (!result.ok) throw new Error(result.error);
   testedModels.add(key);
@@ -305,11 +312,18 @@ describe("multi-campaign Web server", () => {
     expect(status.keyStatus).toEqual({
       gemini: true,
       openrouter: false,
+      xai: false,
       openai: false,
       anthropic: false,
       deepseek: false,
     });
-    expect(status.llm.providers).toHaveLength(5);
+    expect(status.llm.providers.map((provider: any) => provider.id)).toEqual([
+      "gemini",
+      "openrouter",
+      "xai",
+      "openai",
+      "deepseek",
+    ]);
     expect(status.llm.pricingBasis).toMatchObject({
       source: "OpenRouter",
       turns: 50,
@@ -320,34 +334,26 @@ describe("multi-campaign Web server", () => {
       .toMatchObject({ envKey: "GEMINI_API_KEY", recommended: true, keyPresent: true, keySource: "environment" });
     expect(status.llm.providers.filter((provider: any) => provider.recommended).map((provider: any) => provider.id))
       .toEqual(["gemini"]);
+    expect(status.llm.providers.find((provider: any) => provider.id === "anthropic")).toBeUndefined();
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .find((model: any) => model.id === "gemini-3.5-flash").pricing).toMatchObject({
-        sourceModel: "google/gemini-3.5-flash",
-        estimated50TurnsUsd: 1.71,
-      });
-    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .find((model: any) => model.id === "gemini-3.5-flash").quality).toBe("high");
-    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .find((model: any) => model.id === "gemini-3.5-flash").speed).toBe("fast");
-    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .find((model: any) => model.id === "gemini-3.5-flash").recommended).toBe(true);
+      .map((model: any) => model.id)).toEqual(["gemini-3.5-flash", "gemini-3.1-flash-lite"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "openrouter").models
       .map((model: any) => model.id)).toEqual([
-        "moonshotai/kimi-k2.6",
         "qwen/qwen3.7-plus",
-        "x-ai/grok-4.5",
       ]);
-    expect(status.llm.providers.find((provider: any) => provider.id === "anthropic").models
-      .map((model: any) => model.id)).toContain("claude-opus-4-8");
+    expect(status.llm.providers.find((provider: any) => provider.id === "xai").models
+      .map((model: any) => model.id)).toEqual(["grok-4.5"]);
+    expect(status.llm.providers.find((provider: any) => provider.id === "openai").models
+      .map((model: any) => model.id)).toEqual(["gpt-5.4"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "deepseek").models
-      .map((model: any) => model.id)).toContain("deepseek-v4-pro");
+      .map((model: any) => model.id)).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
     expect(status.languages).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "en", name: "English", setupDefaults: expect.any(Object) }),
       expect.objectContaining({ code: "ru", name: "Русский", setupDefaults: expect.any(Object) }),
     ]));
   });
 
-  it("pre-enables the recommended Gemini model without a key but keeps it unavailable until tested", async () => {
+  it("ships the recommended Gemini model as the default independently of key presence", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root, { environment: {} });
     const status = await json(base, "/api/status");
@@ -357,11 +363,135 @@ describe("multi-campaign Web server", () => {
     expect(gemini).toMatchObject({ recommended: true, keyPresent: false, keySource: "missing" });
     expect(recommended).toMatchObject({
       recommended: true,
-      status: "untested",
+      known: true,
+      compatibilityStatus: "compatible",
+      status: "compatible",
       enabled: true,
       available: false,
+      testedLanguages: ["en", "ru"],
+      adapterStatus: "calibrated",
+      technicalStatus: { en: "clean", ru: "playable_with_recovery" },
+      quality: { en: "high", ru: "high" },
+      recommendationEligibility: {
+        eligible: true,
+        reasons: ["product_recommended_default"],
+      },
+      evidence: {
+        compatibility: expect.objectContaining({ protocolVersion: 1 }),
+        assessment: expect.arrayContaining([expect.objectContaining({ source: "calibration" })]),
+        certificationCurrent: { en: true, ru: true },
+      },
     });
-    expect(status.llm.defaultModel).toBeNull();
+    expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.5-flash" });
+  });
+
+  it("projects calibrated certification evidence without letting the browser rewrite it", async () => {
+    const root = await fixtureRoot();
+    const assessments = new ModelAssessmentCatalog(root);
+    const profileFingerprint = "a".repeat(64);
+    const calibrationEvidence = {
+      source: "calibration" as const,
+      reference: "calibration-run-qwen",
+      packageId: "calibration-v1",
+      packageVersion: "1",
+      executionProfileFingerprint: profileFingerprint,
+      recordedAt: "2026-07-19T08:00:00.000Z",
+    };
+    const certificationEvidence = {
+      source: "certification" as const,
+      reference: "certification-run-qwen-en",
+      packageId: "certification-v1",
+      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
+      executionProfileFingerprint: profileFingerprint,
+      recordedAt: "2026-07-19T09:00:00.000Z",
+    };
+    await assessments.recordCalibration({
+      provider: "openrouter",
+      model: "qwen/qwen3.7-plus",
+      route: "openrouter",
+      status: "calibrated",
+      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
+      profileFingerprint,
+      evidence: calibrationEvidence,
+    });
+    await assessments.recordCertification({
+      provider: "openrouter",
+      model: "qwen/qwen3.7-plus",
+      route: "openrouter",
+      language: "en",
+      packageId: "certification-v1",
+      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
+      profileFingerprint,
+      technicalStatus: "clean",
+      qualityStatus: "high",
+      candidateMetricsHash: "b".repeat(64),
+      evidence: certificationEvidence,
+    });
+    const assessmentPath = path.join(root, "config", "model-assessments.json");
+    const before = await readFile(assessmentPath, "utf8");
+    const { base } = await start(root);
+
+    const status = await json(base, "/api/status");
+    const qwen = status.llm.providers
+      .find((provider: any) => provider.id === "openrouter")
+      .models.find((candidate: any) => candidate.id === "qwen/qwen3.7-plus");
+    expect(qwen).toMatchObject({
+      adapterStatus: "calibrated",
+      technicalStatus: { en: "clean", ru: "inconclusive" },
+      technicalRecoveries: { en: 0, ru: 0 },
+      quality: { en: "high", ru: "unrated" },
+      recommendationEligibility: { eligible: false, reasons: ["certification_profile_stale"] },
+      evidence: {
+        assessment: expect.arrayContaining([calibrationEvidence, certificationEvidence]),
+        certificationCurrent: { en: true, ru: false },
+        profileFingerprint,
+      },
+    });
+    expect(await readFile(assessmentPath, "utf8")).toBe(before);
+  });
+
+  it("keeps an existing Anthropic campaign playable while hiding Anthropic from new selection", async () => {
+    const root = await fixtureRoot();
+    const legacyConfig: ProviderConfig = {
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      temperature: 0.8,
+      maxOutputTokens: 4_000,
+    };
+    const catalog = new CampaignCatalog(path.join(root, "data"));
+    const created = await catalog.createCampaign(
+      { setup: setupFixture, worldRules: "Legacy campaign rules." },
+      { providerConfig: legacyConfig },
+    );
+    const usedModels: string[] = [];
+    const { base } = await start(root, {
+      environment: { ANTHROPIC_API_KEY: "legacy-anthropic-key" },
+      providerFactory: (config) => {
+        usedModels.push(`${config.provider}/${config.model}`);
+        return new WebFakeProvider(config.model);
+      },
+    });
+
+    const status = await json(base, "/api/status");
+    expect(status.llm.providers.some((provider: any) => provider.id === "anthropic")).toBe(false);
+    expect(status.campaigns).toContainEqual(expect.objectContaining({
+      campaignId: created.campaignId,
+      config: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    }));
+    expect((await responseJson(
+      base,
+      campaignRoute(created.campaignId, "play"),
+      "POST",
+      { action: "Continue the legacy campaign." },
+    )).status).toBe(200);
+    expect(usedModels).toContain("anthropic/claude-sonnet-4-6");
+
+    const addLegacy = await responseJson(base, "/api/llm/models", "POST", {
+      provider: "anthropic",
+      model: "claude-new-model",
+    });
+    expect(addLegacy.status).toBe(400);
+    expect(await addLegacy.json()).toMatchObject({ error: expect.stringContaining("legacy use only") });
   });
 
   it("keeps multiple accepted drafts and snapshots each language, world, and model", async () => {
@@ -370,7 +500,7 @@ describe("multi-campaign Web server", () => {
     const firstConfig = { ...DEFAULT_CONFIG, model: "model-first" };
     const secondConfig = { ...DEFAULT_CONFIG, provider: "openrouter" as const, model: "model-second" };
     await ensureModelAvailable(base, firstConfig);
-    await ensureModelAvailable(base, secondConfig);
+    await ensureModelAvailable(base, secondConfig, "ru");
     const firstDraft = await json(base, "/api/campaigns/draft", "POST", {
       premise: "First premise",
       character: "First hero",
@@ -634,6 +764,23 @@ describe("multi-campaign Web server", () => {
     expect((await fetch(`${base}${campaignRoute(first.state.campaignId, "transcript")}`)).status).toBe(404);
   });
 
+  it("renames a started campaign and rejects invalid or archived renames", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root);
+    const created = await createCampaign(base);
+    const route = campaignRoute(created.state.campaignId, "title");
+
+    expect(await json(base, route, "PUT", { title: "  Renamed Adventure  " })).toMatchObject({
+      campaign: { campaignId: created.state.campaignId, title: "Renamed Adventure" },
+    });
+    expect((await json(base, "/api/status")).campaigns[0].title).toBe("Renamed Adventure");
+    expect((await responseJson(base, route, "PUT", { title: "   " })).status).toBe(400);
+
+    await json(base, campaignRoute(created.state.campaignId, "archive"), "POST", {});
+    expect((await responseJson(base, route, "PUT", { title: "Too late" })).status).toBe(409);
+    expect((await json(base, "/api/status")).campaigns[0].title).toBe("Renamed Adventure");
+  });
+
   it("can permanently delete an archived campaign with any valid persisted title", async () => {
     const root = await fixtureRoot();
     const title = `${"Long campaign title ".repeat(600)}\r\nFinal line`;
@@ -748,6 +895,129 @@ describe("multi-campaign Web server", () => {
     })).status).toBe(404);
   });
 
+  it("projects OpenAI key model access separately from compatibility without exposing the key", async () => {
+    const root = await fixtureRoot();
+    const secret = "openai-project-secret";
+    const discoveredKeys: string[] = [];
+    const { base } = await start(root, {
+      environment: { OPENAI_API_KEY: secret },
+      openAiModelsFetcher: async (apiKey) => {
+        discoveredKeys.push(apiKey);
+        return new Set(["gpt-5.4"]);
+      },
+    });
+
+    const status = await json(base, "/api/status");
+    const openai = status.llm.providers.find((provider: any) => provider.id === "openai");
+    expect(discoveredKeys).toEqual([secret]);
+    expect(openai.models.find((model: any) => model.id === "gpt-5.4"))
+      .toMatchObject({ keyAccess: "allowed", compatibilityStatus: "compatible" });
+    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models)
+      .toEqual(expect.not.arrayContaining([expect.objectContaining({ keyAccess: expect.anything() })]));
+    expect(JSON.stringify(status)).not.toContain(secret);
+  });
+
+  it("leaves OpenAI key model access unknown when discovery cannot produce a result", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, {
+      environment: { OPENAI_API_KEY: "failing-openai-key" },
+      openAiModelsFetcher: async () => { throw new Error("raw provider failure"); },
+    });
+
+    const status = await json(base, "/api/status");
+    const openai = status.llm.providers.find((provider: any) => provider.id === "openai");
+    expect(openai.models.every((model: any) => model.keyAccess === undefined)).toBe(true);
+    expect(JSON.stringify(status)).not.toContain("raw provider failure");
+  });
+
+  it("keeps an English-compatible model available when its Russian probe fails", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, {
+      providerFactory: (config) => new WebFakeProvider(config.model, (request) => {
+        if (request.schemaName.endsWith("_ru")) throw new Error("Russian compatibility failure");
+      }),
+    });
+    const selection = { provider: "gemini", model: "split-language-model" };
+
+    expect(await json(base, "/api/llm/models/test", "POST", { ...selection, language: "en" }))
+      .toMatchObject({ ok: true, language: "en", testedLanguages: ["en"] });
+    expect(await json(base, "/api/llm/models/test", "POST", { ...selection, language: "ru" }))
+      .toMatchObject({ ok: false, language: "ru", error: "Russian compatibility failure" });
+
+    const status = await json(base, "/api/status");
+    const model = status.llm.providers.find((provider: any) => provider.id === "gemini").models
+      .find((candidate: any) => candidate.id === selection.model);
+    expect(model).toMatchObject({
+      status: "compatible",
+      enabled: true,
+      available: true,
+      testedLanguages: ["en"],
+      failedLanguages: ["ru"],
+    });
+  });
+
+  it("tests every registered language for a custom model when no language is specified", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root, {
+      providerFactory: (config) => new WebFakeProvider(config.model, (request) => {
+        if (request.schemaName.endsWith("_ru")) throw new Error("Russian compatibility failure");
+      }),
+    });
+    const selection = { provider: "gemini", model: "custom-all-language-model" };
+
+    expect(await json(base, "/api/llm/models/test", "POST", selection)).toMatchObject({
+      ok: true,
+      testedLanguages: ["en"],
+      failedLanguages: ["ru"],
+      failures: [{ language: "ru", error: "Russian compatibility failure" }],
+    });
+
+    const status = await json(base, "/api/status");
+    const custom = status.llm.providers.find((provider: any) => provider.id === "gemini").models
+      .find((candidate: any) => candidate.id === selection.model);
+    expect(custom).toMatchObject({
+      known: false,
+      status: "compatible",
+      enabled: true,
+      testedLanguages: ["en"],
+      failedLanguages: ["ru"],
+    });
+  });
+
+  it("adds custom models without testing and removes only unused non-default custom models", async () => {
+    const root = await fixtureRoot();
+    let providerCalls = 0;
+    const { base } = await start(root, {
+      providerFactory: (config) => {
+        providerCalls += 1;
+        return new WebFakeProvider(config.model);
+      },
+    });
+    const removable = { provider: "gemini", model: "custom-removable-model" };
+
+    expect(await json(base, "/api/llm/models", "POST", removable)).toMatchObject({ saved: true });
+    expect(providerCalls).toBe(0);
+    let status = await json(base, "/api/status");
+    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
+      .find((model: any) => model.id === removable.model)).toMatchObject({
+        known: false,
+        status: "untested",
+        enabled: false,
+      });
+
+    expect(await json(base, "/api/llm/models", "DELETE", removable)).toMatchObject({ saved: true });
+    status = await json(base, "/api/status");
+    expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
+      .some((model: any) => model.id === removable.model)).toBe(false);
+
+    const knownRemoval = await responseJson(base, "/api/llm/models", "DELETE", {
+      provider: "gemini",
+      model: "gemini-3.5-flash",
+    });
+    expect(knownRemoval.status).toBe(400);
+    expect(await knownRemoval.json()).toEqual({ error: "Known models cannot be removed" });
+  });
+
   it("accepts an unpersisted browser session key and clears back to the environment fallback", async () => {
     const root = await fixtureRoot();
     const { base, environments } = await start(root, { environment: {} });
@@ -755,7 +1025,7 @@ describe("multi-campaign Web server", () => {
 
     const missing = await responseJson(base, "/api/llm/models/test", "POST", {
       provider: "openai",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.4",
     });
     expect(missing.status).toBe(409);
     expect(await missing.json()).toEqual({
@@ -769,7 +1039,7 @@ describe("multi-campaign Web server", () => {
 
     const tested = await json(base, "/api/llm/models/test", "POST", {
       provider: "openai",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.4",
     });
     expect(tested.ok).toBe(true);
     expect(environments.at(-1)?.OPENAI_API_KEY).toBe(secret);

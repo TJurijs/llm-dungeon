@@ -41,6 +41,14 @@ describe("turn engine", () => {
     expect(provider.requests[0]?.maxOutputTokens).toBe(8_000);
     expect(provider.requests[1]?.maxOutputTokens).toBe(8_000);
     expect(provider.requests[1]?.schemaName).toBe("repair_campaign_setup");
+    expect(provider.requests.map((request) => ({
+      phase: request.generationPhase,
+      repairOf: request.repairOfPhase,
+      kind: request.attemptKind,
+    }))).toEqual([
+      { phase: "setup", repairOf: undefined, kind: "initial" },
+      { phase: "repair", repairOf: "setup", kind: "schema_repair" },
+    ]);
   });
 
   it("instructs setup generation to produce Russian player-facing content", async () => {
@@ -102,6 +110,11 @@ describe("turn engine", () => {
 
     expect(provider.calls).toBe(2);
     expect(provider.requests[1]?.schemaName).toBe("domain_repair_campaign_setup");
+    expect(provider.requests[1]).toMatchObject({
+      generationPhase: "repair",
+      repairOfPhase: "setup",
+      attemptKind: "domain_repair",
+    });
     expect(provider.requests[1]?.prompt).toContain("cannot be located inside itself");
     const startingLocation = setup.entities.find((entity) => entity.id === setup.player.location);
     expect(startingLocation?.location).toBeUndefined();
@@ -114,6 +127,7 @@ describe("turn engine", () => {
     expect(provider.calls).toBe(1);
     expect(result.turn).toBe(1);
     expect(result.check).toBeUndefined();
+    expect(provider.requests[0]?.generationPhase).toBe("decision");
   });
 
   it("answers an explicit question without rolling, persisting, or advancing a turn", async () => {
@@ -307,6 +321,10 @@ describe("turn engine", () => {
     expect(provider.requests[1]?.jsonSchema?.properties).toMatchObject({
       decision: { enum: ["resolved"] },
     });
+    expect(provider.requests.map((request) => request.generationPhase)).toEqual([
+      "decision",
+      "locked_resolution",
+    ]);
     expect(result.check).toMatchObject({ roll: 60, modifierTotal: 10, total: 70, outcome: "success" });
     expect((await store.load()).entities.get("player:hero")?.facts.some((fact) => fact.text === "A hooded stranger is watching from the corner.")).toBe(true);
   });
@@ -341,6 +359,11 @@ describe("turn engine", () => {
 
     expect(provider.calls).toBe(3);
     expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v1");
+    expect(provider.requests[2]).toMatchObject({
+      generationPhase: "repair",
+      repairOfPhase: "locked_resolution",
+      attemptKind: "domain_repair",
+    });
     expect(result.state.status).toBe("active");
     expect((await store.load()).entities.get("player:hero")?.status).toBe("alive");
   });

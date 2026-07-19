@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { readEvaluationManifest } from "../evaluation.js";
+import { readLegacyEvaluationManifest } from "../legacy-evaluation-artifacts.js";
 import { CheckResultSchema, formatCheck } from "../mechanics.js";
 import { asError } from "./http.js";
 
@@ -66,13 +66,15 @@ export async function evaluationTranscriptPresentation(
   sessionId: string,
   markdown: string,
 ): Promise<unknown> {
-  const runDir = path.join(evaluationsRoot, "runs", runId);
-  const manifest = await readEvaluationManifest(path.join(runDir, "manifest.json"));
-  const session = manifest.sessions.find((candidate) => candidate.id === sessionId);
-  if (!session) throw new Error(`Evaluation session ${sessionId} is not present in run ${runId}`);
+  const safeRunId = assertSafeId(runId, "run ID");
+  const safeSessionId = assertSafeId(sessionId, "session ID");
+  const runDir = path.join(evaluationsRoot, "runs", safeRunId);
+  const manifest = await readLegacyEvaluationManifest(path.join(runDir, "manifest.json"));
+  const session = manifest.sessions.find((candidate) => candidate.id === safeSessionId);
+  if (!session) throw new Error(`Evaluation session ${safeSessionId} is not present in run ${safeRunId}`);
   let jsonLines = "";
   try {
-    jsonLines = await readFile(path.join(runDir, "sessions", sessionId, "turns.jsonl"), "utf8");
+    jsonLines = await readFile(path.join(runDir, "sessions", safeSessionId, "turns.jsonl"), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }

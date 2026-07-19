@@ -1,14 +1,36 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProviderConfigSchema, type ProviderConfig } from "./schemas.js";
 import { GenerationFailure } from "./llm/failures.js";
-import { attachStructuredFailure } from "./llm/structured-error.js";
-import type { LlmProvider, StructuredRequest, StructuredResult } from "./types.js";
+import { attachRequestDiagnostics } from "./llm/request-diagnostics.js";
+import { attachAttemptMetadata, attachStructuredFailure } from "./llm/structured-error.js";
+import {
+  MODEL_EXECUTION_ADAPTER_REVISION,
+  modelExecutionProfileFingerprint,
+  outputBudgetForPhase,
+  timeoutForPhase,
+  type FrozenModelExecutionProfile,
+  type ModelGenerationPhase,
+  type OutputTokenField,
+  type SchemaProjectionId,
+} from "./model-execution-profile.js";
+import type {
+  LlmProvider,
+  ProviderAttemptMetadata,
+  ProviderRequestDiagnostics,
+  StructuredRequest,
+  StructuredResult,
+} from "./types.js";
 
 type FetchLike = typeof fetch;
 
 /** Increment when provider transport or schema projection changes compatibility. */
-export const PROVIDER_ADAPTER_COMPATIBILITY_REVISION = 3 as const;
+export const PROVIDER_ADAPTER_COMPATIBILITY_REVISION = MODEL_EXECUTION_ADAPTER_REVISION;
+
+export interface ProviderExecutionOptions {
+  executionProfile?: FrozenModelExecutionProfile;
+}
 
 function parseJsonText(text: string): unknown {
   const trimmed = text.trim();
@@ -29,6 +51,7 @@ function malformedStructuredResponse(
   usage: StructuredResult<unknown>["usage"],
   truncated: boolean,
   structuredMode: StructuredResult<unknown>["structuredMode"],
+  attemptMetadata?: ProviderAttemptMetadata,
 ): GenerationFailure {
   const message = truncated
     ? "Provider response was truncated before the root JSON value completed"
@@ -39,6 +62,7 @@ function malformedStructuredResponse(
     parsedResponse: null,
     ...(usage ? { usage } : {}),
     ...(structuredMode ? { structuredMode } : {}),
+    ...(attemptMetadata ? { attemptMetadata: { ...attemptMetadata, truncated } } : {}),
   });
   return failure;
 }
@@ -263,6 +287,45 @@ function routesToGemini(model: string): boolean {
   return /(?:^|\/)gemini(?:-|$)/i.test(model);
 }
 
+function projectSchemaById(
+  schema: Record<string, unknown>,
+  projection: SchemaProjectionId,
+): ProviderSchemaProjection {
+  if (projection === "openai_strict_v1") return projectOpenAiStrictSchema(schema);
+  if (projection === "gemini_compatible_v1") {
+    return { schema: sanitizeGeminiSchema(schema) as Record<string, unknown> };
+  }
+  if (projection === "anthropic_compatible_v1") {
+    return { schema: sanitizeAnthropicSchema(schema) as Record<string, unknown> };
+  }
+  return { schema };
+}
+
+function xaiReasoningOptions(model: string): Record<string, unknown> | undefined {
+  // Grok 4.5 is always a reasoning model. xAI documents `high` as the
+  // implicit default and does not support disabling reasoning, so request the
+  // lowest available effort explicitly for latency-sensitive gameplay.
+  if (/^grok-4\.5(?:-|$)/i.test(model)) return { reasoning_effort: "low" };
+  // Grok 4.3 supports disabling reasoning entirely, which avoids paying the
+  // latency and output-token cost of hidden reasoning during gameplay.
+  if (/^grok-4\.3(?:-|$)/i.test(model)) return { reasoning_effort: "none" };
+  return undefined;
+}
+
+function openAiReasoningOptions(model: string): Record<string, unknown> | undefined {
+  // GPT-5.6 is evaluated and used as a latency-sensitive narrative model.
+  // Pin the whole family to no reasoning so model-tier comparisons do not
+  // accidentally compare Sol's provider default against Terra/Luna at none.
+  if (/^gpt-5\.6(?:-|$)/i.test(model)) return { reasoning_effort: "none" };
+  // GPT-5.4 Mini defaults to no reasoning, but send the documented value
+  // explicitly so gameplay latency and hidden-token spend cannot drift.
+  if (/^gpt-5\.4-mini(?:-|$)/i.test(model)) return { reasoning_effort: "none" };
+  // Nano supports no-reasoning mode as well; keep the low-cost model on its
+  // latency-optimized path explicitly rather than relying on a provider default.
+  if (/^gpt-5\.4-nano(?:-|$)/i.test(model)) return { reasoning_effort: "none" };
+  return undefined;
+}
+
 function redactSecrets(value: string, secrets: string[]): string {
   return secrets.reduce(
     (redacted, secret) => secret ? redacted.replaceAll(secret, "[redacted]") : redacted,
@@ -281,12 +344,25 @@ async function safeFetch(
   url: string,
   init: RequestInit,
   secrets: string[],
+  timeoutMs?: number,
 ): Promise<Response> {
+  const controller = timeoutMs === undefined ? undefined : new AbortController();
+  const timeout = controller === undefined
+    ? undefined
+    : setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetchImpl(url, init);
+    return await fetchImpl(url, {
+      ...init,
+      ...(controller === undefined ? {} : { signal: controller.signal }),
+    });
   } catch (error) {
     const detail = redactSecrets(error instanceof Error ? error.message : String(error), secrets);
+    if (controller?.signal.aborted) {
+      throw new GenerationFailure("network", `${provider} request timed out after ${timeoutMs}ms`, true);
+    }
     throw new GenerationFailure("network", `${provider} network request failed: ${detail}`, true);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -303,12 +379,19 @@ function modelLeaf(model: string): string {
   return model.split("/").at(-1) ?? model;
 }
 
+function deepSeekThinkingOptions(model: string): Record<string, unknown> | undefined {
+  const leaf = modelLeaf(model).toLowerCase();
+  if (leaf !== "deepseek-v4-flash" && leaf !== "deepseek-v4-pro") return undefined;
+  return { thinking: { type: "disabled" } };
+}
+
 /** Conservative transport policy for model families that reject sampling controls. */
 export function providerSupportsTemperature(provider: string, model: string): boolean {
   const leaf = modelLeaf(model);
   const openAiReasoningModel = /^(?:o\d(?:[-.]|$)|gpt-5(?:[-.]|$))/i.test(leaf);
   const deepSeekReasoningModel = /^deepseek-(?:reasoner(?:[-.]|$)|v4-)/i.test(leaf);
-  const anthropicWithoutTemperature = /^claude-opus-4-8(?:[-.]|$)/i.test(leaf);
+  const anthropicWithoutTemperature = /^claude-opus-4-8(?:[-.]|$)/i.test(leaf)
+    || leaf.toLowerCase() === "claude-sonnet-5";
   if (provider === "openai") return !openAiReasoningModel;
   if (provider === "deepseek") return !deepSeekReasoningModel;
   if (provider === "anthropic") return !anthropicWithoutTemperature;
@@ -348,6 +431,188 @@ function chatUsage(value: unknown): StructuredResult<unknown>["usage"] {
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(billedCostUsd === undefined ? {} : { billedCostUsd }),
   };
+}
+
+const OPENAI_RATE_LIMIT_HEADERS = [
+  "x-ratelimit-limit-requests",
+  "x-ratelimit-limit-tokens",
+  "x-ratelimit-remaining-requests",
+  "x-ratelimit-remaining-tokens",
+  "x-ratelimit-reset-requests",
+  "x-ratelimit-reset-tokens",
+] as const;
+
+function safeDiagnosticHeader(
+  headers: Headers,
+  name: string,
+  maxLength: number,
+  secrets: string[],
+): string | undefined {
+  const value = headers.get(name);
+  if (!value || value.length > maxLength || !/^[\x20-\x7e]+$/.test(value)) return undefined;
+  if (secrets.some((secret) => secret && value.includes(secret))) return undefined;
+  return value;
+}
+
+function assertProfileTarget(
+  profile: FrozenModelExecutionProfile,
+  provider: string,
+  model: string,
+): void {
+  if (profile.fingerprint !== modelExecutionProfileFingerprint(profile)) {
+    throw new GenerationFailure(
+      "schema_rejected",
+      `Execution profile ${profile.key.provider}/${profile.key.model} has a stale fingerprint`,
+      false,
+    );
+  }
+  if (profile.key.provider !== provider || profile.key.model !== model) {
+    throw new GenerationFailure(
+      "schema_rejected",
+      `Execution profile ${profile.key.provider}/${profile.key.model} does not match ${provider}/${model}`,
+      false,
+    );
+  }
+}
+
+function requestedPhase(
+  request: StructuredRequest<unknown>,
+  profile?: FrozenModelExecutionProfile,
+): ModelGenerationPhase | undefined {
+  if (request.generationPhase !== undefined) return request.generationPhase;
+  return profile === undefined ? undefined : "decision";
+}
+
+function profileTemperature(profile: FrozenModelExecutionProfile): number | undefined {
+  return profile.temperature.policy === "fixed" ? profile.temperature.value : undefined;
+}
+
+function profileReasoningBody(
+  profile: FrozenModelExecutionProfile,
+  request: StructuredRequest<unknown>,
+): Record<string, unknown> {
+  const policy = profile.reasoning;
+  if (policy.policy === "chat_reasoning_effort") return { reasoning_effort: policy.value };
+  if (policy.policy === "openrouter_reasoning_effort") return { reasoning: { effort: policy.value } };
+  if (policy.policy === "openrouter_reasoning_disabled") return { reasoning: { enabled: false } };
+  if (policy.policy === "deepseek_thinking_disabled") return { thinking: { type: "disabled" } };
+  if (policy.policy === "deepseek_thinking_for_repairs") {
+    return {
+      thinking: {
+        type: requestedPhase(request, profile) === "repair" ? "enabled" : "disabled",
+      },
+    };
+  }
+  return {};
+}
+
+function configuredOutputBudget(
+  request: StructuredRequest<unknown>,
+  defaults: Pick<ProviderConfig, "maxOutputTokens">,
+  profile?: FrozenModelExecutionProfile,
+): number {
+  const phase = requestedPhase(request, profile);
+  if (profile === undefined || phase === undefined) {
+    const requested = request.maxOutputTokens ?? defaults.maxOutputTokens;
+    return request.outputTokenCeiling === undefined
+      ? requested
+      : Math.min(requested, request.outputTokenCeiling);
+  }
+  const profiled = outputBudgetForPhase(profile, phase, request.repairOfPhase);
+  return request.outputTokenCeiling === undefined
+    ? profiled
+    : Math.min(profiled, request.outputTokenCeiling);
+}
+
+function configuredTimeout(
+  request: StructuredRequest<unknown>,
+  profile?: FrozenModelExecutionProfile,
+): number | undefined {
+  const phase = requestedPhase(request, profile);
+  return profile === undefined || phase === undefined ? undefined : timeoutForPhase(profile, phase);
+}
+
+function attemptMetadata(
+  request: StructuredRequest<unknown>,
+  provider: string,
+  model: string,
+  route: string,
+  structuredMode: NonNullable<StructuredResult<unknown>["structuredMode"]>,
+  schemaProjection: SchemaProjectionId,
+  outputTokenField: OutputTokenField,
+  outputTokenBudget: number,
+  timeoutMs?: number,
+  profile?: FrozenModelExecutionProfile,
+): ProviderAttemptMetadata {
+  const phase = requestedPhase(request, profile);
+  return {
+    provider,
+    model,
+    route,
+    ...(phase === undefined ? {} : { generationPhase: phase }),
+    attemptKind: request.attemptKind ?? "initial",
+    ...(profile === undefined ? {} : { profileFingerprint: profile.fingerprint }),
+    structuredMode,
+    schemaProjection,
+    outputTokenField,
+    outputTokenBudget,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    retryBackoffMs: request.retryBackoffMs ?? 0,
+    truncated: false,
+  };
+}
+
+function responseAttemptMetadata(
+  metadata: ProviderAttemptMetadata,
+  finishReason: string | undefined,
+  truncated: boolean,
+): ProviderAttemptMetadata {
+  return {
+    ...metadata,
+    ...(finishReason === undefined ? {} : { finishReason }),
+    truncated,
+  };
+}
+
+function openAiRequestDiagnostics(
+  model: string,
+  timestamp: string,
+  clientRequestId: string,
+  secrets: string[],
+  response?: Response,
+): ProviderRequestDiagnostics {
+  const rateLimitHeaders = response
+    ? Object.fromEntries(OPENAI_RATE_LIMIT_HEADERS.flatMap((name) => {
+        const value = safeDiagnosticHeader(response.headers, name, 128, secrets);
+        return value === undefined ? [] : [[name, value]];
+      }))
+    : {};
+  const requestId = response
+    ? safeDiagnosticHeader(response.headers, "x-request-id", 512, secrets)
+    : undefined;
+  return {
+    timestamp,
+    provider: "openai",
+    model,
+    clientRequestId,
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(response === undefined ? {} : { httpStatus: response.status }),
+    ...(Object.keys(rateLimitHeaders).length === 0 ? {} : { rateLimitHeaders }),
+  };
+}
+
+function xaiChatUsage(value: unknown): StructuredResult<unknown>["usage"] {
+  const usage = chatUsage(value);
+  if (usage?.inputTokens === undefined
+    || usage.outputTokens === undefined
+    || usage.totalTokens === undefined) return usage;
+  // xAI's Chat Completions envelope can report visible completion tokens
+  // separately while total_tokens also includes billed hidden reasoning. Keep
+  // the shared output total cost-complete without exposing reasoning content.
+  const billedOutputTokens = usage.totalTokens - usage.inputTokens;
+  return billedOutputTokens > usage.outputTokens
+    ? { ...usage, outputTokens: billedOutputTokens }
+    : usage;
 }
 
 async function readResponseObject(response: Response, provider: string): Promise<Record<string, unknown>> {
@@ -391,8 +656,11 @@ interface ChatCompletionsOptions {
   extraBody?: Record<string, unknown>;
   maxTokensField: "max_tokens" | "max_completion_tokens";
   projectSchema?: (schema: Record<string, unknown>) => ProviderSchemaProjection;
+  schemaProjection?: SchemaProjectionId;
   jsonObjectWithLocalSchema?: boolean;
   reinforceSchemaInSystem?: boolean;
+  parseUsage?: (value: unknown) => StructuredResult<unknown>["usage"];
+  executionProfile?: FrozenModelExecutionProfile;
 }
 
 function jsonExampleForSchema(schema: unknown): unknown {
@@ -427,13 +695,50 @@ function jsonExampleForSchema(schema: unknown): unknown {
   return null;
 }
 
+/**
+ * JSON Object mode does not enforce a provider-side schema. Repeat the nested
+ * required-field sets in a compact, human-readable form so models do not miss
+ * fields on individual array elements while reading the full JSON Schema.
+ */
+function requiredObjectFieldGuide(schema: unknown): string {
+  const lines: string[] = [];
+  const maximumLines = 32;
+
+  function visit(value: unknown, location: string): void {
+    if (lines.length >= maximumLines || !isRecord(value)) return;
+
+    if (Array.isArray(value.anyOf)) {
+      value.anyOf.forEach((branch, index) => visit(branch, `${location}.anyOf[${index}]`));
+    }
+
+    const properties = isRecord(value.properties) ? value.properties : undefined;
+    if (properties) {
+      const required = Array.isArray(value.required)
+        ? value.required.filter((name): name is string => typeof name === "string")
+        : Object.keys(properties);
+      if (required.length > 0) lines.push(`${location}: ${required.join(", ")}`);
+      for (const [name, propertySchema] of Object.entries(properties)) {
+        visit(propertySchema, `${location}.${name}`);
+      }
+    }
+
+    if (value.type === "array" || value.items !== undefined) {
+      visit(value.items, `${location}[]`);
+    }
+  }
+
+  visit(schema, "$" );
+  return lines.join("\n");
+}
+
 function localSchemaSystemPrompt(
   original: string,
   provider: string,
   schemaName: string,
   schema: Record<string, unknown>,
 ): string {
-  return `${original}\n\n${provider.toUpperCase()} JSON OUTPUT CONTRACT\nReturn exactly one valid JSON object and no other text. Do not use Markdown fences. The JSON object is validated locally against the complete schema below; include every required field, use only documented fields, and obey all enum and numeric constraints.\nSchema name: ${schemaName}\nJSON Schema: ${JSON.stringify(schema)}\nExample JSON object with the required shape: ${JSON.stringify(jsonExampleForSchema(schema))}`;
+  const requiredFields = requiredObjectFieldGuide(schema);
+  return `${original}\n\n${provider.toUpperCase()} JSON OUTPUT CONTRACT\nReturn exactly one valid JSON object and no other text. Do not use Markdown fences. The JSON object is validated locally against the complete schema below; include every required field, use only documented fields, and obey all enum and numeric constraints. Required fields apply independently to every object inside an array: if an array item is present, none of its required keys may be omitted, even when its value is an empty string, zero, or an empty array. Before returning, audit every object against the compact field list below.\nSchema name: ${schemaName}\nJSON Schema: ${JSON.stringify(schema)}\nRequired fields by object path:\n${requiredFields || "(none)"}\nExample JSON object with the required shape: ${JSON.stringify(jsonExampleForSchema(schema))}`;
 }
 
 async function generateChatCompletions<T>(
@@ -441,20 +746,53 @@ async function generateChatCompletions<T>(
   options: ChatCompletionsOptions,
 ): Promise<StructuredResult<T>> {
   const exactSchema = request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema);
-  const projection = options.projectSchema?.(exactSchema) ?? { schema: exactSchema };
-  const structuredMode = options.jsonObjectWithLocalSchema ? "json_object_local_schema" : "exact_schema";
+  const profile = options.executionProfile;
+  if (profile) assertProfileTarget(profile, options.id, options.model);
+  const projectionId = profile?.structuredOutput.projection ?? options.schemaProjection ?? "identity_v1";
+  const projection = profile
+    ? projectSchemaById(exactSchema, projectionId)
+    : options.projectSchema?.(exactSchema) ?? { schema: exactSchema };
+  const jsonObjectWithLocalSchema = profile
+    ? profile.structuredOutput.mode === "json_object_local_schema"
+    : options.jsonObjectWithLocalSchema === true;
+  const structuredMode = jsonObjectWithLocalSchema ? "json_object_local_schema" : "exact_schema";
   const secrets = [options.apiKey, encodeURIComponent(options.apiKey)];
-  const temperature = requestTemperature(
+  const diagnosticTimestamp = new Date().toISOString();
+  const clientRequestId = options.id === "openai" ? randomUUID() : undefined;
+  const temperature = profile === undefined
+    ? requestTemperature(options.id, options.model, request.temperature ?? options.defaults.temperature)
+    : profileTemperature(profile);
+  const outputTokenField = profile?.outputTokenField ?? options.maxTokensField;
+  if (outputTokenField === "maxOutputTokens") {
+    throw new GenerationFailure("schema_rejected", "Chat Completions cannot use maxOutputTokens", false);
+  }
+  const outputTokenBudget = configuredOutputBudget(request, options.defaults, profile);
+  const timeoutMs = configuredTimeout(request, profile);
+  const metadata = attemptMetadata(
+    request,
     options.id,
     options.model,
-    request.temperature ?? options.defaults.temperature,
+    profile?.key.route ?? (options.id === "openrouter" ? "openrouter" : "direct"),
+    structuredMode,
+    projectionId,
+    outputTokenField,
+    outputTokenBudget,
+    timeoutMs,
+    profile,
   );
+  const extraBody = { ...options.extraBody };
+  if (profile) {
+    delete extraBody.reasoning;
+    delete extraBody.reasoning_effort;
+    delete extraBody.thinking;
+    delete extraBody.plugins;
+  }
   const body: Record<string, unknown> = {
     model: options.model,
     messages: [
       {
         role: "system",
-        content: options.jsonObjectWithLocalSchema || options.reinforceSchemaInSystem
+        content: jsonObjectWithLocalSchema || options.reinforceSchemaInSystem
           ? localSchemaSystemPrompt(request.system, options.label, request.schemaName, projection.schema)
           : request.system,
       },
@@ -462,7 +800,7 @@ async function generateChatCompletions<T>(
     ],
     ...(temperature === undefined ? {} : { temperature }),
     stream: false,
-    response_format: options.jsonObjectWithLocalSchema
+    response_format: jsonObjectWithLocalSchema
       ? { type: "json_object" }
       : {
           type: "json_schema",
@@ -472,64 +810,90 @@ async function generateChatCompletions<T>(
             schema: projection.schema,
           },
         },
-    ...options.extraBody,
+    ...extraBody,
+    ...(profile === undefined ? {} : profileReasoningBody(profile, request)),
   };
-  body[options.maxTokensField] = request.maxOutputTokens ?? options.defaults.maxOutputTokens;
+  body[outputTokenField] = outputTokenBudget;
 
-  const response = await safeFetch(options.fetchImpl, options.label, options.endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-    body: JSON.stringify(body),
-  }, secrets);
+  try {
+    const response = await safeFetch(options.fetchImpl, options.label, options.endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+        ...(clientRequestId === undefined ? {} : { "X-Client-Request-Id": clientRequestId }),
+      },
+      body: JSON.stringify(body),
+    }, secrets, timeoutMs);
+    const requestDiagnostics = clientRequestId === undefined
+      ? undefined
+      : openAiRequestDiagnostics(options.model, diagnosticTimestamp, clientRequestId, secrets, response);
 
-  if (!response.ok) throw httpFailure(options.label, response.status, await readError(response, secrets));
-  const envelope = await readResponseObject(response, options.label);
-  const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
-  const choice = isRecord(choices[0]) ? choices[0] : undefined;
-  const message = isRecord(choice?.message) ? choice.message : undefined;
-  const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
-  const usage = chatUsage(envelope.usage);
-  const refusal = typeof message?.refusal === "string" ? redactSecrets(message.refusal, secrets).slice(0, 1000) : undefined;
-  if (refusal) throw structuredContentBlock(options.label, refusal, refusal, usage);
-  if (finishReason === "content_filter") {
-    throw structuredContentBlock(options.label, "content filter", "", usage);
-  }
-  const content = typeof message?.content === "string" ? message.content : undefined;
-  if (!content) {
-    if (finishReason === "length") {
-      throw malformedStructuredResponse("", new Error(`${options.label} exhausted its output limit before returning JSON`), usage, true, structuredMode);
+    try {
+      if (!response.ok) throw httpFailure(options.label, response.status, await readError(response, secrets));
+      const envelope = await readResponseObject(response, options.label);
+      const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
+      const choice = isRecord(choices[0]) ? choices[0] : undefined;
+      const message = isRecord(choice?.message) ? choice.message : undefined;
+      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
+      const responseMetadata = responseAttemptMetadata(metadata, finishReason, finishReason === "length");
+      const usage = (options.parseUsage ?? chatUsage)(envelope.usage);
+      const refusal = typeof message?.refusal === "string" ? redactSecrets(message.refusal, secrets).slice(0, 1000) : undefined;
+      if (refusal) throw structuredContentBlock(options.label, refusal, refusal, usage);
+      if (finishReason === "content_filter") {
+        throw structuredContentBlock(options.label, "content filter", "", usage);
+      }
+      const content = typeof message?.content === "string" ? message.content : undefined;
+      if (!content) {
+        if (finishReason === "length") {
+          throw malformedStructuredResponse("", new Error(`${options.label} exhausted its output limit before returning JSON`), usage, true, structuredMode, responseMetadata);
+        }
+        throw new GenerationFailure("provider", `${options.label} returned no message content (${finishReason ?? "unknown reason"})`, false);
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = parseJsonText(content);
+      } catch (error) {
+        throw malformedStructuredResponse(content, error, usage, finishReason === "length", structuredMode, responseMetadata);
+      }
+      try {
+        const data = decodeStructured(request, projection.normalize?.(parsed) ?? parsed);
+        return {
+          data,
+          provider: options.id,
+          model: options.model,
+          rawText: content,
+          structuredMode,
+          ...(request.protocolVersion === undefined ? {} : { protocolVersion: request.protocolVersion }),
+          ...(usage ? { usage } : {}),
+          ...(requestDiagnostics === undefined ? {} : { requestDiagnostics }),
+          attemptMetadata: responseMetadata,
+        };
+      } catch (error) {
+        attachStructuredFailure(error, {
+          rawText: content,
+          parsedResponse: parsed,
+          structuredMode,
+          ...(usage ? { usage } : {}),
+          attemptMetadata: responseMetadata,
+        });
+        throw error;
+      }
+    } catch (error) {
+      if (requestDiagnostics !== undefined) attachRequestDiagnostics(error, requestDiagnostics);
+      attachAttemptMetadata(error, metadata);
+      throw error;
     }
-    throw new GenerationFailure("provider", `${options.label} returned no message content (${finishReason ?? "unknown reason"})`, false);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseJsonText(content);
   } catch (error) {
-    throw malformedStructuredResponse(content, error, usage, finishReason === "length", structuredMode);
-  }
-  try {
-    const data = decodeStructured(request, projection.normalize?.(parsed) ?? parsed);
-    return {
-      data,
-      provider: options.id,
-      model: options.model,
-      rawText: content,
-      structuredMode,
-      ...(request.protocolVersion === undefined ? {} : { protocolVersion: request.protocolVersion }),
-      ...(usage ? { usage } : {}),
-    };
-  } catch (error) {
-    attachStructuredFailure(error, {
-      rawText: content,
-      parsedResponse: parsed,
-      structuredMode,
-      ...(usage ? { usage } : {}),
-    });
+    if (clientRequestId !== undefined) {
+      attachRequestDiagnostics(
+        error,
+        openAiRequestDiagnostics(options.model, diagnosticTimestamp, clientRequestId, secrets),
+      );
+    }
+    attachAttemptMetadata(error, metadata);
     throw error;
   }
 }
@@ -543,6 +907,7 @@ export class OpenRouterProvider implements LlmProvider {
     private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
     private readonly endpoint = "https://openrouter.ai/api/v1/chat/completions",
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
@@ -560,6 +925,12 @@ export class OpenRouterProvider implements LlmProvider {
       },
       extraBody: {
         provider: { require_parameters: true },
+        ...(["qwen/qwen3.7-plus", "minimax/minimax-m3", "z-ai/glm-4.6", "tencent/hy3"].includes(this.model)
+          ? { reasoning: { effort: "none" } }
+          : {}),
+        ...(this.model === "deepseek/deepseek-v3.2"
+          ? { reasoning: { enabled: false } }
+          : {}),
         // Kimi enables reasoning by default and counts it against max_tokens.
         // It also intermittently wraps structured output in Markdown, which
         // OpenRouter's non-streaming response healer normalizes before our
@@ -573,7 +944,9 @@ export class OpenRouterProvider implements LlmProvider {
       // OpenRouter forwards schema constraints to the selected upstream model.
       // Gemini routes need the same projection as the direct Gemini adapter.
       projectSchema: (schema) => ({ schema: routesToGemini(this.model) ? sanitizeGeminiSchema(schema) as Record<string, unknown> : schema }),
+      schemaProjection: routesToGemini(this.model) ? "gemini_compatible_v1" : "identity_v1",
       reinforceSchemaInSystem: this.model === "moonshotai/kimi-k2.6",
+      ...(this.executionProfile === undefined ? {} : { executionProfile: this.executionProfile }),
     });
   }
 }
@@ -587,9 +960,11 @@ export class OpenAIProvider implements LlmProvider {
     private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
     private readonly endpoint = "https://api.openai.com/v1/chat/completions",
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+    const reasoningOptions = openAiReasoningOptions(this.model);
     return generateChatCompletions(request, {
       id: this.id,
       label: "OpenAI",
@@ -600,6 +975,42 @@ export class OpenAIProvider implements LlmProvider {
       fetchImpl: this.fetchImpl,
       maxTokensField: "max_completion_tokens",
       projectSchema: projectOpenAiStrictSchema,
+      schemaProjection: "openai_strict_v1",
+      ...(reasoningOptions === undefined ? {} : { extraBody: reasoningOptions }),
+      ...(this.executionProfile === undefined ? {} : { executionProfile: this.executionProfile }),
+    });
+  }
+}
+
+/** xAI exposes an OpenAI-compatible Chat Completions API with strict structured outputs. */
+export class XaiProvider implements LlmProvider {
+  readonly id = "xai";
+
+  constructor(
+    readonly model: string,
+    private readonly apiKey: string,
+    private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
+    private readonly endpoint = "https://api.x.ai/v1/chat/completions",
+    private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
+  ) {}
+
+  async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+    const reasoningOptions = xaiReasoningOptions(this.model);
+    return generateChatCompletions(request, {
+      id: this.id,
+      label: "xAI",
+      model: this.model,
+      apiKey: this.apiKey,
+      defaults: this.defaults,
+      endpoint: this.endpoint,
+      fetchImpl: this.fetchImpl,
+      maxTokensField: "max_tokens",
+      projectSchema: projectOpenAiStrictSchema,
+      schemaProjection: "openai_strict_v1",
+      parseUsage: xaiChatUsage,
+      ...(reasoningOptions === undefined ? {} : { extraBody: reasoningOptions }),
+      ...(this.executionProfile === undefined ? {} : { executionProfile: this.executionProfile }),
     });
   }
 }
@@ -613,9 +1024,11 @@ export class DeepSeekProvider implements LlmProvider {
     private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
     private readonly endpoint = "https://api.deepseek.com/chat/completions",
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+    const thinkingOptions = deepSeekThinkingOptions(this.model);
     return generateChatCompletions(request, {
       id: this.id,
       label: "DeepSeek",
@@ -626,6 +1039,8 @@ export class DeepSeekProvider implements LlmProvider {
       fetchImpl: this.fetchImpl,
       maxTokensField: "max_tokens",
       jsonObjectWithLocalSchema: true,
+      ...(thinkingOptions === undefined ? {} : { extraBody: thinkingOptions }),
+      ...(this.executionProfile === undefined ? {} : { executionProfile: this.executionProfile }),
     });
   }
 }
@@ -651,18 +1066,45 @@ export class AnthropicProvider implements LlmProvider {
     private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
     private readonly endpoint = "https://api.anthropic.com/v1/messages",
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const exactSchema = request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema);
-    const outputSchema = sanitizeAnthropicSchema(exactSchema) as Record<string, unknown>;
+    const profile = this.executionProfile;
+    if (profile) assertProfileTarget(profile, this.id, this.model);
+    if (profile?.structuredOutput.mode === "json_object_local_schema") {
+      throw new GenerationFailure("schema_rejected", "Anthropic Messages requires a JSON Schema execution profile", false);
+    }
+    const projectionId = profile?.structuredOutput.projection ?? "anthropic_compatible_v1";
+    const outputSchema = (profile
+      ? projectSchemaById(exactSchema, projectionId).schema
+      : sanitizeAnthropicSchema(exactSchema)) as Record<string, unknown>;
     const secrets = [this.apiKey, encodeURIComponent(this.apiKey)];
-    const temperature = requestTemperature(
+    const temperature = profile === undefined
+      ? requestTemperature(this.id, this.model, request.temperature ?? this.defaults.temperature)
+      : profileTemperature(profile);
+    const outputTokenField = profile?.outputTokenField ?? "max_tokens";
+    if (outputTokenField !== "max_tokens") {
+      throw new GenerationFailure("schema_rejected", "Anthropic Messages requires max_tokens", false);
+    }
+    const outputTokenBudget = configuredOutputBudget(request, this.defaults, profile);
+    const timeoutMs = configuredTimeout(request, profile);
+    const baseMetadata = attemptMetadata(
+      request,
       this.id,
       this.model,
-      request.temperature ?? this.defaults.temperature,
+      profile?.key.route ?? "direct",
+      "exact_schema",
+      projectionId,
+      outputTokenField,
+      outputTokenBudget,
+      timeoutMs,
+      profile,
     );
-    const response = await safeFetch(this.fetchImpl, "Anthropic", this.endpoint, {
+    let response: Response;
+    try {
+      response = await safeFetch(this.fetchImpl, "Anthropic", this.endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -673,7 +1115,7 @@ export class AnthropicProvider implements LlmProvider {
         model: this.model,
         system: request.system,
         messages: [{ role: "user", content: request.prompt }],
-        max_tokens: request.maxOutputTokens ?? this.defaults.maxOutputTokens,
+        max_tokens: outputTokenBudget,
         ...(temperature === undefined ? {} : { temperature }),
         output_config: {
           format: {
@@ -682,12 +1124,21 @@ export class AnthropicProvider implements LlmProvider {
           },
         },
       }),
-    }, secrets);
+      }, secrets, timeoutMs);
+    } catch (error) {
+      attachAttemptMetadata(error, baseMetadata);
+      throw error;
+    }
 
-    if (!response.ok) throw httpFailure("Anthropic", response.status, await readError(response, secrets));
+    if (!response.ok) {
+      const failure = httpFailure("Anthropic", response.status, await readError(response, secrets));
+      attachAttemptMetadata(failure, baseMetadata);
+      throw failure;
+    }
     const envelope = await readResponseObject(response, "Anthropic");
     const usage = anthropicUsage(envelope.usage);
     const stopReason = typeof envelope.stop_reason === "string" ? envelope.stop_reason : undefined;
+    const responseMetadata = responseAttemptMetadata(baseMetadata, stopReason, stopReason === "max_tokens");
     const blocks = Array.isArray(envelope.content) ? envelope.content : [];
     const content = blocks
       .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
@@ -695,20 +1146,24 @@ export class AnthropicProvider implements LlmProvider {
       .join("");
     if (stopReason === "refusal") {
       const refusal = redactSecrets(content || "safety refusal", secrets).slice(0, 1000);
-      throw structuredContentBlock("Anthropic", refusal, refusal, usage);
+      const failure = structuredContentBlock("Anthropic", refusal, refusal, usage);
+      attachAttemptMetadata(failure, responseMetadata);
+      throw failure;
     }
     if (!content) {
       if (stopReason === "max_tokens") {
-        throw malformedStructuredResponse("", new Error("Anthropic exhausted max_tokens before returning JSON"), usage, true, "exact_schema");
+        throw malformedStructuredResponse("", new Error("Anthropic exhausted max_tokens before returning JSON"), usage, true, "exact_schema", responseMetadata);
       }
-      throw new GenerationFailure("provider", `Anthropic returned no text content (${stopReason ?? "unknown reason"})`, false);
+      const failure = new GenerationFailure("provider", `Anthropic returned no text content (${stopReason ?? "unknown reason"})`, false);
+      attachAttemptMetadata(failure, responseMetadata);
+      throw failure;
     }
 
     let parsed: unknown;
     try {
       parsed = parseJsonText(content);
     } catch (error) {
-      throw malformedStructuredResponse(content, error, usage, stopReason === "max_tokens", "exact_schema");
+      throw malformedStructuredResponse(content, error, usage, stopReason === "max_tokens", "exact_schema", responseMetadata);
     }
     try {
       const data = decodeStructured(request, parsed);
@@ -720,6 +1175,7 @@ export class AnthropicProvider implements LlmProvider {
         structuredMode: "exact_schema",
         ...(request.protocolVersion === undefined ? {} : { protocolVersion: request.protocolVersion }),
         ...(usage ? { usage } : {}),
+        attemptMetadata: responseMetadata,
       };
     } catch (error) {
       attachStructuredFailure(error, {
@@ -727,6 +1183,7 @@ export class AnthropicProvider implements LlmProvider {
         parsedResponse: parsed,
         structuredMode: "exact_schema",
         ...(usage ? { usage } : {}),
+        attemptMetadata: responseMetadata,
       });
       throw error;
     }
@@ -742,22 +1199,60 @@ export class GeminiProvider implements LlmProvider {
     private readonly defaults: Pick<ProviderConfig, "temperature" | "maxOutputTokens">,
     private readonly endpoint = "https://generativelanguage.googleapis.com/v1beta",
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const url = `${this.endpoint.replace(/\/$/, "")}/models/${encodeURIComponent(this.model)}:generateContent`;
-    const outputSchema = sanitizeGeminiSchema(request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema));
+    const exactSchema = request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema);
+    const profile = this.executionProfile;
+    if (profile) assertProfileTarget(profile, this.id, this.model);
+    if (profile?.structuredOutput.mode === "json_object_local_schema") {
+      throw new GenerationFailure("schema_rejected", "Gemini requires a JSON Schema execution profile", false);
+    }
+    const projectionId = profile?.structuredOutput.projection ?? "gemini_compatible_v1";
+    const outputSchema = profile
+      ? projectSchemaById(exactSchema, projectionId).schema
+      : sanitizeGeminiSchema(exactSchema);
+    const outputTokenField = profile?.outputTokenField ?? "maxOutputTokens";
+    if (outputTokenField !== "maxOutputTokens") {
+      throw new GenerationFailure("schema_rejected", "Gemini requires maxOutputTokens", false);
+    }
+    const outputTokenBudget = configuredOutputBudget(request, this.defaults, profile);
+    const timeoutMs = configuredTimeout(request, profile);
+    const baseMetadata = attemptMetadata(
+      request,
+      this.id,
+      this.model,
+      profile?.key.route ?? "direct",
+      "exact_schema",
+      projectionId,
+      outputTokenField,
+      outputTokenBudget,
+      timeoutMs,
+      profile,
+    );
+    const temperature = profile === undefined
+      ? request.temperature ?? this.defaults.temperature
+      : profileTemperature(profile);
+    const thinkingConfig = profile === undefined
+      ? (/^gemini-3(?:\.|-)/i.test(this.model) ? { thinkingConfig: { thinkingLevel: "low" } } : {})
+      : profile.reasoning.policy === "gemini_thinking_low"
+        ? { thinkingConfig: { thinkingLevel: "low" } }
+        : {};
     const secrets = [this.apiKey, encodeURIComponent(this.apiKey)];
-    const response = await safeFetch(this.fetchImpl, "Gemini", url, {
+    let response: Response;
+    try {
+      response = await safeFetch(this.fetchImpl, "Gemini", url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: request.system }] },
         contents: [{ role: "user", parts: [{ text: request.prompt }] }],
         generationConfig: {
-          temperature: request.temperature ?? this.defaults.temperature,
-          maxOutputTokens: request.maxOutputTokens ?? this.defaults.maxOutputTokens,
-          ...(/^gemini-3(?:\.|-)/i.test(this.model) ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+          ...(temperature === undefined ? {} : { temperature }),
+          maxOutputTokens: outputTokenBudget,
+          ...thinkingConfig,
           responseFormat: {
             text: {
               mimeType: "APPLICATION_JSON",
@@ -766,10 +1261,16 @@ export class GeminiProvider implements LlmProvider {
           },
         },
       }),
-    }, secrets);
+      }, secrets, timeoutMs);
+    } catch (error) {
+      attachAttemptMetadata(error, baseMetadata);
+      throw error;
+    }
 
     if (!response.ok) {
-      throw httpFailure("Gemini", response.status, await readError(response, secrets));
+      const failure = httpFailure("Gemini", response.status, await readError(response, secrets));
+      attachAttemptMetadata(failure, baseMetadata);
+      throw failure;
     }
     const body = (await response.json()) as {
       candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
@@ -781,33 +1282,40 @@ export class GeminiProvider implements LlmProvider {
       };
     };
     const candidate = body.candidates?.[0];
+    const responseMetadata = responseAttemptMetadata(
+      baseMetadata,
+      candidate?.finishReason,
+      candidate?.finishReason === "MAX_TOKENS",
+    );
     const content = candidate?.content?.parts
       ?.filter((part) => part.thought !== true)
       .map((part) => part.text ?? "")
       .join("");
-    const metadata = body.usageMetadata;
-    const billedOutputTokens = metadata?.candidatesTokenCount === undefined && metadata?.thoughtsTokenCount === undefined
+    const usageMetadata = body.usageMetadata;
+    const billedOutputTokens = usageMetadata?.candidatesTokenCount === undefined && usageMetadata?.thoughtsTokenCount === undefined
       ? undefined
-      : (metadata?.candidatesTokenCount ?? 0) + (metadata?.thoughtsTokenCount ?? 0);
-    const usage = metadata
+      : (usageMetadata?.candidatesTokenCount ?? 0) + (usageMetadata?.thoughtsTokenCount ?? 0);
+    const usage = usageMetadata
       ? {
-          ...(metadata.promptTokenCount === undefined ? {} : { inputTokens: metadata.promptTokenCount }),
+          ...(usageMetadata.promptTokenCount === undefined ? {} : { inputTokens: usageMetadata.promptTokenCount }),
           ...(billedOutputTokens === undefined ? {} : { outputTokens: billedOutputTokens }),
-          ...(metadata.totalTokenCount === undefined ? {} : { totalTokens: metadata.totalTokenCount }),
+          ...(usageMetadata.totalTokenCount === undefined ? {} : { totalTokens: usageMetadata.totalTokenCount }),
         }
       : undefined;
     if (!content) {
       const blocked = candidate?.finishReason && /SAFETY|BLOCK/i.test(candidate.finishReason);
       if (candidate?.finishReason === "MAX_TOKENS") {
-        throw malformedStructuredResponse("", new Error("Gemini exhausted maxOutputTokens before returning JSON"), usage, true, "exact_schema");
+        throw malformedStructuredResponse("", new Error("Gemini exhausted maxOutputTokens before returning JSON"), usage, true, "exact_schema", responseMetadata);
       }
-      throw new GenerationFailure(blocked ? "content_block" : "provider", `Gemini returned no message content (${candidate?.finishReason ?? "unknown reason"})`, false);
+      const failure = new GenerationFailure(blocked ? "content_block" : "provider", `Gemini returned no message content (${candidate?.finishReason ?? "unknown reason"})`, false);
+      attachAttemptMetadata(failure, responseMetadata);
+      throw failure;
     }
     let parsed: unknown;
     try {
       parsed = parseJsonText(content);
     } catch (error) {
-      throw malformedStructuredResponse(content, error, usage, candidate?.finishReason === "MAX_TOKENS", "exact_schema");
+      throw malformedStructuredResponse(content, error, usage, candidate?.finishReason === "MAX_TOKENS", "exact_schema", responseMetadata);
     }
     try {
       const data = decodeStructured(request, parsed);
@@ -815,9 +1323,16 @@ export class GeminiProvider implements LlmProvider {
         data, provider: this.id, model: this.model, rawText: content, structuredMode: "exact_schema",
         ...(request.protocolVersion === undefined ? {} : { protocolVersion: request.protocolVersion }),
         ...(usage ? { usage } : {}),
+        attemptMetadata: responseMetadata,
       };
     } catch (error) {
-      attachStructuredFailure(error, { rawText: content, parsedResponse: parsed, structuredMode: "exact_schema", ...(usage ? { usage } : {}) });
+      attachStructuredFailure(error, {
+        rawText: content,
+        parsedResponse: parsed,
+        structuredMode: "exact_schema",
+        ...(usage ? { usage } : {}),
+        attemptMetadata: responseMetadata,
+      });
       throw error;
     }
   }
@@ -832,6 +1347,7 @@ export function createProvider(
   config: ProviderConfig,
   environment: NodeJS.ProcessEnv = process.env,
   fetchImpl: FetchLike = fetch,
+  options: ProviderExecutionOptions = {},
 ): LlmProvider {
   switch (config.provider) {
     case "openrouter": {
@@ -843,6 +1359,19 @@ export function createProvider(
         config,
         config.endpoint ?? "https://openrouter.ai/api/v1/chat/completions",
         fetchImpl,
+        options.executionProfile,
+      );
+    }
+    case "xai": {
+      const key = environment.XAI_API_KEY;
+      if (!key) throw new Error("XAI_API_KEY is not set");
+      return new XaiProvider(
+        config.model,
+        key,
+        config,
+        config.endpoint ?? "https://api.x.ai/v1/chat/completions",
+        fetchImpl,
+        options.executionProfile,
       );
     }
     case "gemini": {
@@ -854,6 +1383,7 @@ export function createProvider(
         config,
         config.endpoint ?? "https://generativelanguage.googleapis.com/v1beta",
         fetchImpl,
+        options.executionProfile,
       );
     }
     case "openai": {
@@ -865,6 +1395,7 @@ export function createProvider(
         config,
         config.endpoint ?? "https://api.openai.com/v1/chat/completions",
         fetchImpl,
+        options.executionProfile,
       );
     }
     case "anthropic": {
@@ -876,6 +1407,7 @@ export function createProvider(
         config,
         config.endpoint ?? "https://api.anthropic.com/v1/messages",
         fetchImpl,
+        options.executionProfile,
       );
     }
     case "deepseek": {
@@ -887,6 +1419,7 @@ export function createProvider(
         config,
         config.endpoint ?? "https://api.deepseek.com/chat/completions",
         fetchImpl,
+        options.executionProfile,
       );
     }
   }

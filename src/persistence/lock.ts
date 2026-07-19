@@ -20,6 +20,11 @@ type LockSnapshotResult =
   | { kind: "unstable" }
   | { kind: "present"; snapshot: LockSnapshot };
 
+function isTransientWindowsLockError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return process.platform === "win32" && (code === "EPERM" || code === "EBUSY");
+}
+
 const INCOMPLETE_LOCK_GRACE_MS = 30_000;
 const MAX_RECLAIM_CLAIM_GENERATIONS = 1_000;
 
@@ -62,6 +67,7 @@ async function readLockSnapshot(target: string): Promise<LockSnapshotResult> {
     after = await stat(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+    if (isTransientWindowsLockError(error)) return { kind: "unstable" };
     throw error;
   }
   if (!sameFileVersion(before, after)) return { kind: "unstable" };

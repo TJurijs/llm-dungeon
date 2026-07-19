@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inspectPrompt, PROMPT_PHASES } from "../src/prompt-inspection.js";
-import { judgeSystemPrompt } from "../src/evaluation/judge.js";
+import { playtestJudgeSystemPrompt } from "../src/playtest/judge.js";
 import { resolveCheck } from "../src/mechanics.js";
 import {
   adjudicationPromptDocument,
@@ -72,12 +72,16 @@ describe("prompt suite V1", () => {
     expect(resolutionIds).toContain("current-state-reconciliation");
     expect(adjudication.text).toContain(CHECK_DIFFICULTY_POLICY.content);
     expect(adjudication.text).toContain("account for every material clause");
+    expect(adjudication.text).toContain("Do not substitute another helpful action, escape, travel, self-preservation maneuver, or state change");
     expect(adjudication.text).toContain(CURRENT_STATE_RECONCILIATION.content);
     expect(resolution.text).toContain(CURRENT_STATE_RECONCILIATION.content);
     expect(resolution.text).toContain("Application-calculated outcome: success");
     expect(resolution.text).toContain("MUST return decision=resolved");
     expect(resolution.text).toContain("returning check_required or proposing another check is invalid");
     expect(resolution.text).toContain("Preserve the attempted action's scope and quantity");
+    expect(resolution.text).toContain("SELECTED LOCKED OUTCOME: success");
+    expect(resolution.text).toContain("SELECTED LOCKED STAKE â€” NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: Succeed.");
+    expect(resolution.text).toContain("narration, effects, and summary all contain its required success, setback, injury, loss, or other consequence");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("directly relevant and actually brought to bear");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("cannot supply expertise, knowledge, access, or authority");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("natural-100 override");
@@ -122,12 +126,16 @@ describe("prompt suite V1", () => {
     expect(RESOLVED_TURN_AUDIT.content).toContain("Do not leave elapsed time frozen");
     expect(DM_SYSTEM_PROMPT).toContain("an observation, report, suspicion, or correlation is not proof");
     expect(DM_SYSTEM_PROMPT).toContain("currently resist the specific immediate outcome");
+    expect(DM_SYSTEM_PROMPT).toContain("honoring an existing promise remains unopposed");
+    expect(DM_SYSTEM_PROMPT).toContain("does not itself consume campaign time");
     expect(DM_SYSTEM_PROMPT).toContain("Do not silently omit requested speech, commitments, transfers, destinations");
     expect(DM_SYSTEM_PROMPT).toContain("does not authorize performing that later action");
     expect(GAMEPLAY_CONTRACT.content).toContain('Default to ["$unchanged"]');
     expect(GAMEPLAY_CONTRACT.content).toContain('for items, relatedId="" and a separate change_inventory');
     expect(GAMEPLAY_CONTRACT.content).toContain("durable retrieval links");
     expect(GAMEPLAY_CONTRACT.content).toContain("summary body without repeating the thread title");
+    expect(GAMEPLAY_CONTRACT.content).toContain('verify narration === "", summary === "", and effects is exactly []');
+    expect(adjudicationPromptDocument(context, action).text).toContain("CHECK-REQUIRED WIRE AUDIT");
     expect(CURRENT_STATE_RECONCILIATION.content).toContain("cannot remain DM-only");
     expect(CURRENT_STATE_RECONCILIATION.content).toContain("pending audit");
     expect(CURRENT_STATE_RECONCILIATION.content).toContain("Reconcile scene-wide state");
@@ -147,18 +155,21 @@ describe("prompt suite V1", () => {
     const original = resolutionPromptDocument(context, action, check).text;
     expect(structuredRepairPrompt(original, "<BAD RESPONSE>", new Error("invalid")))
       .toContain(CURRENT_STATE_RECONCILIATION.content);
+    const checkRepair = structuredRepairPrompt(original, {
+      decision: "check_required",
+      narration: "",
+      summary: "Premature summary.",
+      effects: [],
+    }, new Error("summary must be empty"));
+    expect(checkRepair).toContain("CHECK-REQUIRED REPAIR CHECKLIST");
+    expect(checkRepair).toContain('set narration exactly to "", summary exactly to "", and effects exactly to []');
     expect(turnDomainCorrectionPrompt(original, "<REJECTED RESPONSE>", new Error("invalid")))
       .toContain(CURRENT_STATE_RECONCILIATION.content);
-    expect(judgeSystemPrompt("en")).toContain(CURRENT_STATE_RECONCILIATION.content);
-    expect(judgeSystemPrompt("en")).toContain("narration-to-state pass");
-    expect(judgeSystemPrompt("en")).toContain("one-sided change_inventory debit is not a persisted transfer");
-    expect(judgeSystemPrompt("en")).toContain("A player-knowledge fact does not persist objective world damage");
-    expect(judgeSystemPrompt("en")).toContain("Treat descriptions as stable identity text");
-    expect(judgeSystemPrompt("en")).toContain("caps persistenceScore and overallScore at 8");
-    expect(judgeSystemPrompt("en")).toContain("Audit scene-wide state");
-    expect(judgeSystemPrompt("en")).toContain("routine tactical exchanges");
-    expect(judgeSystemPrompt("en")).toContain("durableConsequences must be an empty array");
-    expect(judgeSystemPrompt("en")).toContain("Audit every starting active thread independently");
+    expect(playtestJudgeSystemPrompt("en")).toContain(CURRENT_STATE_RECONCILIATION.content);
+    expect(playtestJudgeSystemPrompt("en")).toContain(CHECK_DIFFICULTY_POLICY.content);
+    expect(playtestJudgeSystemPrompt("en")).toContain("Candidate technical status was frozen before judging");
+    expect(playtestJudgeSystemPrompt("en")).toContain("Judge failures, latency, cost, retries, and repairs are judge telemetry only");
+    expect(playtestJudgeSystemPrompt("en")).toContain("Audit every completed turn and every committed operation index");
   });
 
   it("defines administrative appeals without creating another gameplay contract", () => {

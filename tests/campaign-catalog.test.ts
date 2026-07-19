@@ -403,6 +403,24 @@ describe("campaign catalog", () => {
     expect((await catalog.listCampaigns()).map((campaign) => campaign.campaignId)).toContain(created.campaignId);
   });
 
+  it("renames an active campaign atomically and keeps archived campaigns read-only", async () => {
+    const dataRoot = await temporaryDataRoot();
+    const catalog = new CampaignCatalog(dataRoot, { defaultProviderConfig: gemini });
+    const created = await catalog.createCampaign({ setup: setup("Original title"), worldRules: "Rules." });
+
+    const renamed = await catalog.renameCampaign(created.campaignId, "A Better Name");
+    expect(renamed.title).toBe("A Better Name");
+    expect((await catalog.listCampaigns()).find((campaign) => campaign.campaignId === created.campaignId)?.title)
+      .toBe("A Better Name");
+    expect((await created.store.readManifest()).title).toBe("A Better Name");
+
+    await catalog.archiveCampaign(created.campaignId);
+    await expect(catalog.renameCampaign(created.campaignId, "Forbidden"))
+      .rejects.toThrow(/archived and cannot be renamed/);
+    expect((await catalog.readCampaign(created.campaignId).then((store) => store.readManifest())).title)
+      .toBe("A Better Name");
+  });
+
   it("migrates the legacy current save and archives without resurrecting archived campaigns", async () => {
     const dataRoot = await temporaryDataRoot();
     const legacy = new StateStore(dataRoot);

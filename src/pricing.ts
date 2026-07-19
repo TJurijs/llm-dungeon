@@ -45,9 +45,11 @@ const OPENROUTER_PRICE_TIMEOUT_MS = 5_000;
 /** Standard per-token rates returned by OpenRouter's public model catalog. */
 const OPENROUTER_TOKEN_PRICES: Readonly<Record<string, TokenPrice>> = {
   "google/gemini-3.5-flash": { inputPerMillion: 1.5, outputPerMillion: 9 },
-  "google/gemini-3.1-pro-preview": { inputPerMillion: 2, outputPerMillion: 12 },
   "google/gemini-3.1-flash-lite": { inputPerMillion: 0.25, outputPerMillion: 1.5 },
   "openai/gpt-5.6-sol": { inputPerMillion: 5, outputPerMillion: 30 },
+  "openai/gpt-5.6-luna": { inputPerMillion: 1, outputPerMillion: 6 },
+  "openai/gpt-5.6-terra": { inputPerMillion: 2.5, outputPerMillion: 15 },
+  "openai/gpt-5.4-nano": { inputPerMillion: 0.2, outputPerMillion: 1.25 },
   "openai/gpt-5.4": { inputPerMillion: 2.5, outputPerMillion: 15 },
   "openai/gpt-5.4-mini": { inputPerMillion: 0.75, outputPerMillion: 4.5 },
   "openai/gpt-5-mini": { inputPerMillion: 0.25, outputPerMillion: 2 },
@@ -58,8 +60,12 @@ const OPENROUTER_TOKEN_PRICES: Readonly<Record<string, TokenPrice>> = {
   "deepseek/deepseek-v4-flash": { inputPerMillion: 0.098, outputPerMillion: 0.196 },
   "deepseek/deepseek-v4-pro": { inputPerMillion: 0.435, outputPerMillion: 0.87 },
   "moonshotai/kimi-k2.6": { inputPerMillion: 0.95, outputPerMillion: 4 },
+  "minimax/minimax-m3": { inputPerMillion: 0.3, outputPerMillion: 1.2 },
   "qwen/qwen3.7-plus": { inputPerMillion: 0.32, outputPerMillion: 1.28 },
+  "tencent/hy3": { inputPerMillion: 0.2, outputPerMillion: 0.8 },
+  "deepseek/deepseek-v3.2": { inputPerMillion: 0.2145, outputPerMillion: 0.3218 },
   "x-ai/grok-4.5": { inputPerMillion: 2, outputPerMillion: 6 },
+  "x-ai/grok-4.3": { inputPerMillion: 1.25, outputPerMillion: 2.5 },
 };
 const DEFAULT_OPENROUTER_PRICE_MAP = new Map(Object.entries(OPENROUTER_TOKEN_PRICES));
 
@@ -140,6 +146,7 @@ export function estimateTokenCost(usage: Usage | undefined, price: TokenPrice): 
 
 export function openRouterModelId(provider: string, modelId: string): string {
   if (provider === "openrouter") return modelId;
+  if (provider === "xai") return `x-ai/${modelId}`;
   if (provider === "gemini") return `google/${modelId}`;
   if (provider === "openai") return `openai/${modelId}`;
   if (provider === "deepseek") return `deepseek/${modelId}`;

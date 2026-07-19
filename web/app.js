@@ -105,6 +105,8 @@ function applyLocale(language) {
   $("#campaign-model").setAttribute("aria-label", t("model"));
   $("#open-campaign-setup").setAttribute("aria-label", t("campaignSetup"));
   $("#open-campaign-setup").title = t("campaignSetup");
+  $("#edit-campaign-title").setAttribute("aria-label", t("editCampaignName"));
+  $("#edit-campaign-title").title = t("editCampaignName");
   $("#close-campaign-setup").setAttribute("aria-label", t("closeCampaignSetup"));
   $("#cancel-archive-campaign-x").setAttribute("aria-label", t("cancelArchiving"));
   $("#open-inspection").setAttribute("aria-label", t("campaignState"));
@@ -130,10 +132,13 @@ function syncProviderOnboarding() {
   const configured = hasConfiguredProviderKey(status.llm, status.keyStatus);
   $("#campaign-welcome").hidden = !configured;
   $("#provider-onboarding").hidden = configured;
+  $("#empty-new-campaign").hidden = !configured;
+  $("#empty-open-settings").hidden = configured;
   $("#new-campaign-icon").textContent = configured ? "＋" : "⚙";
   const label = t(configured ? "newCampaign" : "configureLlmProvider");
   $("#new-campaign-label").textContent = label;
-  $("#empty-new-campaign").textContent = label;
+  $("#empty-new-campaign").textContent = t("newCampaign");
+  $("#empty-open-settings").textContent = t("openSettings");
 }
 
 function setPrefillButtonCopy(button, kind) {
@@ -350,6 +355,7 @@ function syncCampaignModel(campaign) {
       available: false,
       enabled: false,
       keyPresent: false,
+      hidden: true,
     });
   }
   const signature = options.map((option) => [modelValue(option.provider, option.model), option.providerLabel, option.label, option.available, option.enabled, option.keyPresent].join(":")).join("|");
@@ -364,7 +370,8 @@ function syncCampaignModel(campaign) {
       const element = document.createElement("option");
       element.value = modelValue(option.provider, option.model);
       const isCurrentUnavailable = element.value === currentValue && !(option.available && option.enabled && option.keyPresent);
-      element.textContent = `${option.label}${option.recommended ? ` · ${t("recommended")}` : ""}${isCurrentUnavailable ? ` · ${t("needsTest")}` : ""}`;
+      const unavailableLabel = option.hidden ? t("legacyModel") : t("needsTest");
+      element.textContent = `${option.label}${option.recommended ? ` · ${t("recommended")}` : ""}${isCurrentUnavailable ? ` · ${unavailableLabel}` : ""}`;
       groups.get(option.provider).append(element);
     }
     select.replaceChildren(...groups.values());
@@ -376,7 +383,7 @@ function syncCampaignModel(campaign) {
 
 function renderCampaignChrome() {
   const campaign = selectedCampaign();
-  $("#campaign-title").textContent = campaign?.title ?? "llm-dungeon";
+  if ($("#campaign-title-form").hidden) $("#campaign-title").textContent = campaign?.title ?? "llm-dungeon";
   $("#campaign-meta").textContent = campaign
     ? [`${t("turn")} ${campaign.turn}`, campaign.timeLabel, statusLabel(campaign), campaignCostText(campaign.campaignCost, t("campaignCost"))].filter(Boolean).join(" · ")
     : "";
@@ -386,7 +393,45 @@ function renderCampaignChrome() {
   $("#open-inspection").disabled = unavailable;
   $("#export-campaign").disabled = unavailable;
   $("#archive-campaign").disabled = unavailable || campaign.archived;
+  $("#edit-campaign-title").disabled = unavailable || campaign.archived;
   if (campaign) updateComposer(campaign);
+}
+
+function beginCampaignTitleEdit() {
+  const campaign = selectedCampaign();
+  if (!campaign || campaign.archived || campaignBusy(campaign)) return;
+  $("#campaign-title-input").value = campaign.title;
+  $("#campaign-title").hidden = true;
+  $("#edit-campaign-title").hidden = true;
+  $("#campaign-title-form").hidden = false;
+  $("#campaign-title-input").focus();
+  $("#campaign-title-input").select();
+}
+
+function cancelCampaignTitleEdit() {
+  $("#campaign-title-form").hidden = true;
+  $("#campaign-title").hidden = false;
+  $("#edit-campaign-title").hidden = false;
+  renderCampaignChrome();
+  $("#edit-campaign-title").focus();
+}
+
+async function saveCampaignTitle() {
+  const campaign = selectedCampaign();
+  const title = $("#campaign-title-input").value.trim();
+  if (!campaign || campaign.archived || campaignBusy(campaign) || !title) return;
+  try {
+    const body = await api(campaignApiPath(campaign.campaignId, "title"), {
+      method: "PUT",
+      body: JSON.stringify({ title }),
+    });
+    updateCampaignFromState(body.campaign);
+    cancelCampaignTitleEdit();
+    showToast(t("campaignRenamed"), "success");
+  } catch (error) {
+    showToast(error.message, "error");
+    $("#campaign-title-input").focus();
+  }
 }
 
 function closeSidebar({ restoreFocus = false } = {}) {
@@ -979,6 +1024,7 @@ const setupSettings = createSetupSettingsController({
 function bindEvents() {
   $("#new-campaign").addEventListener("click", handleCampaignCta);
   $("#empty-new-campaign").addEventListener("click", handleCampaignCta);
+  $("#empty-open-settings").addEventListener("click", openProviderSettings);
   $("#open-settings").addEventListener("click", () => showView("settings"));
   $("#campaign-list").addEventListener("click", handleCampaignListClick);
   $("#archived-campaign-list").addEventListener("click", handleCampaignListClick);
@@ -1009,6 +1055,18 @@ function bindEvents() {
   });
   $("#export-campaign").addEventListener("click", exportCampaign);
   $("#open-campaign-setup").addEventListener("click", openCampaignSetup);
+  $("#edit-campaign-title").addEventListener("click", beginCampaignTitleEdit);
+  $("#campaign-title-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCampaignTitle();
+  });
+  $("#cancel-campaign-title").addEventListener("click", cancelCampaignTitleEdit);
+  $("#campaign-title-input").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelCampaignTitleEdit();
+    }
+  });
   $("#close-campaign-setup").addEventListener("click", closeCampaignSetup);
   $("#campaign-setup-dialog").addEventListener("close", () => { campaignSetupSequence += 1; });
   $("#archive-campaign").addEventListener("click", requestArchiveCampaign);

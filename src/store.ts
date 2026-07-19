@@ -114,6 +114,12 @@ export interface LoadedCampaign {
   chronicle: ChronicleEvent[];
 }
 
+export interface GameplayContextObservation {
+  fullNarrationTurns: number[];
+  summaryTurns: number[];
+  durableEntityIds: string[];
+}
+
 export interface CommitTurnResult {
   state: GameState;
   operations: import("./schemas.js").StateOperation[];
@@ -514,6 +520,20 @@ export class StateStore {
     return manifest;
   }
 
+  async setTitle(title: string): Promise<GameState> {
+    return this.withCampaignLock(async () => {
+      await this.assertWritable("rename campaign");
+      const loaded = await this.loadUnlocked();
+      const manifest = ManifestSchema.parse({
+        ...loaded.manifest,
+        title,
+        updatedAt: new Date().toISOString(),
+      });
+      await atomicWriteText(path.join(this.currentDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+      return manifest;
+    });
+  }
+
   async readManifest(): Promise<GameState> {
     return this.readManifestUnlocked();
   }
@@ -764,8 +784,30 @@ export class StateStore {
     return this.withCampaignLock(() => this.buildContextUnlocked());
   }
 
-  private async buildContextUnlocked(): Promise<string> {
-    const loaded = await this.loadUnlocked();
+  /** Structured evidence derived from the exact selection policy used by buildContext(). */
+  async buildContextObservation(): Promise<GameplayContextObservation> {
+    return this.withCampaignLock(async () => {
+      const loaded = await this.loadUnlocked();
+      const { selected } = this.selectGameplayContextEntities(loaded);
+      const recent = await this.recentTurnLogsUnlocked(8);
+      const turns = recent.map((log) => parsePlayerVisibleTurn(log, loaded.manifest.language).turn);
+      return {
+        fullNarrationTurns: turns.length === 0 ? [] : [turns.at(-1)!],
+        summaryTurns: turns,
+        durableEntityIds: [
+          ...selected.keys(),
+          ...[...loaded.entities.values()]
+            .filter((entity) => entity.kind === "location")
+            .map((entity) => entity.id),
+          ...loaded.threads.map((thread) => thread.id),
+        ].filter((id, index, all) => all.indexOf(id) === index).sort(),
+      };
+    });
+  }
+
+  private selectGameplayContextEntities(
+    loaded: LoadedCampaign,
+  ): { selected: Map<string, Entity>; directlyRelevant: Entity[] } {
     const player = loaded.entities.get(loaded.manifest.playerId);
     const location = loaded.entities.get(loaded.manifest.currentLocationId);
     if (!player || !location) throw new Error("Campaign is missing the player or current location");
@@ -801,6 +843,15 @@ export class StateStore {
         if (related) selected.set(related.id, related);
       }
     }
+    return { selected, directlyRelevant };
+  }
+
+  private async buildContextUnlocked(): Promise<string> {
+    const loaded = await this.loadUnlocked();
+    const player = loaded.entities.get(loaded.manifest.playerId);
+    const location = loaded.entities.get(loaded.manifest.currentLocationId);
+    if (!player || !location) throw new Error("Campaign is missing the player or current location");
+    const { selected, directlyRelevant } = this.selectGameplayContextEntities(loaded);
     const recent = await this.recentTurnLogsUnlocked(8);
     const operationLedgerWindow = await this.currentOperationLedgerWindowUnlocked(loaded.manifest.turn);
     const lastCommittedOperations = operationLedgerWindow.map((ledger) => [

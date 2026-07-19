@@ -57,7 +57,20 @@
             </svg>
           </button>
           <div class="campaign-heading">
-            <h1 id="campaign-title" tabindex="-1">llm-dungeon</h1>
+            <div class="campaign-title-row">
+              <h1 id="campaign-title" tabindex="-1">llm-dungeon</h1>
+              <button id="edit-campaign-title" class="icon-button edit-campaign-title" type="button" aria-label="Edit campaign name" title="Edit campaign name" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4Z"></path>
+                  <path d="m13.5 6.5 4 4"></path>
+                </svg>
+              </button>
+              <form id="campaign-title-form" class="campaign-title-form" hidden>
+                <input id="campaign-title-input" type="text" maxlength="200" autocomplete="off">
+                <button type="submit" class="compact-button" data-i18n="save">Save</button>
+                <button id="cancel-campaign-title" type="button" class="compact-button" data-i18n="cancel">Cancel</button>
+              </form>
+            </div>
             <p id="campaign-meta" class="campaign-meta"></p>
           </div>
           <div class="chat-header-actions">
@@ -92,16 +105,17 @@
               <p data-i18n="welcomeBody">Create a campaign to begin, or choose one from the sidebar.</p>
             </div>
             <div id="provider-onboarding" class="provider-onboarding" hidden>
-              <h2 data-i18n="providerOnboardingTitle">Connect an LLM provider</h2>
-              <p data-i18n="providerOnboardingBody">llm-dungeon needs one provider key before it can create a campaign.</p>
+              <h2 data-i18n="providerOnboardingTitle">Welcome to llm-dungeon</h2>
+              <p data-i18n="providerOnboardingBody">Connect an LLM provider in Settings, then create your first campaign and start playing.</p>
               <ul class="provider-onboarding-guide">
                 <li data-i18n="providerOnboardingRecommendation">Recommended: Google Gemini with gemini-3.5-flash.</li>
-                <li data-i18n="providerOnboardingSupported">Supported providers: Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek.</li>
+                <li data-i18n="providerOnboardingSupported">Available for new selection: Google Gemini, OpenRouter, xAI, OpenAI, and DeepSeek.</li>
                 <li data-i18n="providerOnboardingEnv">Save a key in ./.env at the repository root, then restart the app.</li>
                 <li data-i18n="providerOnboardingSession">Or use the provider's ••• menu in Settings to enter a temporary session key. It stays only in server memory until restart.</li>
               </ul>
             </div>
             <button id="empty-new-campaign" class="primary" type="button">New campaign</button>
+            <button id="empty-open-settings" class="primary" type="button" data-i18n="openSettings" hidden>Open Settings</button>
           </div>
           <div id="chat-log" class="chat-log" role="log" aria-label="Campaign transcript" aria-relevant="additions" aria-busy="false" hidden></div>
         </div>
@@ -264,10 +278,12 @@
             </section>
 
             <section id="settings-providers-panel" class="settings-card settings-panel llm-settings-card" data-settings-panel="providers" aria-labelledby="llm-settings-title" hidden>
-              <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
-              <p class="field-hint" data-i18n="llmConfigurationHint">Use a temporary session key here or configure .env. Test a model before using it in a campaign.</p>
-              <p id="llm-pricing-hint" class="field-hint llm-pricing-hint"></p>
-              <p class="field-hint llm-quality-legend" data-i18n="qualityLegend">Quality: High — strongest; Medium — balanced; Low — budget.</p>
+              <header class="llm-settings-header">
+                <div>
+                  <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
+                </div>
+                <div id="llm-status-legend" class="model-status-legend" aria-label="Model status legend"></div>
+              </header>
               <p id="llm-default-summary" class="llm-default-summary"></p>
               <div id="llm-providers" class="llm-provider-list" aria-live="polite"></div>
             </section>

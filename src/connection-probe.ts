@@ -15,7 +15,7 @@ import {
   connectionSetupPrompt,
 } from "./prompts/connection.js";
 import { PROVIDER_ADAPTER_COMPATIBILITY_REVISION } from "./providers.js";
-import { LANGUAGES, type LanguageCode } from "./language.js";
+import { LANGUAGES, LanguageCodeSchema, type LanguageCode } from "./language.js";
 import { SetupResultSchema, TurnDecisionSchema } from "./schemas.js";
 import { GenerationFailure } from "./llm/failures.js";
 import type { LlmProvider, StructuredResult } from "./types.js";
@@ -58,11 +58,15 @@ function requireProbeValue(actual: string, expected: string, language: LanguageC
   }
 }
 
-/** Exercise both schemas and deterministic language markers required by the application. */
-export async function probeProviderConnection(provider: LlmProvider): Promise<ConnectionProbeResult> {
+/** Exercise both schemas and deterministic markers for the requested language(s). */
+export async function probeProviderConnection(
+  provider: LlmProvider,
+  languages: readonly LanguageCode[] = Object.keys(LANGUAGES) as LanguageCode[],
+): Promise<ConnectionProbeResult> {
   let usage: StructuredResult<unknown>["usage"];
   let lastGameplay: StructuredResult<unknown> | undefined;
-  const testedLanguages = Object.keys(LANGUAGES) as LanguageCode[];
+  const testedLanguages = [...new Set(languages.map((language) => LanguageCodeSchema.parse(language)))];
+  if (testedLanguages.length === 0) throw new Error("At least one gameplay language must be tested");
 
   for (const language of testedLanguages) {
     const probe = connectionProbeForLanguage(language);
@@ -73,6 +77,7 @@ export async function probeProviderConnection(provider: LlmProvider): Promise<Co
       prompt: connectionSetupPrompt(probe.setup),
       temperature: 0,
       maxOutputTokens: 2_000,
+      generationPhase: "setup",
     });
     requireProbeValue(setup.data.campaignTitle, probe.setup.campaignTitle, language, "campaign setup");
     usage = combineUsage(usage, setup.usage);
@@ -85,6 +90,7 @@ export async function probeProviderConnection(provider: LlmProvider): Promise<Co
       prompt: connectionGameplayPrompt(probe.gameplayMarker),
       temperature: 0,
       maxOutputTokens: 2_000,
+      generationPhase: "decision",
     }));
     if (gameplay.data.kind !== "resolved") {
       throw new GenerationFailure("provider", `Provider compatibility test returned a check for ${language}`, false);

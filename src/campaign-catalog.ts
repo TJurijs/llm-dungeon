@@ -579,6 +579,17 @@ export class CampaignCatalog {
     });
   }
 
+  async renameCampaign(campaignId: string, title: string): Promise<CampaignCatalogSummary> {
+    return this.withCatalogLock(async () => {
+      await this.ensureReadyUnlocked();
+      const entry = await this.entryUnlocked(campaignId);
+      if (entry.metadata.archived) throw new Error(`Campaign ${campaignId} is archived and cannot be renamed`);
+      const store = this.storeFor(entry.scopeRoot, entry.metadata, false);
+      const manifest = await store.setTitle(title);
+      return summaryOf({ ...entry, manifest });
+    });
+  }
+
   async deleteArchivedCampaign(campaignId: string): Promise<void> {
     await this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();

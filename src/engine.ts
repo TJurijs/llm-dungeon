@@ -115,6 +115,7 @@ export class DungeonEngine implements GameEngine {
       prompt,
       temperature: 0.8,
       maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
+      generationPhase: "setup",
     });
     try {
       return {
@@ -133,6 +134,9 @@ export class DungeonEngine implements GameEngine {
         prompt: setupDomainCorrectionPrompt(prompt, generated.data, error),
         temperature: 0.4,
         maxOutputTokens: SETUP_MAX_OUTPUT_TOKENS,
+        generationPhase: "repair",
+        repairOfPhase: "setup",
+        attemptKind: "domain_repair",
       });
       const usage = combineUsage(generated.usage, corrected.usage);
       return {
@@ -254,6 +258,7 @@ export class DungeonEngine implements GameEngine {
         decodeResponse: decodeTurnDecision,
         system: DM_SYSTEM_PROMPT,
         prompt,
+        generationPhase: "decision",
       }));
       if (decision.data.kind === "resolved") {
         return this.commitWithDomainRepair(
@@ -293,6 +298,7 @@ export class DungeonEngine implements GameEngine {
       decodeResponse: decodeResolvedTurn,
       system: DM_SYSTEM_PROMPT,
       prompt,
+      generationPhase: "locked_resolution",
     }));
     const usage = combineUsage(pending.priorUsage, resolution.usage);
     const combined: StructuredResult<ResolvedTurn> = { ...resolution, ...(usage ? { usage } : {}) };
@@ -317,6 +323,7 @@ export class DungeonEngine implements GameEngine {
       system: APPEAL_SYSTEM_PROMPT,
       prompt,
       temperature: 0.2,
+      generationPhase: "locked_resolution",
     }));
     return this.commitWithDomainRepair(
       {
@@ -360,6 +367,9 @@ export class DungeonEngine implements GameEngine {
         system: request.kind === "appeal" ? APPEAL_SYSTEM_PROMPT : DM_SYSTEM_PROMPT,
         prompt: turnDomainCorrectionPrompt(originalPrompt, resolved, error),
         temperature: 0.4,
+        generationPhase: "repair",
+        repairOfPhase: check === undefined ? "decision" : "locked_resolution",
+        attemptKind: "domain_repair",
       }));
       const usage = combineUsage(result.usage, corrected.usage);
       const enforced = request.kind === "gameplay"

@@ -3,18 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "A persistent, non-agentic LLM dungeon master with terminal and browser companions",
+  "description": "A persistent, non-agentic LLM dungeon master with a local Web app and optional terminal interface",
   "type": "module",
   "bin": {
     "llm-dungeon": "dist/cli.js"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "web-cli": "tsx src/cli.ts web-cli",
+    "web": "tsx src/cli.ts web",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/cli.js",
-    "start:web-cli": "node dist/cli.js web-cli",
+    "start:web": "node dist/cli.js web",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

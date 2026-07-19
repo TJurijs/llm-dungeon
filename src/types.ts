@@ -9,6 +9,11 @@ import type { LanguageCode } from "./language.js";
 import type { CheckResult } from "./mechanics.js";
 import type { PendingTurn } from "./persistence/pending.js";
 import type { Usage } from "./usage.js";
+import type {
+  ModelGenerationPhase,
+  OutputTokenField,
+  SchemaProjectionId,
+} from "./model-execution-profile.js";
 
 export type { CheckResult } from "./mechanics.js";
 
@@ -26,6 +31,49 @@ export interface StructuredRequest<T> {
   prompt: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /** Optional application-owned ceiling below a calibrated phase budget. */
+  outputTokenCeiling?: number;
+  /** Semantic phase used by a frozen model execution profile. */
+  generationPhase?: ModelGenerationPhase;
+  /** The phase whose failed output is being repaired. */
+  repairOfPhase?: Exclude<ModelGenerationPhase, "repair">;
+  /** Physical attempt kind; retries retain the semantic generation phase. */
+  attemptKind?: StructuredAttemptKind;
+  /** Time spent in bounded retry backoff before this physical attempt. */
+  retryBackoffMs?: number;
+}
+
+export type StructuredAttemptKind = "initial" | "schema_repair" | "transient_retry" | "domain_repair";
+
+export interface ProviderAttemptMetadata {
+  provider: string;
+  model: string;
+  route: string;
+  generationPhase?: ModelGenerationPhase;
+  attemptKind: StructuredAttemptKind;
+  profileFingerprint?: string;
+  structuredMode: NonNullable<StructuredResult<unknown>["structuredMode"]>;
+  schemaProjection: SchemaProjectionId;
+  outputTokenField: OutputTokenField;
+  outputTokenBudget: number;
+  timeoutMs?: number;
+  retryBackoffMs: number;
+  finishReason?: string;
+  truncated: boolean;
+}
+
+export interface ProviderRequestDiagnostics {
+  /** UTC time when the provider request was initiated. */
+  timestamp: string;
+  provider: string;
+  model: string;
+  /** Locally generated correlation ID; sent to OpenAI as X-Client-Request-Id. */
+  clientRequestId: string;
+  /** Provider-generated correlation ID from the allowlisted response header. */
+  requestId?: string;
+  httpStatus?: number;
+  /** Only documented rate-limit headers are retained; all other headers are discarded. */
+  rateLimitHeaders?: Record<string, string>;
 }
 
 export interface StructuredResult<T> {
@@ -36,6 +84,8 @@ export interface StructuredResult<T> {
   structuredMode?: "exact_schema" | "json_object_local_schema";
   protocolVersion?: number;
   usage?: Usage;
+  requestDiagnostics?: ProviderRequestDiagnostics;
+  attemptMetadata?: ProviderAttemptMetadata;
 }
 
 export interface LlmProvider {

@@ -77,4 +77,15 @@ describe("provider compatibility probe", () => {
     await expect(probeProviderConnection(new LanguageProbeProvider(true)))
       .rejects.toThrow("did not preserve the ru campaign setup marker");
   });
+
+  it("can probe one gameplay language independently", async () => {
+    const provider = new LanguageProbeProvider(true);
+    const result = await probeProviderConnection(provider, ["en"]);
+
+    expect(provider.schemaNames).toEqual([
+      "connection_campaign_setup_en",
+      "connection_gameplay_contract_v1_en",
+    ]);
+    expect(result.testedLanguages).toEqual(["en"]);
+  });
 });

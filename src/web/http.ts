@@ -108,7 +108,7 @@ export function rejectUntrustedHost(
   return true;
 }
 
-/** Enforce the local Web CLI's JSON and same-origin mutation boundary. */
+/** Enforce the local Web application's JSON and same-origin mutation boundary. */
 export function rejectUnsafeMutation(request: IncomingMessage, response: ServerResponse): boolean {
   const method = request.method ?? "GET";
   if (method !== "POST" && method !== "PUT" && method !== "DELETE") return false;

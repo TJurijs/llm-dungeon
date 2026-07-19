@@ -5,12 +5,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   LLM_MODEL_CATALOG_VERSION,
   LLM_PROVIDER_DEFINITIONS,
+  PUBLIC_LLM_PROVIDER_DEFINITIONS,
   RECOMMENDED_MODEL_SELECTION,
+  SUPPORTED_LLM_PROVIDER_DEFINITIONS,
   LlmModelCatalog,
   ModelUnavailableError,
+  isRetiredCuratedModel,
   type LlmModelCatalogSnapshot,
   type ModelSelection,
 } from "../src/llm-model-catalog.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
 
 const roots: string[] = [];
 const now = new Date("2026-07-17T12:34:56.000Z");
@@ -48,20 +52,30 @@ afterEach(async () => {
 });
 
 describe("LLM provider definitions", () => {
-  it("owns public metadata and curated candidates for every supported provider", () => {
-    expect(LLM_PROVIDER_DEFINITIONS.map((provider) => provider.id)).toEqual([
+  it("separates every supported adapter from the intentionally smaller public lineup", () => {
+    expect(SUPPORTED_LLM_PROVIDER_DEFINITIONS.map((provider) => provider.id)).toEqual([
       "gemini",
       "openrouter",
+      "xai",
       "openai",
       "anthropic",
       "deepseek",
     ]);
-    expect(LLM_PROVIDER_DEFINITIONS.map((provider) => provider.envKey)).toEqual([
+    expect(SUPPORTED_LLM_PROVIDER_DEFINITIONS.map((provider) => provider.envKey)).toEqual([
       "GEMINI_API_KEY",
       "OPENROUTER_API_KEY",
+      "XAI_API_KEY",
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
       "DEEPSEEK_API_KEY",
+    ]);
+    expect(PUBLIC_LLM_PROVIDER_DEFINITIONS).toBe(LLM_PROVIDER_DEFINITIONS);
+    expect(LLM_PROVIDER_DEFINITIONS.map((provider) => provider.id)).toEqual([
+      "gemini",
+      "openrouter",
+      "xai",
+      "openai",
+      "deepseek",
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.filter((provider) => provider.recommended).map((provider) => provider.id))
       .toEqual(["gemini"]);
@@ -71,17 +85,15 @@ describe("LLM provider definitions", () => {
       expect(new Set(provider.candidateModels).size).toBe(provider.candidateModels.length);
     }
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openrouter")?.candidateModels).toEqual([
-      "moonshotai/kimi-k2.6",
       "qwen/qwen3.7-plus",
-      "x-ai/grok-4.5",
     ]);
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels)
+      .toEqual(["gemini-3.5-flash", "gemini-3.1-flash-lite"]);
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "xai")?.candidateModels)
+      .toEqual(["grok-4.5"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
-      .toContain("gpt-5.6-sol");
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels).toEqual([
-      "claude-sonnet-4-6",
-      "claude-haiku-4-5",
-      "claude-opus-4-8",
-    ]);
+      .toEqual(["gpt-5.4"]);
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")).toBeUndefined();
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels).toEqual([
       "deepseek-v4-flash",
       "deepseek-v4-pro",
@@ -91,6 +103,40 @@ describe("LLM provider definitions", () => {
 });
 
 describe("LLM model catalog persistence", () => {
+  it("ships evaluated models as current while keeping Gemini 3.5 Flash as default", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root, { fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT, protocolVersion: 1 });
+
+    const snapshot = await registry.snapshot();
+    expect(snapshot.defaultModel).toEqual(RECOMMENDED_MODEL_SELECTION);
+    expect(model(snapshot, RECOMMENDED_MODEL_SELECTION)).toMatchObject({
+      candidate: true,
+      state: "compatible",
+      enabled: true,
+    });
+    await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en")).resolves.toBeDefined();
+    expect(snapshot.providers.find((provider) => provider.id === "anthropic")).toMatchObject({
+      public: false,
+      recommended: false,
+      models: [],
+    });
+    const grok45 = { provider: "xai", model: "grok-4.5" } as const;
+    expect(model(snapshot, grok45)).toMatchObject({
+      candidate: true,
+      state: "compatible",
+      enabled: true,
+    });
+    await expect(registry.assertAvailable(grok45, "en")).resolves.toBeDefined();
+    expect(model(snapshot, { provider: "xai", model: "grok-4.3" })).toBeUndefined();
+    for (const modelId of ["deepseek-v4-flash", "deepseek-v4-pro"]) {
+      expect(model(snapshot, { provider: "deepseek", model: modelId })).toMatchObject({
+        candidate: true,
+        state: "compatible",
+        enabled: true,
+      });
+    }
+  });
+
   it("bootstraps the fixed versioned file and merges a legacy selection as untested", async () => {
     const root = await temporaryProject();
     const legacySelection = { provider: "openrouter", model: "vendor/legacy-model" } as const;
@@ -98,27 +144,27 @@ describe("LLM model catalog persistence", () => {
 
     const snapshot = await registry.snapshot();
     expect(snapshot.version).toBe(LLM_MODEL_CATALOG_VERSION);
-    expect(snapshot.defaultModel).toBeNull();
-    expect(snapshot.providers).toHaveLength(5);
+    expect(snapshot.defaultModel).toEqual(RECOMMENDED_MODEL_SELECTION);
+    expect(snapshot.providers).toHaveLength(6);
     expect(model(snapshot, legacySelection)).toMatchObject({
       ...legacySelection,
       candidate: false,
       state: "untested",
       enabled: false,
     });
-    expect(model(snapshot, { provider: "gemini", model: "gemini-3.5-flash" })).toMatchObject({
+    expect(model(snapshot, RECOMMENDED_MODEL_SELECTION)).toMatchObject({
       candidate: true,
       state: "untested",
       enabled: true,
     });
-    await expect(registry.assertAvailable({ provider: "gemini", model: "gemini-3.5-flash" }, "en"))
+    await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en"))
       .rejects.toMatchObject({ reason: "untested" });
 
     const persistedPath = path.join(root, "config", "llm-models.json");
     const firstWrite = await readFile(persistedPath, "utf8");
     expect(JSON.parse(firstWrite)).toMatchObject({
       version: 1,
-      defaultModel: null,
+      defaultModel: RECOMMENDED_MODEL_SELECTION,
     });
     expect(firstWrite.endsWith("\n")).toBe(true);
 
@@ -140,18 +186,52 @@ describe("LLM model catalog persistence", () => {
     expect(model(snapshot, custom)).toMatchObject({ candidate: false, state: "untested", enabled: false });
   });
 
-  it("preserves removed curated models only as non-candidate legacy selections", async () => {
+  it("removes only custom models that are not the default", async () => {
     const root = await temporaryProject();
-    const removed = { provider: "deepseek", model: "deepseek-v3-pro" } as const;
+    const registry = catalog(root);
+    const custom = { provider: "anthropic", model: "claude-removable-preview" } as const;
 
-    const snapshot = await catalog(root, { legacySelection: removed }).snapshot();
+    await registry.addModel(custom);
+    expect(model(await registry.removeModel(custom), custom)).toBeUndefined();
+    await expect(registry.removeModel({ provider: "gemini", model: "gemini-3.5-flash" }))
+      .rejects.toThrow("Known model");
 
-    expect(model(snapshot, removed)).toMatchObject({
-      ...removed,
-      candidate: false,
-      state: "untested",
-      enabled: false,
-    });
+    await registry.addModel(custom);
+    await registry.recordTestSuccess(custom, { testedLanguages: ["en"] });
+    await registry.setDefault(custom);
+    await expect(registry.removeModel(custom)).rejects.toThrow("Default model");
+  });
+
+  it("preserves retired curated rows without restoring them to the public candidate lineup", async () => {
+    const root = await temporaryProject();
+    const target = path.join(root, "config", "llm-models.json");
+    const retired = [
+      { provider: "xai", model: "grok-4.3" },
+      { provider: "openai", model: "gpt-5.6-sol" },
+      { provider: "anthropic", model: "claude-sonnet-4-6" },
+    ] as const;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, `${JSON.stringify({
+      version: 1,
+      defaultModel: null,
+      models: retired.map((selection) => ({ ...selection, state: "untested", enabled: false })),
+    }, null, 2)}\n`, "utf8");
+
+    const snapshot = await catalog(root).snapshot();
+
+    for (const selection of retired) {
+      expect(isRetiredCuratedModel(selection)).toBe(true);
+      expect(model(snapshot, selection)).toMatchObject({
+        ...selection,
+        candidate: false,
+        state: "untested",
+        enabled: false,
+      });
+    }
+    const persisted = JSON.parse(await readFile(target, "utf8")) as { models: ModelSelection[] };
+    for (const selection of retired) {
+      expect(persisted.models).toContainEqual(expect.objectContaining(selection));
+    }
   });
 
   it("merges newly shipped candidates into an existing catalog idempotently", async () => {
@@ -220,6 +300,7 @@ describe("LLM model compatibility lifecycle", () => {
   it("records success, auto-enables, and chooses a default only when one is absent", async () => {
     const root = await temporaryProject();
     const registry = catalog(root, { protocolVersion: 7 });
+    await registry.setEnabled(RECOMMENDED_MODEL_SELECTION, false);
 
     let snapshot = await registry.recordTestSuccess(first, { testedLanguages: ["ru", "en", "ru"] });
     expect(snapshot.defaultModel).toEqual(first);
@@ -245,6 +326,7 @@ describe("LLM model compatibility lifecycle", () => {
     const root = await temporaryProject();
     const registry = catalog(root);
     await registry.recordTestSuccess(first, { testedLanguages: ["en", "ru"] });
+    await registry.setDefault(first);
     const unsafeShape = {
       testedLanguages: ["en"] as const,
       failureSummary: `  schema rejected\n${"x".repeat(600)}  `,
@@ -268,6 +350,7 @@ describe("LLM model compatibility lifecycle", () => {
     const root = await temporaryProject();
     const registry = catalog(root);
     await registry.recordTestSuccess(first, { testedLanguages: ["en"] });
+    await registry.setDefault(first);
 
     await expect(registry.assertAvailable(first, "en")).resolves.toMatchObject(first);
     await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({ reason: "language" });
@@ -284,10 +367,40 @@ describe("LLM model compatibility lifecycle", () => {
       .rejects.toMatchObject({ reason: "unregistered" });
   });
 
+  it("preserves a passing language when another language fails", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root);
+    await registry.recordTestSuccess(first, { testedLanguages: ["en", "ru"] });
+    await registry.setDefault(first);
+
+    let snapshot = await registry.recordTestFailure(first, {
+      failedLanguages: ["ru"],
+      failureSummary: "Russian marker was not preserved",
+    });
+    expect(model(snapshot, first)).toMatchObject({
+      state: "compatible",
+      enabled: true,
+      test: {
+        testedLanguages: ["en"],
+        failedLanguages: ["ru"],
+        failureSummary: "Russian marker was not preserved",
+      },
+    });
+    expect(snapshot.defaultModel).toEqual(first);
+    await expect(registry.assertAvailable(first, "en")).resolves.toBeDefined();
+    await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({ reason: "language" });
+
+    snapshot = await registry.recordTestSuccess(first, { testedLanguages: ["ru"] });
+    expect(model(snapshot, first)?.test).toMatchObject({ testedLanguages: ["en", "ru"] });
+    expect(model(snapshot, first)?.test?.failedLanguages).toBeUndefined();
+    expect(model(snapshot, first)?.test?.failureSummary).toBeUndefined();
+  });
+
   it("marks tested models stale on probe fingerprint changes and requires a retest", async () => {
     const root = await temporaryProject();
     const original = catalog(root, { fingerprint: "probe-a", protocolVersion: 1 });
     await original.recordTestSuccess(first, { testedLanguages: ["en", "ru"] });
+    await original.setDefault(first);
 
     const changedProbe = catalog(root, { fingerprint: "probe-b", protocolVersion: 1 });
     let snapshot = await changedProbe.snapshot();

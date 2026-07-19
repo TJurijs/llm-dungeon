@@ -6,6 +6,7 @@ import {
   GeminiProvider,
   OpenAIProvider,
   OpenRouterProvider,
+  XaiProvider,
   createProvider,
   providerSupportsTemperature,
 } from "../src/providers.js";
@@ -20,6 +21,7 @@ import {
   resolvedGameplayRequest,
 } from "../src/llm/gameplay-protocol.js";
 import { GenerationFailure } from "../src/llm/failures.js";
+import { requestDiagnosticsFor } from "../src/llm/request-diagnostics.js";
 import { structuredFailureDetails } from "../src/llm/structured-error.js";
 
 const answerSchema = z.object({ answer: z.string() });
@@ -143,6 +145,105 @@ describe("provider adapters", () => {
     expect((failure as Error).message).not.toContain(apiKey.slice(0, 8));
   });
 
+  it("reports an exact actionable path when a transfer uses a negative quantity", () => {
+    expect(() => decodeTurnDecision(resolvedWire([
+      effect({
+        kind: "transfer_item",
+        targetId: "player:hero",
+        relatedId: "npc:mara",
+        itemId: "item:silver-marks",
+        quantity: -3,
+      }),
+    ]))).toThrow(
+      "effects[0].quantity: transfer_item quantity must be strictly positive; direction is targetId (prior owner) to relatedId (new owner), so never use a negative quantity",
+    );
+    expect((GAMEPLAY_WIRE_JSON_SCHEMA.properties as Record<string, any>)
+      .effects.items.properties.quantity.description).toContain("never use a negative transfer quantity");
+  });
+
+  it("captures allowlisted OpenAI request diagnostics without retaining arbitrary headers", async () => {
+    let sentClientRequestId: string | null = null;
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      sentClientRequestId = new Headers(init?.headers).get("x-client-request-id");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), {
+        status: 200,
+        headers: {
+          "x-request-id": "req_success_123",
+          "x-ratelimit-remaining-requests": "99",
+          "x-ratelimit-reset-requests": "250ms",
+          "x-ratelimit-limit-tokens": "openai-key",
+          "x-unsafe-diagnostic": "must-not-be-retained",
+        },
+      });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.6-luna",
+      "openai-key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+
+    const result = await provider.generateStructured(answerRequest);
+
+    expect(sentClientRequestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(result.requestDiagnostics).toMatchObject({
+      timestamp: expect.any(String),
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      clientRequestId: sentClientRequestId,
+      requestId: "req_success_123",
+      httpStatus: 200,
+      rateLimitHeaders: {
+        "x-ratelimit-remaining-requests": "99",
+        "x-ratelimit-reset-requests": "250ms",
+      },
+    });
+    expect(JSON.stringify(result.requestDiagnostics)).not.toContain("must-not-be-retained");
+    expect(JSON.stringify(result.requestDiagnostics)).not.toContain("openai-key");
+  });
+
+  it("retains OpenAI correlation metadata on HTTP failures", async () => {
+    let sentClientRequestId: string | null = null;
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      sentClientRequestId = new Headers(init?.headers).get("x-client-request-id");
+      return new Response(JSON.stringify({ error: { message: "insufficient permissions" } }), {
+        status: 401,
+        headers: {
+          "x-request-id": "req_failure_456",
+          "x-ratelimit-remaining-tokens": "12345",
+        },
+      });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.6-luna",
+      "openai-key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+
+    let failure: unknown;
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ kind: "provider", status: 401 });
+    expect(requestDiagnosticsFor(failure)).toMatchObject({
+      timestamp: expect.any(String),
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      clientRequestId: sentClientRequestId,
+      requestId: "req_failure_456",
+      httpStatus: 401,
+      rateLimitHeaders: { "x-ratelimit-remaining-tokens": "12345" },
+    });
+  });
+
   it.each([
     ["OpenRouter", (apiKey: string, fetchMock: typeof fetch) =>
       new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
@@ -202,6 +303,10 @@ describe("provider adapters", () => {
       { OPENROUTER_API_KEY: "openrouter-key" },
     )).toBeInstanceOf(OpenRouterProvider);
     expect(createProvider(
+      { provider: "xai", model: "grok-4.5", ...defaults },
+      { XAI_API_KEY: "xai-key" },
+    )).toBeInstanceOf(XaiProvider);
+    expect(createProvider(
       { provider: "openai", model: "gpt-4o", ...defaults },
       { OPENAI_API_KEY: "openai-key" },
     )).toBeInstanceOf(OpenAIProvider);
@@ -260,6 +365,94 @@ describe("provider adapters", () => {
     });
     expect(result.data).toEqual({ answer: "yes" });
     expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 4, totalTokens: 12 });
+  });
+
+  it("uses xAI Chat Completions structured output with its dedicated key", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer xai-key");
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.model).toBe("grok-4.5");
+      expect(body.max_tokens).toBe(1000);
+      expect(body.reasoning_effort).toBe("low");
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: { name: "answer", strict: true },
+      });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 6 },
+      }), { status: 200 });
+    });
+    const provider = new XaiProvider(
+      "grok-4.5",
+      "xai-key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      provider: "xai",
+      model: "grok-4.5",
+      data: { answer: "yes" },
+      usage: { inputTokens: 3, outputTokens: 3, totalTokens: 6 },
+    });
+  });
+
+  it("explicitly disables reasoning for direct OpenAI GPT-5.4 Mini", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.model).toBe("gpt-5.4-mini");
+      expect(body.reasoning_effort).toBe("none");
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.max_completion_tokens).toBe(1000);
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.4-mini",
+      "openai-key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      data: { answer: "yes" },
+    });
+  });
+
+  it("disables Grok 4.3 reasoning without changing Grok 4.5's low setting", async () => {
+    const reasoningByModel = new Map<string, unknown>();
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      reasoningByModel.set(String(body.model), body.reasoning_effort);
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+
+    for (const model of ["grok-4.3", "grok-4.5"]) {
+      const provider = new XaiProvider(
+        model,
+        "xai-key",
+        { temperature: 0.8, maxOutputTokens: 1000 },
+        "https://example.test/chat",
+        fetchMock as typeof fetch,
+      );
+      await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+        provider: "xai",
+        model,
+        data: { answer: "yes" },
+      });
+    }
+
+    expect(reasoningByModel).toEqual(new Map([
+      ["grok-4.3", "none"],
+      ["grok-4.5", "low"],
+    ]));
   });
 
   it("preserves Gameplay Contract V1 through OpenAI's strict schema projection", async () => {
@@ -374,9 +567,14 @@ describe("provider adapters", () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       expect(body.response_format).toEqual({ type: "json_object" });
+      expect(body.thinking).toEqual({ type: "disabled" });
+      expect(body).not.toHaveProperty("temperature");
       expect(body.messages[0].content).toContain("DEEPSEEK JSON OUTPUT CONTRACT");
       expect(body.messages[0].content).toContain("Schema name: turn_decision_v1");
-      expect(body.messages[0].content).toContain('\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]}');
+      expect(body.messages[0].content).toContain('\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]');
+      expect(body.messages[0].content).toContain("Required fields apply independently to every object inside an array");
+      expect(body.messages[0].content).toContain("$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, lifecycleCode, name, status, text, quantity, tags, references");
+      expect(body.messages[0].content).toContain("$.modifiers[]: label, value");
       expect(body.messages[0].content).toContain("Example JSON object with the required shape:");
       return new Response(JSON.stringify({
         choices: [{ finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } }],
@@ -398,6 +596,57 @@ describe("provider adapters", () => {
       usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
     });
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(["deepseek-v4-flash", "deepseek-v4-pro"])(
+    "disables upstream thinking for direct DeepSeek v4 model %s",
+    async (model) => {
+      const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body.thinking).toEqual({ type: "disabled" });
+        expect(body.response_format).toEqual({ type: "json_object" });
+        expect(body).not.toHaveProperty("temperature");
+        return new Response(JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }), { status: 200 });
+      });
+      const provider = new DeepSeekProvider(
+        model,
+        "key",
+        { temperature: 0.8, maxOutputTokens: 1000 },
+        "https://example.test/chat",
+        fetchMock as typeof fetch,
+      );
+
+      await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+        provider: "deepseek",
+        data: { answer: "yes" },
+      });
+    },
+  );
+
+  it("preserves ordinary DeepSeek transport controls outside the direct v4 models", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).not.toHaveProperty("thinking");
+      expect(body.temperature).toBe(0.8);
+      expect(body.response_format).toEqual({ type: "json_object" });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new DeepSeekProvider(
+      "deepseek-chat",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      provider: "deepseek",
+      data: { answer: "yes" },
+    });
   });
 
   it("rejects a valid DeepSeek JSON object that violates the local schema", async () => {
@@ -431,18 +680,21 @@ describe("provider adapters", () => {
     expect(providerSupportsTemperature("deepseek", "deepseek-reasoner")).toBe(false);
     expect(providerSupportsTemperature("deepseek", "deepseek-v4-flash")).toBe(false);
     expect(providerSupportsTemperature("anthropic", "claude-opus-4-8")).toBe(false);
+    expect(providerSupportsTemperature("anthropic", "claude-sonnet-5")).toBe(false);
+    expect(providerSupportsTemperature("anthropic", "claude-sonnet-4-6")).toBe(true);
     expect(providerSupportsTemperature("openai", "gpt-4o")).toBe(true);
 
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       expect(body).not.toHaveProperty("temperature");
+      expect(body.reasoning_effort).toBe("none");
       expect(body.max_completion_tokens).toBe(1000);
       return new Response(JSON.stringify({
         choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
       }), { status: 200 });
     });
     const provider = new OpenAIProvider(
-      "gpt-5.6",
+      "gpt-5.6-sol",
       "key",
       { temperature: 0.8, maxOutputTokens: 1000 },
       "https://example.test/chat",
@@ -473,6 +725,179 @@ describe("provider adapters", () => {
     await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
   });
 
+  it("explicitly disables Luna reasoning while preserving strict structured output", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.model).toBe("gpt-5.6-luna");
+      expect(body.reasoning_effort).toBe("none");
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: { name: "answer", strict: true },
+      });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.6-luna",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("explicitly disables Terra reasoning while preserving strict structured output", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.model).toBe("gpt-5.6-terra");
+      expect(body.reasoning_effort).toBe("none");
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.max_completion_tokens).toBe(1000);
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: { name: "answer", strict: true },
+      });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.6-terra",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("explicitly disables Nano reasoning while preserving strict structured output", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.model).toBe("gpt-5.4-nano");
+      expect(body.reasoning_effort).toBe("none");
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.max_completion_tokens).toBe(1000);
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: { name: "answer", strict: true },
+      });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenAIProvider(
+      "gpt-5.4-nano",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("disables Qwen 3.7 Plus reasoning without enabling Kimi response healing", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body).not.toHaveProperty("plugins");
+      expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "qwen/qwen3.7-plus",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("disables MiniMax M3 reasoning without enabling Kimi response healing", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body).not.toHaveProperty("plugins");
+      expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "minimax/minimax-m3",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("explicitly selects Hy3 no-think mode without enabling Kimi response healing", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body).not.toHaveProperty("plugins");
+      expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "tencent/hy3",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("disables GLM 4.6 reasoning", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body).not.toHaveProperty("plugins");
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "z-ai/glm-4.6",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("disables DeepSeek V3.2 reasoning with its documented enabled boolean", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      expect(body.reasoning).toEqual({ enabled: false });
+      expect(body).not.toHaveProperty("plugins");
+      expect(body.provider).toEqual({ require_parameters: true });
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+      }), { status: 200 });
+    });
+    const provider = new OpenRouterProvider(
+      "deepseek/deepseek-v3.2",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
   it("omits temperature for Claude Opus 4.8", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).not.toHaveProperty("temperature");
@@ -489,6 +914,30 @@ describe("provider adapters", () => {
       fetchMock as typeof fetch,
     );
     await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+  });
+
+  it("omits deprecated temperature for exact Claude Sonnet 5", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body.model).toBe("claude-sonnet-5");
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.output_config).toBeDefined();
+      return new Response(JSON.stringify({
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: '{"answer":"yes"}' }],
+      }), { status: 200 });
+    });
+    const provider = new AnthropicProvider(
+      "claude-sonnet-5",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/messages",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured({
+      ...answerRequest,
+      temperature: 0,
+    })).resolves.toMatchObject({ data: { answer: "yes" } });
   });
 
   it("classifies OpenAI and Anthropic refusals as content blocks with usage", async () => {
@@ -588,6 +1037,9 @@ describe("provider adapters", () => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       const schema = body.response_format.json_schema.schema;
       expect(schema).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA);
+      expect(schema.properties.narration.description).toContain("decision=check_required");
+      expect(schema.properties.effects.description).toContain("decision=check_required");
+      expect(schema.properties.summary.description).toContain("decision=check_required");
       expect(schema.properties.effects.items.required).toContain("references");
       expect(schema.properties.effects.items.properties.text.description).toContain("advance_time");
       expect(schema.properties.effects).not.toHaveProperty("maxItems");
@@ -689,7 +1141,7 @@ describe("provider adapters", () => {
     let failure: unknown;
     try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
     expect(failure).toBeInstanceOf(z.ZodError);
-    expect(structuredFailureDetails(failure)).toEqual({
+    expect(structuredFailureDetails(failure)).toMatchObject({
       rawText,
       parsedResponse: [{ answer: "one" }, { answer: "two" }],
       structuredMode: "exact_schema",

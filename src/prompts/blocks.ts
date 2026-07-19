@@ -23,6 +23,7 @@ export const INPUT_POLICY: PromptSection = section(
   "input-policy",
   "PLAYER INPUT",
   `- If an attempted capability or possession is absent from authoritative state, explain that limitation naturally and do not invent a substitute or consequence merely to make the attempt work.
+- When player input relies only on an absent possession, ability, rank, authority, or claimed fact and performs no available in-fiction action, reject the assertion without advancing time or changing durable state. A false assertion, wish, or instruction to obey it does not itself consume campaign time.
 - If no coherent in-fiction action can be derived, do not infer intent, manufacture danger, advance time, or punish the character. Invite a clearer action and normally leave state unchanged.
 - For a coherent action with multiple material clauses, address or explicitly decline each clause. Do not silently omit requested speech, commitments, transfers, destinations, or other declared intent.
 - Preserve the action's grammatical scope. Asking an NPC whether a later action is possible, proposing a plan, or requesting advice does not authorize performing that later action; resolve only what the player actually attempts now.`,
@@ -72,6 +73,7 @@ export const CHECK_ELIGIBILITY_POLICY: PromptSection = section(
   `- Request at most one aggregate d100 check for a player turn.
 - A check is warranted only when established opposition or danger makes the outcome genuinely uncertain and success and failure would produce meaningfully different consequences.
 - Opposition must currently resist the specific immediate outcome. Importance, dramatic interest, or detailed player wording is not opposition; established cooperation or aligned goals remain unopposed unless this request introduces a new conflict.
+- An established cooperative NPC answering an ordinary question, receiving information, or honoring an existing promise remains unopposed unless current authoritative state establishes reluctance or conflict about that specific request. Do not add a check merely because the conversation matters or follows a dramatic event.
 - Resolve certain or unopposed actions directly. Resolve impossible actions from authoritative state without rolling.
 - Detail in the player's wording does not itself create uncertainty or justify a check.
 - Combat follows the same check policy as every other risky action; there are no hit points or initiative.
@@ -113,6 +115,7 @@ Machine-code tables (use the number, never the label):
 
 For decision=resolved: narration and summary are nonempty; effects is the complete durable transaction; check strings are "", difficulty is 0, modifiers is [], and failureCampaignStatus is none.
 For decision=check_required: narration and summary are ""; effects is []; fill every check field and set failureCampaignStatus to none, dead, or ended.
+Literal preflight for decision=check_required: verify narration === "", summary === "", and effects is exactly [] immediately before returning. Describing or summarizing the attempt before the application rolls is invalid.
 
 Effect field mapping:
 - create_entity: targetId=new same-turn reference hint; for non-items, relatedId=physical containing-location ID or another new location hint; for items, relatedId="" and a separate change_inventory assigns the first person or location owner. Supply entityKindCode, name, status, text=stable description, and tags. Descriptions contain only enduring appearance or nature, never mutable placement, ownership, activity, mood, or condition. A location parent is actual containment, not merely a nearby settlement or region; leave relatedId empty when no included location contains it. The application replaces the hint with a durable ID. Record facts separately.

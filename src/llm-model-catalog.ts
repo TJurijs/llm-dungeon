@@ -44,16 +44,20 @@ async function acquireModelCatalogLock(lockPath: string): Promise<() => Promise<
 export const LlmProviderIdSchema = z.enum([
   "gemini",
   "openrouter",
+  "xai",
   "openai",
   "anthropic",
   "deepseek",
 ]);
 export type LlmProviderId = z.infer<typeof LlmProviderIdSchema>;
 
-export interface LlmProviderDefinition {
+export interface SupportedLlmProviderDefinition {
   id: LlmProviderId;
   label: string;
   envKey: string;
+}
+
+export interface LlmProviderDefinition extends SupportedLlmProviderDefinition {
   recommended: boolean;
   candidateModels: readonly string[];
 }
@@ -63,24 +67,27 @@ export const RECOMMENDED_MODEL_SELECTION = {
   model: "gemini-3.5-flash",
 } as const satisfies ModelSelection;
 
-/** Former bundled OpenRouter mirrors retained only for existing campaign compatibility. */
-export const RETIRED_OPENROUTER_MIRRORS = new Set([
-  "google/gemini-3.5-flash",
-  "openai/gpt-5.4",
-  "openai/gpt-5.4-mini",
-  "anthropic/claude-sonnet-4.6",
-  "deepseek/deepseek-v4-flash",
-  "deepseek/deepseek-v4-pro",
-]);
+/**
+ * Adapter/key metadata for every provider whose persisted configurations remain
+ * supported. This is deliberately broader than the public browser lineup.
+ */
+export const SUPPORTED_LLM_PROVIDER_DEFINITIONS = [
+  { id: "gemini", label: "Google Gemini", envKey: "GEMINI_API_KEY" },
+  { id: "openrouter", label: "OpenRouter", envKey: "OPENROUTER_API_KEY" },
+  { id: "xai", label: "xAI", envKey: "XAI_API_KEY" },
+  { id: "openai", label: "OpenAI", envKey: "OPENAI_API_KEY" },
+  { id: "anthropic", label: "Anthropic", envKey: "ANTHROPIC_API_KEY" },
+  { id: "deepseek", label: "DeepSeek", envKey: "DEEPSEEK_API_KEY" },
+] as const satisfies readonly SupportedLlmProviderDefinition[];
 
-/** Public provider metadata only. Credentials never enter the catalog. */
-export const LLM_PROVIDER_DEFINITIONS = [
+/** Public browser provider metadata only. Credentials never enter the catalog. */
+export const PUBLIC_LLM_PROVIDER_DEFINITIONS = [
   {
     id: "gemini",
     label: "Google Gemini",
     envKey: "GEMINI_API_KEY",
     recommended: true,
-    candidateModels: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"],
+    candidateModels: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
   },
   {
     id: "openrouter",
@@ -88,24 +95,22 @@ export const LLM_PROVIDER_DEFINITIONS = [
     envKey: "OPENROUTER_API_KEY",
     recommended: false,
     candidateModels: [
-      "moonshotai/kimi-k2.6",
       "qwen/qwen3.7-plus",
-      "x-ai/grok-4.5",
     ],
+  },
+  {
+    id: "xai",
+    label: "xAI",
+    envKey: "XAI_API_KEY",
+    recommended: false,
+    candidateModels: ["grok-4.5"],
   },
   {
     id: "openai",
     label: "OpenAI",
     envKey: "OPENAI_API_KEY",
     recommended: false,
-    candidateModels: ["gpt-5.6-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5-mini", "gpt-4.1"],
-  },
-  {
-    id: "anthropic",
-    label: "Anthropic",
-    envKey: "ANTHROPIC_API_KEY",
-    recommended: false,
-    candidateModels: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-8"],
+    candidateModels: ["gpt-5.4"],
   },
   {
     id: "deepseek",
@@ -115,6 +120,9 @@ export const LLM_PROVIDER_DEFINITIONS = [
     candidateModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
   },
 ] as const satisfies readonly LlmProviderDefinition[];
+
+/** Backward-compatible name for callers interested in the curated public lineup. */
+export const LLM_PROVIDER_DEFINITIONS = PUBLIC_LLM_PROVIDER_DEFINITIONS;
 
 const ModelIdSchema = z.string().trim().min(1).max(300);
 export const ModelSelectionSchema = z.object({
@@ -136,6 +144,7 @@ const ModelTestMetadataSchema = z.object({
   protocolVersion: z.number().int().nonnegative(),
   testFingerprint: z.string().trim().min(1).max(500),
   testedLanguages: z.array(LanguageCodeSchema),
+  failedLanguages: z.array(LanguageCodeSchema).optional(),
   failureSummary: z.string().trim().min(1).max(500).optional(),
 }).strict();
 export type ModelTestMetadata = z.infer<typeof ModelTestMetadataSchema>;
@@ -183,6 +192,14 @@ const PersistedModelSchema = ModelSelectionSchema.extend({
       message: "compatible models require at least one tested language",
     });
   }
+  const passed = new Set(entry.test?.testedLanguages ?? []);
+  if (entry.test?.failedLanguages?.some((language) => passed.has(language))) {
+    context.addIssue({
+      code: "custom",
+      path: ["test", "failedLanguages"],
+      message: "a language cannot be both passed and failed",
+    });
+  }
 });
 type PersistedModel = z.infer<typeof PersistedModelSchema>;
 
@@ -217,6 +234,7 @@ export interface CatalogProvider {
   id: LlmProviderId;
   label: string;
   envKey: string;
+  public: boolean;
   recommended: boolean;
   models: CatalogModel[];
 }
@@ -240,7 +258,8 @@ export interface TestSuccessInput {
 }
 
 export interface TestFailureInput {
-  testedLanguages?: readonly LanguageCode[];
+  /** Omit for a model-wide failure; provide languages for independent probe failures. */
+  failedLanguages?: readonly LanguageCode[];
   /** A caller-produced, redacted diagnostic summary; raw provider output is not accepted. */
   failureSummary: string;
 }
@@ -258,6 +277,115 @@ export class ModelUnavailableError extends Error {
 
 function selectionKey(selection: ModelSelection): string {
   return `${selection.provider}\u0000${selection.model}`;
+}
+
+/**
+ * Models that were previously curated remain valid persisted references, but
+ * must not be mistaken for user-added custom models or public choices.
+ */
+const RETIRED_CURATED_MODEL_KEYS = new Set([
+  selectionKey({ provider: "openrouter", model: "google/gemini-3.5-flash" }),
+  selectionKey({ provider: "openrouter", model: "moonshotai/kimi-k2.6" }),
+  selectionKey({ provider: "openrouter", model: "openai/gpt-5.4" }),
+  selectionKey({ provider: "openrouter", model: "openai/gpt-5.4-mini" }),
+  selectionKey({ provider: "openrouter", model: "anthropic/claude-sonnet-4.6" }),
+  selectionKey({ provider: "openrouter", model: "deepseek/deepseek-v4-flash" }),
+  selectionKey({ provider: "openrouter", model: "deepseek/deepseek-v4-pro" }),
+  selectionKey({ provider: "openrouter", model: "x-ai/grok-4.5" }),
+  selectionKey({ provider: "xai", model: "grok-4.3" }),
+  selectionKey({ provider: "openai", model: "gpt-5.6-sol" }),
+  selectionKey({ provider: "openai", model: "gpt-5.6-luna" }),
+  selectionKey({ provider: "openai", model: "gpt-5.6-terra" }),
+  selectionKey({ provider: "openai", model: "gpt-5.4-mini" }),
+  selectionKey({ provider: "openai", model: "gpt-5-mini" }),
+  selectionKey({ provider: "openai", model: "gpt-4.1" }),
+  selectionKey({ provider: "anthropic", model: "claude-sonnet-4-6" }),
+  selectionKey({ provider: "anthropic", model: "claude-sonnet-5" }),
+  selectionKey({ provider: "anthropic", model: "claude-haiku-4-5" }),
+  selectionKey({ provider: "anthropic", model: "claude-opus-4-8" }),
+]);
+
+export function isRetiredCuratedModel(selection: ModelSelection): boolean {
+  return RETIRED_CURATED_MODEL_KEYS.has(selectionKey(selection));
+}
+
+const SHIPPED_MODEL_TESTS: Readonly<Record<string, ModelTestMetadata>> = {
+  [selectionKey(RECOMMENDED_MODEL_SELECTION)]: {
+    testedAt: "2026-07-19T21:48:13.379Z",
+    protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+    testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "gemini", model: "gemini-3.1-flash-lite" })]: {
+    testedAt: "2026-07-19T22:38:15.782Z", protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "openrouter", model: "qwen/qwen3.7-plus" })]: {
+    testedAt: "2026-07-19T22:38:31.649Z", protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "anthropic", model: "claude-sonnet-4-6" })]: {
+    // Direct compatibility probe run in this project. It passed English only;
+    // Russian must remain unavailable until it has its own strict probe result.
+    testedAt: "2026-07-19T00:01:14.082Z",
+    protocolVersion: 1,
+    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
+    testedLanguages: ["en"],
+  },
+  [selectionKey({ provider: "anthropic", model: "claude-sonnet-5" })]: {
+    // Strict direct-provider setup and Gameplay V1 probe passed after applying
+    // the model's required temperature omission. The interrupted acceptance
+    // run is presentation evidence only and does not change compatibility.
+    testedAt: "2026-07-19T01:19:13.976Z",
+    protocolVersion: 1,
+    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
+    testedLanguages: ["en"],
+  },
+  [selectionKey({ provider: "deepseek", model: "deepseek-v4-flash" })]: {
+    testedAt: "2026-07-19T22:15:40.430Z",
+    protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+    testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "deepseek", model: "deepseek-v4-pro" })]: {
+    testedAt: "2026-07-19T22:42:08.291Z",
+    protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+    testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "xai", model: "grok-4.5" })]: {
+    testedAt: "2026-07-19T22:38:49.174Z",
+    protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+    testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "openai", model: "gpt-5.4" })]: {
+    testedAt: "2026-07-19T22:38:58.887Z", protocolVersion: 1,
+    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
+  },
+  [selectionKey({ provider: "xai", model: "grok-4.3" })]: {
+    testedAt: "2026-07-18T19:29:37.506Z",
+    protocolVersion: 1,
+    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
+    testedLanguages: ["en", "ru"],
+  },
+};
+
+function shippedModel(
+  selection: ModelSelection,
+  protocolVersion: number,
+  testFingerprint: string,
+): PersistedModel | undefined {
+  const test = SHIPPED_MODEL_TESTS[selectionKey(selection)];
+  if (test === undefined
+    || test.protocolVersion !== protocolVersion
+    || test.testFingerprint !== testFingerprint) return undefined;
+  return {
+    ...selection,
+    state: "compatible",
+    enabled: true,
+    test: structuredClone(test),
+  };
 }
 
 function sameSelection(left: ModelSelection | null, right: ModelSelection): boolean {
@@ -295,7 +423,10 @@ function isCurrentTest(
 function isValidDefault(catalog: PersistedCatalog, selection: ModelSelection | null): boolean {
   if (selection === null) return false;
   const model = catalog.models.find((candidate) => sameSelection(candidate, selection));
-  return model?.state === "compatible" && model.enabled;
+  return model?.enabled === true && (
+    model.state === "compatible"
+    || (model.state === "untested" && isRecommended(model))
+  );
 }
 
 function canonicalize(
@@ -313,14 +444,19 @@ function canonicalize(
     models.set(selectionKey(normalized), normalized);
   }
   for (const selection of additions) {
-    if (!models.has(selectionKey(selection))) models.set(selectionKey(selection), untestedModel(selection));
+    const key = selectionKey(selection);
+    const existing = models.get(key);
+    const shipped = shippedModel(selection, protocolVersion, testFingerprint);
+    if (existing === undefined) models.set(key, shipped ?? untestedModel(selection));
+    else if (existing.state === "untested" && shipped !== undefined) models.set(key, shipped);
   }
 
   const ordered: PersistedModel[] = [];
-  for (const definition of LLM_PROVIDER_DEFINITIONS) {
+  for (const definition of SUPPORTED_LLM_PROVIDER_DEFINITIONS) {
     const providerModels = [...models.values()].filter((model) => model.provider === definition.id);
+    const publicDefinition = PUBLIC_LLM_PROVIDER_DEFINITIONS.find((candidate) => candidate.id === definition.id);
     const candidateOrder = new Map<string, number>(
-      definition.candidateModels.map((model, index): [string, number] => [model, index]),
+      (publicDefinition?.candidateModels ?? []).map((model, index): [string, number] => [model, index]),
     );
     providerModels.sort((left, right) => {
       const leftOrder = candidateOrder.get(left.model) ?? Number.MAX_SAFE_INTEGER;
@@ -340,7 +476,7 @@ function canonicalize(
 }
 
 function codeOwnedCandidates(): ModelSelection[] {
-  return LLM_PROVIDER_DEFINITIONS.flatMap((provider) => provider.candidateModels.map((model) => ({
+  return PUBLIC_LLM_PROVIDER_DEFINITIONS.flatMap((provider) => provider.candidateModels.map((model) => ({
     provider: provider.id,
     model,
   })));
@@ -397,13 +533,27 @@ export class LlmModelCatalog {
     if (testedLanguages.length === 0) throw new Error("At least one tested language is required");
     return this.mutate((catalog) => {
       const model = this.ensureModel(catalog, parsed);
+      const current = isCurrentTest(model, this.protocolVersion, this.testFingerprint)
+        ? model.test
+        : undefined;
+      const passedLanguages = normalizeLanguages([
+        ...(current?.testedLanguages ?? []),
+        ...testedLanguages,
+      ]);
+      const failedLanguages = normalizeLanguages(
+        (current?.failedLanguages ?? []).filter((language) => !testedLanguages.includes(language)),
+      );
       model.state = "compatible";
       model.enabled = true;
       model.test = {
         testedAt: this.timestamp(),
         protocolVersion: this.protocolVersion,
         testFingerprint: this.testFingerprint,
-        testedLanguages,
+        testedLanguages: passedLanguages,
+        ...(failedLanguages.length === 0 ? {} : { failedLanguages }),
+        ...(failedLanguages.length === 0 || current?.failureSummary === undefined
+          ? {}
+          : { failureSummary: current.failureSummary }),
       };
       if (!isValidDefault(catalog, catalog.defaultModel)) catalog.defaultModel = parsed;
     });
@@ -414,20 +564,47 @@ export class LlmModelCatalog {
     input: TestFailureInput,
   ): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
-    const testedLanguages = normalizeLanguages(input.testedLanguages ?? []);
+    const failedLanguages = normalizeLanguages(input.failedLanguages ?? []);
     const failureSummary = safeFailureSummary(input.failureSummary);
     return this.mutate((catalog) => {
       const model = this.ensureModel(catalog, parsed);
-      model.state = "failed";
-      model.enabled = false;
+      const current = isCurrentTest(model, this.protocolVersion, this.testFingerprint)
+        ? model.test
+        : undefined;
+      const testedLanguages = failedLanguages.length === 0
+        ? []
+        : normalizeLanguages(
+          (current?.testedLanguages ?? []).filter((language) => !failedLanguages.includes(language)),
+        );
+      const allFailedLanguages = failedLanguages.length === 0
+        ? []
+        : normalizeLanguages([...(current?.failedLanguages ?? []), ...failedLanguages]);
+      model.state = testedLanguages.length === 0 ? "failed" : "compatible";
+      if (model.state === "failed") model.enabled = false;
       model.test = {
         testedAt: this.timestamp(),
         protocolVersion: this.protocolVersion,
         testFingerprint: this.testFingerprint,
         testedLanguages,
+        ...(allFailedLanguages.length === 0 ? {} : { failedLanguages: allFailedLanguages }),
         failureSummary,
       };
-      if (sameSelection(catalog.defaultModel, parsed)) catalog.defaultModel = null;
+      if (model.state === "failed" && sameSelection(catalog.defaultModel, parsed)) catalog.defaultModel = null;
+    });
+  }
+
+  async removeModel(selection: ModelSelection): Promise<LlmModelCatalogSnapshot> {
+    const parsed = ModelSelectionSchema.parse(selection);
+    return this.mutate((catalog) => {
+      if (codeOwnedCandidates().some((candidate) => sameSelection(candidate, parsed))) {
+        throw new Error(`Known model ${parsed.provider}/${parsed.model} cannot be removed`);
+      }
+      if (sameSelection(catalog.defaultModel, parsed)) {
+        throw new Error(`Default model ${parsed.provider}/${parsed.model} cannot be removed`);
+      }
+      const index = catalog.models.findIndex((model) => sameSelection(model, parsed));
+      if (index < 0) throw new Error(`Model ${parsed.provider}/${parsed.model} was not found`);
+      catalog.models.splice(index, 1);
     });
   }
 
@@ -509,7 +686,11 @@ export class LlmModelCatalog {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       missing = true;
-      persisted = { version: LLM_MODEL_CATALOG_VERSION, defaultModel: null, models: [] };
+      persisted = {
+        version: LLM_MODEL_CATALOG_VERSION,
+        defaultModel: RECOMMENDED_MODEL_SELECTION,
+        models: [],
+      };
     }
     const additions = this.additions(additionalLegacySelection);
     const catalog = canonicalize(persisted, additions, this.protocolVersion, this.testFingerprint);
@@ -547,22 +728,29 @@ export class LlmModelCatalog {
     return {
       version: LLM_MODEL_CATALOG_VERSION,
       defaultModel: catalog.defaultModel,
-      providers: LLM_PROVIDER_DEFINITIONS.map((definition) => ({
-        id: definition.id,
-        label: definition.label,
-        envKey: definition.envKey,
-        recommended: definition.recommended,
-        models: catalog.models
-          .filter((model) => model.provider === definition.id)
-          .map((model) => ({
-            provider: model.provider,
-            model: model.model,
-            candidate: (definition.candidateModels as readonly string[]).includes(model.model),
-            state: model.state,
-            enabled: model.enabled,
-            ...(model.test === undefined ? {} : { test: model.test }),
-          })),
-      })),
+      providers: SUPPORTED_LLM_PROVIDER_DEFINITIONS.map((definition) => {
+        const publicDefinition = PUBLIC_LLM_PROVIDER_DEFINITIONS.find(
+          (candidate) => candidate.id === definition.id,
+        );
+        return {
+          id: definition.id,
+          label: definition.label,
+          envKey: definition.envKey,
+          public: publicDefinition !== undefined,
+          recommended: publicDefinition?.recommended ?? false,
+          models: catalog.models
+            .filter((model) => model.provider === definition.id)
+            .map((model) => ({
+              provider: model.provider,
+              model: model.model,
+              candidate: (publicDefinition?.candidateModels as readonly string[] | undefined)
+                ?.includes(model.model) ?? false,
+              state: model.state,
+              enabled: model.enabled,
+              ...(model.test === undefined ? {} : { test: model.test }),
+            })),
+        };
+      }),
     };
   }
 

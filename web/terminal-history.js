@@ -1,4 +1,4 @@
-const TERMINAL_STORAGE_PREFIX = "llm-dungeon:web-cli-terminal:";
+const TERMINAL_STORAGE_PREFIX = "llm-dungeon:web-terminal:";
 const TERMINAL_MAX_ENTRIES = 300;
 const TERMINAL_MAX_TEXT = 50_000;
 const TERMINAL_MAX_STORAGE = 750_000;

@@ -31,9 +31,17 @@ observable behavior and documented invariants during refactors.
   product authorization.
 - Established durable state outranks recent prose, player claims, and model
   improvisation.
-- Google Gemini, OpenRouter, OpenAI, Anthropic, and DeepSeek are the supported
-  providers. A provider/model may be selected only after its strict multilingual
-  compatibility probe passes. The API command is a placeholder, not an
+- Google Gemini, OpenRouter, xAI, OpenAI, Anthropic, and DeepSeek adapters remain
+  supported for persisted/custom configuration. New public selection exposes
+  only Gemini (`gemini-3.5-flash`, `gemini-3.1-flash-lite`), OpenRouter
+  (`qwen/qwen3.7-plus`), xAI (`grok-4.5`), OpenAI (`gpt-5.6-terra`), and DeepSeek
+  (`deepseek-v4-flash`, `deepseek-v4-pro`). Anthropic has no curated model or
+  public provider card. Do not remove an adapter or break a legacy campaign
+  because its provider/model is retired from public selection.
+- `gemini-3.5-flash` is the recommended and default model. A language-specific
+  compatibility probe is necessary for selection but is not calibration,
+  certification, narrative quality, or recommendation eligibility. English and
+  Russian results remain independent. The API command is a placeholder, not an
   invitation to design a public API during unrelated work.
 - The application and gameplay contract are V1. The npm package is private and
   intentionally has no public module exports; do not infer an API surface from
@@ -60,12 +68,20 @@ observable behavior and documented invariants during refactors.
   contract. Every provider must use the same schema and deterministic decoder.
 - `src/llm/structured-generation.ts` owns bounded transient/schema recovery;
   `src/llm/structured-error.ts` classifies structured failures.
-- `src/llm-model-catalog.ts` owns the five public provider definitions, curated
+- `src/llm-model-catalog.ts` owns public provider definitions, the exact curated
   and custom model IDs, compatibility lifecycle, and the browser default model.
   It persists no credentials; `config/provider.json` remains the terminal
   configuration rather than a second authority for the browser model catalog.
+- `src/model-execution-profile.ts` owns the versioned provider/model/route
+  execution contract, calibration variables, phase budgets, fingerprints, and
+  freeze rules. `src/model-execution-profile-store.ts` is the durable authority
+  for selected calibrated profiles.
+- `src/model-status.ts` defines separate adapter, technical gameplay, quality,
+  evidence, and recommendation concepts. `src/model-assessment-catalog.ts`
+  persists current calibration and certification evidence without rewriting
+  legacy evaluation history.
 - `src/providers.ts` translates the shared request into Google Gemini,
-  OpenRouter, OpenAI, Anthropic, and DeepSeek calls.
+  OpenRouter, xAI, OpenAI, Anthropic, and DeepSeek calls.
 - `src/connection-probe.ts` exercises the real setup and gameplay schemas for
   provider compatibility checks.
 - `src/prompts.ts` is the internal Prompt Suite V1 facade. `src/prompts/`
@@ -114,21 +130,28 @@ observable behavior and documented invariants during refactors.
   physical invariants.
 - `src/schemas.ts` is the authoritative runtime domain contract.
 - `src/mechanics.ts` is the sole d100 calculation authority.
-- `src/evaluation.ts` is the self-play facade. `src/evaluation/` separates run
-  orchestration, contracts, configuration, shared cost accounting, telemetry,
-  manifests, metrics, and reports.
-- `src/evaluation/judge.ts` owns structured post-run judgment and turn-by-turn
-  persistence audits.
+- `src/playtest/` is the single versioned engine for calibration,
+  certification, autoplay, stress, tuning, scheduling, telemetry, assessment,
+  judging, manifests, reports, resume, and focused replay. Packages describe
+  experiments; player profiles describe simulated-player behavior.
+- `src/legacy-evaluation-artifacts.ts` owns the sole versioned read-only v1
+  manifest reader for existing `evaluations/runs/`;
+  `src/web/evaluation-artifacts.ts` presents those legacy artifacts without
+  treating them as live state. Do not
+  restore `src/evaluation.ts`, the old `src/evaluation/` runner stack, or any
+  write/resume path for legacy runs.
 - `src/cli.ts` is a thin entry point. `src/cli/` separates command routing, human
-  gameplay, evaluation commands, prompting, and project configuration.
+  gameplay, playtest commands, thin deprecated evaluation aliases, prompting,
+  and project configuration.
 - `src/web-server.ts`, `src/web/`, and `web/` are the browser presentation
-  surface over the same engine. There is no separate Web CLI engine or source
+  surface over the same engine. There is no separate Web engine or source
   entry point.
 - `tests/` uses deterministic fake providers and temporary stores. Prefer adding
   regression coverage here before changing a hard-won invariant.
 - `dist/` is generated. Never edit it directly.
-- `data/` and `evaluations/runs/` are local runtime artifacts. Do not delete or
-  rewrite the user's campaign catalog or evaluation history during refactoring.
+- `data/`, `evaluations/runs/`, and playtest run directories are local runtime
+  artifacts. Do not delete or rewrite the user's campaign catalog, evaluation
+  history, calibration evidence, or playtest history during refactoring.
 
 Keep dependency flow pointed inward:
 
@@ -209,9 +232,30 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
   parallel compatibility paths unless a real persisted format requires them.
 - Unknown fields, aliases, Markdown fences, array wrappers, and partial JSON fail
   closed. Do not add a schema-less fallback to improve apparent success rates.
-- Keep provider model restrictions visible in connection testing and the Web CLI.
-  The connection probe must use both the actual campaign-setup schema and the
-  actual gameplay schema.
+- Keep provider model restrictions visible in connection testing and the Web app.
+  Each language-specific connection probe must use both the actual campaign-setup
+  schema and the actual gameplay schema. A failure in one language must not erase
+  a current passing result for another language.
+- Curated models may ship real compatibility or legacy speed/cost evidence with
+  provenance, but never invented calibration or certification results. The
+  browser does not expose retest controls for known curated models. Custom model
+  tests probe every registered language independently; partial language
+  compatibility is valid and must remain visible.
+- Adding a custom browser model only registers its ID; it does not call the
+  provider. The custom row owns its Test and remove controls. Known models cannot
+  be removed, and custom removal must not orphan a default, campaign, or setup draft.
+- A `ModelExecutionProfile` is keyed by provider, model, and route. Direct and
+  aggregator routes for the same underlying model are separate. The profile
+  fixes structured-output mode, schema projection, temperature, reasoning,
+  output-token field, phase budgets, timeouts, adapter revision, and evidence.
+- Calibration changes one bounded provider-supported variable at a time and
+  retains every attempt. Output budgets escalate only after finish metadata or
+  the response proves truncation, using bounded phase-specific steps. Repair
+  receives at least the failed phase's budget. Never improve apparent
+  calibration by weakening local wire/domain validation.
+- Certification may start only with the selected execution profile frozen by
+  fingerprint. A profile or adapter-revision change makes prior certification
+  stale and requires a fresh `certification-v1` run.
 - Gemini intentionally receives a compatible projection of the same schema; its
   adapter omits unsupported/high-complexity annotations while local Zod limits
   remain authoritative.
@@ -225,7 +269,9 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
   failure gets at most one retry. A valid but inapplicable transaction gets at
   most one domain correction.
 - Preserve usage metadata and failure classification without logging auth
-  headers or secrets.
+  headers or secrets. Physical attempts also retain route, phase, attempt kind,
+  profile fingerprint, schema mode/projection, token field/budget, timeout,
+  backoff, finish reason, and truncation evidence where available.
 - Simulated-player actions are locally capped at 800 characters, while the
   provider output budget is 1,500 tokens to leave room for hidden reasoning.
 
@@ -235,7 +281,9 @@ Changing the wire format is not a casual refactor. If a change is unavoidable:
 2. update every provider and the connection probe;
 3. update prompts, wire/domain codecs, telemetry, and tests together;
 4. retain readable failure diagnostics;
-5. run the live all-profile acceptance evaluation.
+5. invalidate affected profiles and certifications, then run focused live
+   calibration and `certification-v1` only when explicitly authorized with a
+   known cost ceiling.
 
 ## Context and prompting invariants
 
@@ -251,7 +299,7 @@ Appeals use their dedicated administrative system prompt, including for schema
 and domain repair. Do not route an appeal through gameplay narration, agency,
 check, or scene-continuation instructions.
 
-Adjudication, locked resolution, and evaluation judging share the current-state
+Adjudication, locked resolution, and playtest judging share the current-state
 reconciliation policy. When a turn explicitly changes or ends an existing
 status, condition, fact, relationship, or thread state, update the corresponding
 current record while preserving superseded fact history. Reconcile only changes
@@ -280,27 +328,92 @@ For resolved output, keep causal ordering: narration first, effects derived only
 from events explicitly in narration, summary last. The summary cannot introduce
 new facts.
 
-## Evaluation invariants
+## Playtest, calibration, and assessment invariants
 
-- Evaluation sessions use isolated stores under `evaluations/runs`; they never
-  mutate the player campaign catalog under `data/campaigns`.
-- Parallelism is bounded and all workers share one reservation-based cost
-  manager.
-- Run IDs are collision-resistant and one filesystem lock protects each run
-  from concurrent cross-process execution or resume.
-- Profile selection rotates in the exact user-selected order. With one selected
-  profile, every session uses it.
-- Technical failures may stop a session. Fictional setbacks do not; natural
-  campaign death is a valid terminal result.
-- Every technically completed session receives a structured same-DM-model judge
-  evaluation with one audit entry per completed turn.
-- A clean quality gate means: completed session, zero failed structured calls,
-  zero domain repairs, completed judge, and zero high-severity judge issues.
-- Keep failure fingerprints, failed-call cost, repair counts, check rate, and
-  per-session artifacts visible. Do not replace model judging with regex/string
-  sentiment checks.
-- Check-rate warnings above 50% are review signals, not automatic gameplay
-  failures. Judge whether established danger or opposition justified them.
+- Adapter status (`uncalibrated`, `calibrated`, `calibration_inconclusive`,
+  `no_compatible_profile`), technical gameplay status (`clean`,
+  `playable_with_recovery`, `unstable`, `unsupported`, `inconclusive`), and
+  language-specific quality (`high`, `medium`, `low`, `unrated`,
+  `awaiting_judgment`) are independent authorities. Recommendation eligibility
+  is derived separately and is never equivalent to a connection-schema pass.
+  Gemini 3.5 Flash remains the explicit product-recommended default even when
+  no new paid certification has been authorized.
+- Calibration is non-scored and exercises representative setup, resolved real
+  effects, `check_required`, locked resolution, inventory/reference transfer,
+  production-sized context, and near-normal output. Variants for one
+  provider/model/route run sequentially by default, change exactly one variable,
+  retain every result, and are selected by protocol correctness, first-pass
+  success, no truncation, no repairs, latency, then cost. Different model routes
+  may calibrate concurrently within scheduler limits.
+- Every failure receives one evidence-based owner: `candidate_model`,
+  `adapter_configuration`, `provider_route`, `account_access`, `judge`,
+  `player_driver`, `application`, or `inconclusive`. Judge, player, provider,
+  account, adapter, and application failures do not reduce candidate quality or
+  technical status; they are excluded or make the result inconclusive.
+- One playtest engine owns `certification-v1`, `campaign-autoplay-v1`,
+  `persistence-soak-v1`, `adversarial-boundaries-v1`, `mechanics-v1`, and
+  `tuning-v1`. Do not reintroduce separate evaluation and autoplay runners.
+- The terminal surface includes `playtest packages`, `playtest calibrate`,
+  `playtest replay <diagnostic-bundle>`, and
+  `playtest run <package>`; `playtest certify`, `playtest matrix <package>`, and
+  `playtest resume <run-id>`; plus `playtest judge <run-id>`,
+  `playtest report <run-id>`, and `playtest compare <run-id> <run-id>`. Matrix
+  jobs are independent combinations of package × candidate × language ×
+  optional repetition, never interacting models or concurrent turns inside one
+  campaign. Deprecated `evaluate` spellings may remain only as thin routes into
+  the playtest engine and must never instantiate the retired evaluator.
+- `certification-v1` is the only package that may update authoritative model
+  technical/quality metadata. It uses one bilingual canonical starting state,
+  ten branch-aware scripted actions, deterministic per-turn rolls, no AI
+  player, deterministic coverage where possible, and one separate final judge
+  call. Its turn-seven fixture explicitly locks the natural-1 consequence as a
+  severe but survivable injury; this evaluation constraint does not weaken
+  lethal stakes in ordinary gameplay. If a committed valid terminal outcome
+  nevertheless ends that fixture, preserve it and use the package's fresh
+  isolated continuation fixture for later coverage rather than resurrecting
+  the campaign. Other packages are diagnostic only.
+- Autoplay is an external harness submitting one ordinary player action at a
+  time; it never gives the DM tools or autonomous fictional behavior. Packages
+  describe experiments, while the nine player profiles below remain optional
+  behavior inputs for autoplay and stress runs. Player-model failures belong to
+  `player_driver` and never enter candidate metrics.
+- Judged packages default to a fixed Gemini 3.5 Flash target and allow an
+  explicit override. The judge call is separate, blinded, non-mutating, and
+  fixed across a comparison batch; the same underlying model may judge its own
+  gameplay in this separate lane. Freeze candidate
+  technical metrics before judging; judge calls, repairs, latency, cost, and
+  failures remain in a separate lane and can never alter candidate technical
+  status. Judging is rerunnable without rerunning gameplay, and a failed or
+  pending judge leaves quality `awaiting_judgment`.
+- Checkpoint judges assess only their interval plus relevant boundary state,
+  never mutate fiction, can retry independently, and do not occupy candidate
+  gameplay worker slots. Candidate, player, judge, and calibration telemetry are
+  stored separately.
+- Playtest stores are isolated from `data/campaigns`. Runs use collision-resistant
+  IDs and filesystem locks; resume is idempotent. Preserve existing
+  `evaluations/runs/` as legacy evidence and never reinterpret its old quality
+  labels as current certification.
+- Parallelism is optional and bounded across independent jobs/campaigns by a
+  global worker limit, provider-specific pools, and one reservation-based cost
+  manager. Turns within one campaign are always serialized. Support cancellation
+  and resume without overlapping a campaign or duplicating committed turns.
+- Reports distinguish scheduler queue wait, provider-call duration,
+  retry/backoff time, and player-visible turn duration. Canonical speed uses
+  concurrency 1; concurrent measurements are explicitly loaded latency.
+- Failed calls may produce a secret-safe diagnostic bundle with state snapshot,
+  prompt/schema hashes, route/profile, response metadata, parsed failure, and
+  expected phase. Focused replay is bounded and non-committing. A replay fix is
+  only diagnostic; freeze the changed profile and rerun `certification-v1`.
+- Technical failures may stop a job. Fictional setbacks do not; natural campaign
+  death is a valid terminal result. Technical health and exercised coverage are
+  independent evidence: a valid terminal result completes its fixture, while
+  later requirements remain visibly `not_exercised` unless a fresh fixture
+  completes them. Keep failure fingerprints, failed-call cost,
+  repair counts, check rate, invariant status, and per-job artifacts visible.
+  AI judging may assess prose, but deterministic code owns mechanics and state
+  auditing. Check-rate warnings are review signals, not automatic failures.
+- Never run paid calibration, certification, autoplay, stress, replay, or
+  judging without explicit authorization and an understood cost ceiling.
 
 Nine profiles exist and should remain individually selectable:
 
@@ -328,8 +441,9 @@ chaotic
 5. Keep patches scoped. Preserve unrelated user changes and runtime data.
 6. Add regression tests for every bug class or normalization rule.
 7. Run the complete local gate.
-8. Run live evaluation only when explicitly authorized, a key/model is present,
-   and its cost ceiling is understood.
+8. Run live calibration, playtesting, replay, or judging only when explicitly
+   authorized, the required keys/models are present, and the cost ceiling is
+   understood.
 
 Do not assume Git metadata is available in this directory. Inspect files directly
 and do not use destructive Git commands to manufacture a clean tree.
@@ -356,8 +470,9 @@ and do not use destructive Git commands to manufacture a clean tree.
 - The World & DM style editor changes only the selected language's creative
   future-campaign profile. It must not expose editing of core prompt, protocol,
   mechanics, or state-authority rules.
-- Prompt inspection and self-play evaluation remain terminal/developer tools;
-  do not expose them through browser routes or controls. Static prompt previews
+- Prompt inspection, calibration, certification, autoplay, stress, tuning, and
+  judging remain terminal/developer tools; do not expose them through browser
+  routes or controls. Static prompt previews
   must never compose live campaign context or secrets.
 - Browser inspection has exactly three player-safe views: Character (including
   inventory), Location, and Story threads. Location exposes only player-safe
@@ -391,40 +506,34 @@ The local gate is the complete deterministic Vitest suite, strict TypeScript,
 and a successful production build. Do not pin the test count in this handover;
 regression coverage is expected to grow.
 
-For a provider/protocol/prompt/state/evaluation change, also run a focused live
-test first, then—when authorized—the acceptance matrix:
+For provider/protocol/prompt/state/playtest changes, add focused deterministic
+tests for the affected adapter phase, package, lane, scheduler, or recovery
+path. No paid command is part of the default local gate.
 
-```bash
-npm run dev -- evaluate \
-  --sessions 9 \
-  --turns 5 \
-  --concurrency 3 \
-  --max-cost 5 \
-  --player-profiles curious-explorer,social-manipulator,cautious-investigator,reckless-adventurer,combat-focused,creative-problem-solver,rule-challenger,long-term-planner,chaotic
-```
+Live `playtest calibrate`, `certify`, `run`, `matrix`, `judge`, or focused replay
+may run only with explicit authorization, available keys/models, and an agreed
+cost ceiling. Calibrate and freeze the exact provider/model/route profile before
+certification. Use `certification-v1` for authoritative model qualification;
+use autoplay, stress, mechanics, and tuning packages only for diagnostics.
+Canonical speed evidence must use concurrency 1, while concurrent results must
+be labeled loaded latency.
 
-The verified handover baseline is run `2026-07-14T18-27-34-181Z`:
-
-- 9/9 sessions completed and 45/45 turns committed;
-- 9/9 clean quality gates;
-- all nine judge scores 10/10;
-- zero structured failures, transient retries, schema repairs, or domain repairs;
-- 42.2% aggregate check rate;
-- $2.1268 estimated cost with Gemini 3.5 Flash as DM and Gemini 3.1 Flash-Lite
-  as simulated player.
-
-Live results are stochastic. A refactor is not proven safe merely because one
-new run is good; local deterministic tests remain mandatory.
+Historical 9×5 evaluation runs and their same-model judgments are legacy
+evidence only. Preserve their artifacts, but do not use the old matrix, “clean
+quality gate,” or judge scores as current calibration, certification, or
+recommendation authority. Live results are stochastic; one good run never
+replaces the deterministic local gate.
 
 ## Handover definition of done
 
 A refactor is complete when:
 
 - ownership boundaries are clearer and obsolete code is removed;
-- terminal and Web CLI still operate over the same engine;
+- terminal and Web app still operate over the same engine;
 - campaign compatibility and pending-turn recovery are preserved or migrated
   explicitly;
 - keys and user runtime data remain untouched;
 - all local verification commands pass;
-- affected live behavior has proportionate evaluation evidence;
+- affected live behavior has proportionate playtest evidence when a live run was
+  explicitly authorized, with package/profile fingerprints and lane attribution;
 - README and this file remain accurate.

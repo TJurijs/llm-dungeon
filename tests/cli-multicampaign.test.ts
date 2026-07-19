@@ -8,6 +8,13 @@ import { HumanGameCli } from "../src/cli/game.js";
 import { createCliProgram } from "../src/cli/program.js";
 import { CliProjectContext, type CliCampaignSession } from "../src/cli/project-context.js";
 import { LlmModelCatalog } from "../src/llm-model-catalog.js";
+import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
+import { ModelExecutionProfileStore } from "../src/model-execution-profile-store.js";
+import {
+  DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS,
+  MODEL_EXECUTION_ADAPTER_REVISION,
+  freezeModelExecutionProfile,
+} from "../src/model-execution-profile.js";
 import type { GameEngine } from "../src/types.js";
 import type { ProviderConfig } from "../src/schemas.js";
 import { setupFixture } from "./helpers.js";
@@ -87,11 +94,11 @@ describe("multi-campaign terminal integration", () => {
     );
 
     await expect(project.providerConfig()).rejects.toThrow(
-      /Open the browser Settings page, test it in English and Russian, and enable it/,
+      /Open the browser Settings page, test it for en, and enable it/,
     );
   });
 
-  it("requires browser verification in both supported languages", async () => {
+  it("requires browser verification only for the configured gameplay language", async () => {
     const { root, project } = await projectFixture();
     const englishOnly = { ...gemini, model: "english-only-model" };
     const modelCatalog = new LlmModelCatalog(root, {
@@ -104,7 +111,9 @@ describe("multi-campaign terminal integration", () => {
       "utf8",
     );
 
-    await expect(project.providerConfig()).rejects.toThrow(/test it in English and Russian/);
+    await expect(project.providerConfig()).resolves.toMatchObject(englishOnly);
+    await project.setLanguage("ru");
+    await expect(project.providerConfig()).rejects.toThrow(/test it for ru/);
   });
 
   it("opens each campaign with its persisted model while defaults affect only new campaigns", async () => {
@@ -145,6 +154,40 @@ describe("multi-campaign terminal integration", () => {
         providerConfig: gemini,
       }),
     ]));
+  });
+
+  it("reuses the current calibrated execution profile for ordinary campaign gameplay", async () => {
+    const { root, project } = await projectFixture();
+    const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: gemini });
+    const created = await catalog.createCampaign({
+      setup: setup("Calibrated Campaign"),
+      worldRules: "Calibrated rules.",
+      language: "en",
+    }, { providerConfig: gemini });
+    const baseline = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((draft) => draft.key.provider === "gemini")!;
+    const profile = freezeModelExecutionProfile({
+      ...baseline,
+      key: { provider: gemini.provider, model: gemini.model, route: "direct" },
+      calibratedAt: "2026-07-19T12:00:00.000Z",
+      evidenceRef: "playtests/calibration/cli-fixture",
+    });
+    await new ModelExecutionProfileStore(root).put(profile);
+    await new ModelAssessmentCatalog(root).recordCalibration({
+      provider: gemini.provider,
+      model: gemini.model,
+      route: "direct",
+      status: "calibrated",
+      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
+      profileFingerprint: profile.fingerprint,
+      evidence: { source: "calibration", reference: "playtests/calibration/cli-fixture" },
+    });
+    const providerSpy = vi.spyOn(project, "createProvider");
+
+    await project.createEngine(created.campaignId);
+
+    expect(providerSpy).toHaveBeenCalledWith(gemini, expect.objectContaining({
+      fingerprint: profile.fingerprint,
+    }));
   });
 
   it("refuses to construct a play engine for an archived campaign", async () => {

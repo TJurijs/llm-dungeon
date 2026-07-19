@@ -29,7 +29,12 @@ export function hasConfiguredProviderKey(llm, keyStatus) {
     .some((provider) => Boolean(provider.keyPresent));
 }
 
-export function llmModelEntries(llm, { availableOnly = false, requireKey = false, language, includeHidden = false } = {}) {
+export function llmModelEntries(llm, {
+  availableOnly = false,
+  requireKey = false,
+  language,
+  includeHidden = false,
+} = {}) {
   const providers = Array.isArray(llm?.providers) ? llm.providers : [];
   return providers.flatMap((provider) => {
     const models = Array.isArray(provider.models) ? provider.models : [];
@@ -39,6 +44,9 @@ export function llmModelEntries(llm, { availableOnly = false, requireKey = false
       const testedLanguages = Array.isArray(model.testedLanguages)
         ? model.testedLanguages
         : Array.isArray(model.test?.testedLanguages) ? model.test.testedLanguages : [];
+      const failedLanguages = Array.isArray(model.failedLanguages)
+        ? model.failedLanguages
+        : Array.isArray(model.test?.failedLanguages) ? model.test.failedLanguages : [];
       return {
         provider: provider.id,
         providerLabel: provider.label || provider.id,
@@ -48,13 +56,22 @@ export function llmModelEntries(llm, { availableOnly = false, requireKey = false
         model: modelId,
         label: model.label || model.candidate?.label || modelId,
         status,
+        compatibilityStatus: model.compatibilityStatus || status,
+        technicalStatus: model.technicalStatus || {},
+        technicalRecoveries: model.technicalRecoveries || {},
         enabled: Boolean(model.enabled),
         available: model.available === undefined ? status === "compatible" : Boolean(model.available),
+        known: Boolean(model.known ?? model.candidate),
         testedLanguages,
+        failedLanguages,
         pricing: model.pricing,
         quality: model.quality,
         speed: model.speed,
+        speedEstimate: model.speedEstimate,
+        cost: model.cost,
         recommended: Boolean(model.recommended),
+        evidence: model.evidence,
+        keyAccess: model.keyAccess,
         hidden: Boolean(model.hidden),
         error: model.error || model.test?.error,
       };

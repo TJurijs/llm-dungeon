@@ -131,10 +131,18 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
     "severeFailureStakes", "failureCampaignStatus",
   ],
   properties: {
-    decision: { type: "string", enum: ["resolved", "check_required"] },
-    narration: { type: "string" },
+    decision: {
+      type: "string",
+      enum: ["resolved", "check_required"],
+      description: "resolved narrates and applies the turn; check_required only defines a check before any roll or narration.",
+    },
+    narration: {
+      type: "string",
+      description: "Nonempty only for decision=resolved. Must be exactly empty for decision=check_required.",
+    },
     effects: {
       type: "array",
+      description: "Complete caused durable changes for decision=resolved. Must be exactly empty for decision=check_required.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -157,13 +165,19 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
             type: "string",
             description: "Effect-dependent text. It must be nonempty whenever the selected effect uses text; for advance_time it is the required new end-of-turn time label.",
           },
-          quantity: { type: "integer" },
+          quantity: {
+            type: "integer",
+            description: "Effect-dependent amount. transfer_item requires a strictly positive amount because targetId is the prior owner and relatedId is the new owner; never use a negative transfer quantity. change_inventory uses a signed delta. advance_time uses nonnegative minutes. Use 0 only when quantity is unused.",
+          },
           tags: { type: "array", items: { type: "string" } },
           references: { type: "array", items: { type: "string" } },
         },
       },
     },
-    summary: { type: "string" },
+    summary: {
+      type: "string",
+      description: "Nonempty only for decision=resolved. Must be exactly empty for decision=check_required.",
+    },
     checkName: { type: "string" },
     difficulty: { type: "integer", minimum: 0, maximum: 95 },
     modifiers: {
@@ -299,8 +313,16 @@ function decodeEffect(effect: WireEffect, index: number): StateOperation {
       return StateOperationSchema.parse({ type: "move_entity", targetId: targetId(), locationId: relatedId() });
     case "change_inventory":
       return StateOperationSchema.parse({ type: "change_inventory", ownerId: targetId(), itemId: itemId(), quantityDelta: quantity() });
-    case "transfer_item":
-      return StateOperationSchema.parse({ type: "transfer_item", fromId: targetId(), toId: relatedId(), itemId: itemId(), quantity: quantity() });
+    case "transfer_item": {
+      const amount = quantity();
+      if (amount <= 0) {
+        throw new ProtocolDecodeError(
+          "transfer_item quantity must be strictly positive; direction is targetId (prior owner) to relatedId (new owner), so never use a negative quantity",
+          at("quantity"),
+        );
+      }
+      return StateOperationSchema.parse({ type: "transfer_item", fromId: targetId(), toId: relatedId(), itemId: itemId(), quantity: amount });
+    }
     case "add_condition":
     case "remove_condition":
       return StateOperationSchema.parse({ type: effect.kind, targetId: targetId(), condition: text() });

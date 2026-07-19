@@ -16,18 +16,35 @@ import { parseAppealCommand } from "./appeal.js";
 import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
 import { createProvider, loadProviderConfig } from "./providers.js";
 import {
-  LLM_PROVIDER_DEFINITIONS,
+  PUBLIC_LLM_PROVIDER_DEFINITIONS,
   RECOMMENDED_MODEL_SELECTION,
-  RETIRED_OPENROUTER_MIRRORS,
+  SUPPORTED_LLM_PROVIDER_DEFINITIONS,
   LlmProviderIdSchema,
   LlmModelCatalog,
   ModelSelectionSchema,
+  isRetiredCuratedModel,
   type LlmModelCatalogSnapshot,
   type LlmProviderId,
   type ModelSelection,
 } from "./llm-model-catalog.js";
-import { modelQualityRating, type ModelQualityRating } from "./model-quality.js";
-import { modelSpeedRating, type ModelSpeedRating } from "./model-speed.js";
+import type { ModelLanguageQualityRatings } from "./model-quality.js";
+import { ModelAssessmentCatalog } from "./model-assessment-catalog.js";
+import { ModelExecutionProfileStore } from "./model-execution-profile-store.js";
+import type { FrozenModelExecutionProfile } from "./model-execution-profile.js";
+import {
+  modelSpeedEstimate,
+  modelSpeedRating,
+  type ModelSpeedEstimate,
+  type ModelSpeedRating,
+} from "./model-speed.js";
+import { modelCostRating, type ModelCostRating } from "./model-cost.js";
+import type {
+  ModelAdapterStatus,
+  ModelEvidenceReference,
+  ModelLanguageTechnicalStatuses,
+  ModelRecommendationEligibility,
+} from "./model-status.js";
+import { fetchOpenAiModels, type OpenAiModelsFetcher } from "./openai-model-access.js";
 import { parseQuestionCommand } from "./question.js";
 import {
   ProviderConfigSchema,
@@ -50,7 +67,11 @@ import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
 import { asError, readJsonBody, rejectUnsafeMutation, rejectUntrustedHost, sendJson, sendTextDownload } from "./web/http.js";
 import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
-type ProviderFactory = (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
+type ProviderFactory = (
+  config: ProviderConfig,
+  environment: NodeJS.ProcessEnv,
+  executionProfile?: FrozenModelExecutionProfile,
+) => LlmProvider;
 type BrowserModelSelection = Pick<ProviderConfig, "provider" | "model">;
 
 export interface WebServerOptions {
@@ -60,6 +81,7 @@ export interface WebServerOptions {
   providerFactory?: ProviderFactory;
   maxConcurrentCampaignOperations?: number;
   pricingFetcher?: (() => Promise<unknown>) | false;
+  openAiModelsFetcher?: OpenAiModelsFetcher | false;
 }
 
 interface SetupDraft {
@@ -100,6 +122,7 @@ const SetupDraftRequestSchema = z.object({
 }).strict();
 
 const ModelEnabledRequestSchema = ModelSelectionSchema.extend({ enabled: z.boolean() }).strict();
+const ModelTestRequestSchema = ModelSelectionSchema.extend({ language: LanguageCodeSchema.optional() }).strict();
 const SessionProviderKeyRequestSchema = z.object({
   provider: LlmProviderIdSchema,
   key: z.string().max(10_000),
@@ -134,7 +157,7 @@ function decodeCampaignId(segment: string): string {
 }
 
 function campaignRoute(pathname: string): { campaignId: string; action: string } | undefined {
-  const match = /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup)$/.exec(pathname);
+  const match = /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup|title)$/.exec(pathname);
   if (!match) return undefined;
   return { campaignId: decodeCampaignId(match[1]!), action: match[2]! };
 }
@@ -147,7 +170,15 @@ export class DungeonWebController {
   private readonly providerFactory: ProviderFactory;
   private readonly operations: CampaignOperationCoordinator;
   private readonly modelCatalog: LlmModelCatalog;
+  private readonly modelAssessments: ModelAssessmentCatalog;
+  private readonly executionProfiles: ModelExecutionProfileStore;
   private readonly modelPricing: OpenRouterPricingCatalog;
+  private readonly openAiModelsFetcher: OpenAiModelsFetcher | undefined;
+  private openAiModelAccessCache: {
+    apiKey: string;
+    allowedModels: ReadonlySet<string> | undefined;
+    expiresAt: number;
+  } | undefined;
   private readonly sessionKeys = new Map<LlmProviderId, string>();
   private readonly drafts = new Map<string, SetupDraft>();
   private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
@@ -159,20 +190,30 @@ export class DungeonWebController {
     this.webRoot = path.join(root, "web");
     if (!options.environment) loadProjectEnv(root);
     this.environment = options.environment ?? process.env;
-    this.providerFactory = options.providerFactory ?? ((config, environment) => createProvider(config, environment));
+    this.providerFactory = options.providerFactory ?? ((config, environment, executionProfile) => createProvider(
+      config,
+      environment,
+      fetch,
+      executionProfile ? { executionProfile } : {},
+    ));
     this.operations = new CampaignOperationCoordinator(options.maxConcurrentCampaignOperations ?? 3);
     this.modelCatalog = new LlmModelCatalog(root, {
       testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
     });
+    this.modelAssessments = new ModelAssessmentCatalog(root);
+    this.executionProfiles = new ModelExecutionProfileStore(root);
     const pricingFetcher = options.pricingFetcher === false
       ? undefined
       : options.pricingFetcher ?? (options.environment === undefined ? () => fetchOpenRouterPrices() : undefined);
     this.modelPricing = new OpenRouterPricingCatalog(pricingFetcher);
+    this.openAiModelsFetcher = options.openAiModelsFetcher === false
+      ? undefined
+      : options.openAiModelsFetcher ?? (options.environment === undefined ? fetchOpenAiModels : undefined);
   }
 
   private effectiveEnvironment(): NodeJS.ProcessEnv {
     const environment = { ...this.environment };
-    for (const provider of LLM_PROVIDER_DEFINITIONS) {
+    for (const provider of SUPPORTED_LLM_PROVIDER_DEFINITIONS) {
       const sessionKey = this.sessionKeys.get(provider.id);
       if (sessionKey) environment[provider.envKey] = sessionKey;
     }
@@ -183,8 +224,25 @@ export class DungeonWebController {
     return loadProviderConfig(this.providerConfigPath);
   }
 
-  private provider(config: ProviderConfig): LlmProvider {
-    return this.providerFactory(config, this.effectiveEnvironment());
+  private async provider(config: ProviderConfig, language: LanguageCode): Promise<LlmProvider> {
+    const route = config.provider === "openrouter" ? "openrouter" : "direct";
+    const profile = await this.executionProfiles.get({
+      provider: config.provider,
+      model: config.model,
+      route,
+    });
+    const assessment = profile === undefined
+      ? undefined
+      : await this.modelAssessments.effective({
+        provider: config.provider,
+        model: config.model,
+        route,
+      }, language);
+    const currentProfile = assessment?.adapterStatus === "calibrated"
+      && assessment.profileFingerprint === profile?.fingerprint
+      ? profile
+      : undefined;
+    return this.providerFactory(config, this.effectiveEnvironment(), currentProfile);
   }
 
   private async catalog(): Promise<CampaignCatalog> {
@@ -200,7 +258,7 @@ export class DungeonWebController {
 
   private keyStatus(): Record<string, boolean> {
     const environment = this.effectiveEnvironment();
-    return Object.fromEntries(LLM_PROVIDER_DEFINITIONS.map((provider) => [
+    return Object.fromEntries(SUPPORTED_LLM_PROVIDER_DEFINITIONS.map((provider) => [
       provider.id,
       Boolean(environment[provider.envKey]),
     ]));
@@ -215,8 +273,117 @@ export class DungeonWebController {
   }
 
   private async modelSnapshot(): Promise<LlmModelCatalogSnapshot> {
-    const legacy = await this.defaultConfig().then((config) => this.selection(config)).catch(() => undefined);
-    return this.modelCatalog.snapshot(legacy);
+    // config/provider.json remains terminal configuration, not a second
+    // authority for the browser model catalog. Campaign-owned legacy models
+    // are projected by the campaign response and synthesized by the UI.
+    return this.modelCatalog.snapshot();
+  }
+
+  private isPublicSelection(selection: ModelSelection): boolean {
+    return PUBLIC_LLM_PROVIDER_DEFINITIONS.some((provider) => provider.id === selection.provider)
+      && !isRetiredCuratedModel(selection);
+  }
+
+  private requirePublicSelection(selection: ModelSelection): void {
+    if (!this.isPublicSelection(selection)) {
+      throw new WebApiError(400, `Model ${selection.provider}/${selection.model} is retained for legacy use only`);
+    }
+  }
+
+  private effectivePublicDefault(snapshot: LlmModelCatalogSnapshot): ModelSelection | null {
+    const available = (selection: ModelSelection | null): selection is ModelSelection => {
+      if (selection === null || !this.isPublicSelection(selection)) return false;
+      const model = snapshot.providers
+        .find((provider) => provider.id === selection.provider)
+        ?.models.find((candidate) => candidate.model === selection.model);
+      return model?.enabled === true && (
+        model.state === "compatible"
+        || (model.state === "untested"
+          && selection.provider === RECOMMENDED_MODEL_SELECTION.provider
+          && selection.model === RECOMMENDED_MODEL_SELECTION.model)
+      );
+    };
+    if (available(snapshot.defaultModel)) return snapshot.defaultModel;
+    return available(RECOMMENDED_MODEL_SELECTION) ? RECOMMENDED_MODEL_SELECTION : null;
+  }
+
+  private async presentedAssessment(selection: ModelSelection): Promise<{
+    adapterStatus: ModelAdapterStatus;
+    technicalStatus: ModelLanguageTechnicalStatuses;
+    technicalRecoveries: Partial<Record<LanguageCode, number>>;
+    quality: ModelLanguageQualityRatings;
+    recommendationEligibility: ModelRecommendationEligibility;
+    evidence: ModelEvidenceReference[];
+    certificationCurrent: Partial<Record<LanguageCode, boolean>>;
+    profileFingerprint?: string;
+  }> {
+    const languages = Object.keys(LANGUAGES) as LanguageCode[];
+    const route = selection.provider === "openrouter" ? "openrouter" : "direct";
+    const assessments = await Promise.all(languages.map(async (language) => ({
+      language,
+      assessment: await this.modelAssessments.effective({
+        provider: selection.provider,
+        model: selection.model,
+        route,
+      }, language),
+    })));
+    const first = assessments[0]?.assessment;
+    const eligible = assessments.length > 0
+      && assessments.every(({ assessment }) => assessment.recommendation.eligible);
+    const reasons = [...new Set(assessments.flatMap(({ assessment }) => assessment.recommendation.reasons))];
+    const evidence = [...new Map(
+      assessments.flatMap(({ assessment }) => assessment.evidence)
+        .map((item) => [JSON.stringify(item), item]),
+    ).values()];
+    const recommendationEvidence = assessments
+      .map(({ assessment }) => assessment.recommendation.evidence)
+      .find((item) => item !== undefined);
+    return {
+      adapterStatus: first?.adapterStatus ?? "uncalibrated",
+      technicalStatus: Object.fromEntries(assessments.map(({ language, assessment }) => [
+        language,
+        assessment.technicalStatus,
+      ])) as ModelLanguageTechnicalStatuses,
+      technicalRecoveries: Object.fromEntries(assessments.map(({ language, assessment }) => [
+        language,
+        assessment.recoveryCount,
+      ])),
+      quality: Object.fromEntries(assessments.map(({ language, assessment }) => [
+        language,
+        assessment.qualityStatus,
+      ])) as ModelLanguageQualityRatings,
+      recommendationEligibility: {
+        eligible,
+        reasons,
+        ...(recommendationEvidence === undefined ? {} : { evidence: recommendationEvidence }),
+      },
+      evidence,
+      certificationCurrent: Object.fromEntries(assessments.map(({ language, assessment }) => [
+        language,
+        assessment.certificationCurrent,
+      ])),
+      ...(first?.profileFingerprint === undefined ? {} : { profileFingerprint: first.profileFingerprint }),
+    };
+  }
+
+  private async openAiModelAccess(): Promise<ReadonlySet<string> | undefined> {
+    const apiKey = this.effectiveEnvironment().OPENAI_API_KEY?.trim();
+    if (!apiKey || !this.openAiModelsFetcher) return undefined;
+    const cached = this.openAiModelAccessCache;
+    if (cached?.apiKey === apiKey && cached.expiresAt > Date.now()) return cached.allowedModels;
+    try {
+      const allowedModels = await this.openAiModelsFetcher(apiKey);
+      this.openAiModelAccessCache = {
+        apiKey,
+        allowedModels: new Set(allowedModels),
+        expiresAt: Date.now() + 30_000,
+      };
+      return this.openAiModelAccessCache.allowedModels;
+    } catch {
+      // Discovery is advisory. A missing key or provider error must not make a model look denied.
+      this.openAiModelAccessCache = { apiKey, allowedModels: undefined, expiresAt: Date.now() + 30_000 };
+      return undefined;
+    }
   }
 
   private async llmPresentation(): Promise<{
@@ -232,26 +399,47 @@ export class DungeonWebController {
       models: Array<{
         id: string;
         label: string;
+        compatibilityStatus: string;
         status: string;
+        adapterStatus: ModelAdapterStatus;
+        technicalStatus: ModelLanguageTechnicalStatuses;
+        technicalRecoveries: Partial<Record<LanguageCode, number>>;
         enabled: boolean;
         available: boolean;
+        known: boolean;
         testedLanguages: LanguageCode[];
+        failedLanguages: LanguageCode[];
         pricing?: ModelPriceEstimate;
-        quality?: ModelQualityRating;
+        quality: ModelLanguageQualityRatings;
         speed?: ModelSpeedRating;
+        speedEstimate?: ModelSpeedEstimate;
+        cost?: ModelCostRating;
         recommended: boolean;
+        recommendationEligibility: ModelRecommendationEligibility;
+        evidence: {
+          compatibility: {
+            testedAt: string;
+            protocolVersion: number;
+            fingerprint: string;
+          } | null;
+          assessment: ModelEvidenceReference[];
+          certificationCurrent: Partial<Record<LanguageCode, boolean>>;
+          profileFingerprint?: string;
+        };
         hidden: boolean;
+        keyAccess?: "allowed" | "not_allowed";
         error?: string;
       }>;
     }>;
   }> {
     const snapshot = await this.modelSnapshot();
     const keys = this.keyStatus();
+    const openAiModels = await this.openAiModelAccess();
     this.modelPricing.refreshInBackground();
     return {
-      defaultModel: snapshot.defaultModel,
+      defaultModel: this.effectivePublicDefault(snapshot),
       pricingBasis: this.modelPricing.basis(),
-      providers: snapshot.providers.map((provider) => ({
+      providers: await Promise.all(snapshot.providers.filter((provider) => provider.public).map(async (provider) => ({
         id: provider.id,
         label: provider.label,
         envKey: provider.envKey,
@@ -260,34 +448,60 @@ export class DungeonWebController {
         keySource: this.sessionKeys.has(provider.id)
           ? "session"
           : keys[provider.id] ? "environment" : "missing",
-        models: provider.models.map((model) => {
+        models: await Promise.all(provider.models.map(async (model) => {
           const pricing = this.modelPricing.estimate(provider.id, model.model);
-          const quality = modelQualityRating(provider.id, model.model);
           const speed = modelSpeedRating(provider.id, model.model);
+          const speedEstimate = modelSpeedEstimate(provider.id, model.model);
+          const cost = modelCostRating(pricing);
+          const assessment = await this.presentedAssessment(model);
           return {
             id: model.model,
             label: model.model,
+            compatibilityStatus: model.state,
             status: model.state,
+            adapterStatus: assessment.adapterStatus,
+            technicalStatus: assessment.technicalStatus,
+            technicalRecoveries: assessment.technicalRecoveries,
             enabled: model.enabled,
-            available: model.state === "compatible" && model.enabled,
+            available: model.state === "compatible" && model.enabled && Boolean(keys[provider.id]),
+            known: model.candidate,
             testedLanguages: model.test?.testedLanguages ?? [],
+            failedLanguages: model.test?.failedLanguages ?? [],
             recommended: provider.id === RECOMMENDED_MODEL_SELECTION.provider
               && model.model === RECOMMENDED_MODEL_SELECTION.model,
-            hidden: provider.id === "openrouter" && RETIRED_OPENROUTER_MIRRORS.has(model.model),
+            recommendationEligibility: assessment.recommendationEligibility,
+            evidence: {
+              compatibility: model.test === undefined ? null : {
+                testedAt: model.test.testedAt,
+                protocolVersion: model.test.protocolVersion,
+                fingerprint: model.test.testFingerprint,
+              },
+              assessment: assessment.evidence,
+              certificationCurrent: assessment.certificationCurrent,
+              ...(assessment.profileFingerprint === undefined
+                ? {}
+                : { profileFingerprint: assessment.profileFingerprint }),
+            },
+            hidden: isRetiredCuratedModel(model),
+            ...(provider.id !== "openai" || openAiModels === undefined
+              ? {}
+              : { keyAccess: openAiModels.has(model.model) ? "allowed" as const : "not_allowed" as const }),
             ...(pricing === undefined ? {} : { pricing }),
-            ...(quality === undefined ? {} : { quality }),
+            quality: assessment.quality,
             ...(speed === undefined ? {} : { speed }),
+            ...(speedEstimate === undefined ? {} : { speedEstimate }),
+            ...(cost === undefined ? {} : { cost }),
             ...(model.test?.failureSummary === undefined
               ? {}
               : { error: this.safeError(model.test.failureSummary, "Provider compatibility test failed") }),
           };
-        }),
-      })),
+        })),
+      }))),
     };
   }
 
   private requireProviderKey(selection: ModelSelection): void {
-    const definition = LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === selection.provider);
+    const definition = SUPPORTED_LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === selection.provider);
     if (!definition || !this.effectiveEnvironment()[definition.envKey]) {
       const keyName = definition?.envKey ?? "the provider API key";
       throw new WebApiError(
@@ -313,6 +527,7 @@ export class DungeonWebController {
 
   private async availableConfig(selection: ModelSelection, language: LanguageCode): Promise<ProviderConfig> {
     const parsed = ModelSelectionSchema.parse(selection);
+    this.requirePublicSelection(parsed);
     await this.modelCatalog.assertAvailable(parsed, language);
     this.requireProviderKey(parsed);
     return this.configForSelection(parsed);
@@ -321,7 +536,7 @@ export class DungeonWebController {
   safeError(error: unknown, fallback = "Request failed"): string {
     let message = asError(error);
     const environment = this.effectiveEnvironment();
-    for (const definition of LLM_PROVIDER_DEFINITIONS) {
+    for (const definition of SUPPORTED_LLM_PROVIDER_DEFINITIONS) {
       const key = environment[definition.envKey];
       if (key) {
         message = message.replaceAll(key, "[redacted]");
@@ -436,7 +651,8 @@ export class DungeonWebController {
           if (metadata.archived) throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
           const config = metadata.providerConfig;
           if (!config) throw new WebApiError(409, "Choose a provider and model for this campaign before playing");
-          const engine = new DungeonEngine(store, this.provider(config));
+          const language = (await store.readManifest()).language;
+          const engine = new DungeonEngine(store, await this.provider(config, language));
           return operation(engine, store);
         });
       });
@@ -494,48 +710,100 @@ export class DungeonWebController {
       const key = body.key.trim();
       if (key) this.sessionKeys.set(body.provider, key);
       else this.sessionKeys.delete(body.provider);
+      if (body.provider === "openai") this.openAiModelAccessCache = undefined;
       sendJson(response, 200, { llm: await this.llmPresentation() });
       return true;
     }
 
     if (url.pathname === "/api/llm/models/test" && method === "POST") {
-      const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      const body = ModelTestRequestSchema.parse(await readJsonBody(request));
+      const selection = this.selection(body);
+      this.requirePublicSelection(selection);
+      const languages = body.language === undefined
+        ? Object.keys(LANGUAGES) as LanguageCode[]
+        : [body.language];
       this.requireProviderKey(selection);
       const config = await this.configForSelection(selection);
       const operationId = `probe:${randomUUID()}`;
-      let result: Awaited<ReturnType<typeof probeProviderConnection>>;
-      try {
-        result = await this.operations.run(operationId, () =>
-          probeProviderConnection(this.providerFactory(config, this.effectiveEnvironment())));
-      } catch (error) {
-        const summary = this.safeError(error, "Provider compatibility test failed");
-        await this.modelCatalog.recordTestFailure(selection, { failureSummary: summary });
-        sendJson(response, 200, { ok: false, provider: selection.provider, model: selection.model, error: summary });
-        return true;
-      }
-      await this.modelCatalog.recordTestSuccess(selection, {
-        testedLanguages: result.testedLanguages,
+      const provider = this.providerFactory(config, this.effectiveEnvironment());
+      const passed: LanguageCode[] = [];
+      const failed: Array<{ language: LanguageCode; error: string }> = [];
+      const results: Awaited<ReturnType<typeof probeProviderConnection>>[] = [];
+      await this.operations.run(operationId, async () => {
+        for (const language of languages) {
+          try {
+            const result = await probeProviderConnection(provider, [language]);
+            await this.modelCatalog.recordTestSuccess(selection, { testedLanguages: [language] });
+            passed.push(language);
+            results.push(result);
+          } catch (error) {
+            const summary = this.safeError(error, "Provider compatibility test failed");
+            await this.modelCatalog.recordTestFailure(selection, {
+              failedLanguages: [language],
+              failureSummary: summary,
+            });
+            failed.push({ language, error: summary });
+          }
+        }
       });
+      const first = results[0];
       sendJson(response, 200, {
-        ok: true,
-        provider: result.provider,
-        model: result.model,
-        usage: result.usage ?? null,
-        testedLanguages: result.testedLanguages,
-        protocolVersion: result.protocolVersion,
+        ok: passed.length > 0,
+        provider: first?.provider ?? selection.provider,
+        model: first?.model ?? selection.model,
+        ...(body.language === undefined ? {} : { language: body.language }),
+        usage: results.length === 1 ? results[0]?.usage ?? null : null,
+        testedLanguages: passed,
+        failedLanguages: failed.map((result) => result.language),
+        failures: failed,
+        protocolVersion: first?.protocolVersion ?? null,
+        ...(passed.length > 0 || failed[0] === undefined ? {} : { error: failed[0].error }),
       });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/models" && method === "POST") {
+      const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      this.requirePublicSelection(selection);
+      const snapshot = await this.modelCatalog.addModel(selection);
+      sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
       return true;
     }
 
     if (url.pathname === "/api/llm/models" && method === "PUT") {
       const body = ModelEnabledRequestSchema.parse(await readJsonBody(request));
-      const snapshot = await this.modelCatalog.setEnabled(this.selection(body), body.enabled);
+      const selection = this.selection(body);
+      this.requirePublicSelection(selection);
+      const snapshot = await this.modelCatalog.setEnabled(selection, body.enabled);
       sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/models" && method === "DELETE") {
+      const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      const snapshot = await this.modelSnapshot();
+      const registered = snapshot.providers
+        .find((provider) => provider.id === selection.provider)
+        ?.models.find((model) => model.model === selection.model);
+      if (registered === undefined) throw new WebApiError(404, `Model ${selection.provider}/${selection.model} was not found`);
+      if (registered.candidate) throw new WebApiError(400, "Known models cannot be removed");
+      if (snapshot.defaultModel?.provider === selection.provider && snapshot.defaultModel.model === selection.model) {
+        throw new WebApiError(409, "Choose a different default model before removing this model");
+      }
+      const campaign = (await (await this.catalog()).listCampaigns()).find((entry) =>
+        entry.providerConfig?.provider === selection.provider && entry.providerConfig.model === selection.model);
+      if (campaign) throw new WebApiError(409, `Model is used by campaign ${campaign.title} and cannot be removed`);
+      const draftUsesModel = [...this.drafts.values()].some((draft) =>
+        draft.config.provider === selection.provider && draft.config.model === selection.model);
+      if (draftUsesModel) throw new WebApiError(409, "Model is used by a campaign preview and cannot be removed");
+      const saved = await this.modelCatalog.removeModel(selection);
+      sendJson(response, 200, { saved: true, defaultModel: saved.defaultModel });
       return true;
     }
 
     if (url.pathname === "/api/llm/default" && method === "PUT") {
       const selection = ModelSelectionSchema.parse(await readJsonBody(request));
+      this.requirePublicSelection(selection);
       this.requireProviderKey(selection);
       await this.modelCatalog.setDefault(selection);
       sendJson(response, 200, { saved: true, defaultModel: selection });
@@ -573,7 +841,7 @@ export class DungeonWebController {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       const requestedSelection = body.config === undefined
-        ? (await this.modelSnapshot()).defaultModel
+        ? this.effectivePublicDefault(await this.modelSnapshot())
         : this.selection(body.config);
       if (requestedSelection === null) {
         throw new WebApiError(409, "Test a compatible model and choose it as the default before creating a campaign");
@@ -587,7 +855,7 @@ export class DungeonWebController {
       const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
         const engine = new DungeonEngine(
           new StateStore(path.join(this.dataRoot, ".drafts", operationId)),
-          this.provider(config),
+          await this.provider(config, language),
         );
         const generated = await engine.generateSetupWithMetadata({
           premise,
@@ -692,6 +960,15 @@ export class DungeonWebController {
       if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
       await this.operations.run(campaignId, async () => { await (await this.catalog()).archiveCampaign(campaignId); });
       sendJson(response, 200, { archived: true });
+      return true;
+    }
+
+    if (action === "title" && method === "PUT") {
+      const body = z.object({ title: z.string().trim().min(1).max(200) }).strict().parse(await readJsonBody(request));
+      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      const campaign = await this.operations.run(campaignId, async () =>
+        (await this.catalog()).renameCampaign(campaignId, body.title));
+      sendJson(response, 200, { campaign: await this.campaignPresentation(campaign) });
       return true;
     }
 

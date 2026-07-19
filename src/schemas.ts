@@ -324,7 +324,7 @@ export const SetupResultSchema = z.object({
 });
 
 export const ProviderConfigSchema = z.object({
-  provider: z.enum(["openrouter", "gemini", "openai", "anthropic", "deepseek"]),
+  provider: z.enum(["openrouter", "xai", "gemini", "openai", "anthropic", "deepseek"]),
   model: z.string().min(1),
   temperature: z.number().min(0).max(2).default(0.8),
   maxOutputTokens: z.number().int().min(256).max(32_000).default(4000),

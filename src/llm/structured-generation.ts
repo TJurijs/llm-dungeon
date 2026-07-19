@@ -51,6 +51,10 @@ export class StructuredClient {
     let transientRetries = 0;
     let prompt = request.prompt;
     let kind: AttemptKind = "initial";
+    const originalPhase = request.generationPhase;
+    let activePhase = originalPhase;
+    let activeRepairOfPhase = request.repairOfPhase;
+    let activeRetryBackoffMs = request.retryBackoffMs ?? 0;
     let accumulatedUsage: StructuredResult<unknown>["usage"];
 
     for (;;) {
@@ -59,6 +63,12 @@ export class StructuredClient {
           ...request,
           schemaName: kind === "initial" ? request.schemaName : `${kind}_${request.schemaName}`,
           prompt,
+          ...(activePhase === undefined ? {} : { generationPhase: activePhase }),
+          ...(activeRepairOfPhase === undefined ? {} : { repairOfPhase: activeRepairOfPhase }),
+          attemptKind: kind === "repair"
+            ? "schema_repair"
+            : kind === "transient_retry" ? "transient_retry" : request.attemptKind ?? "initial",
+          retryBackoffMs: activeRetryBackoffMs,
           ...(kind === "repair" ? { temperature: Math.min(request.temperature ?? 0.4, 0.4) } : {}),
         });
         const usage = combineUsage(accumulatedUsage, result.usage);
@@ -70,6 +80,11 @@ export class StructuredClient {
         if (REPAIRABLE.has(classified.kind) && repairs < maxRepairs) {
           repairs += 1;
           kind = "repair";
+          activeRetryBackoffMs = 0;
+          if (originalPhase !== undefined && originalPhase !== "repair") {
+            activePhase = "repair";
+            activeRepairOfPhase = originalPhase;
+          }
           const failed = structuredFailureDetails(error);
           prompt = structuredRepairPrompt(request.prompt, failed?.parsedResponse ?? failed?.rawText ?? null, error);
           continue;
@@ -79,7 +94,8 @@ export class StructuredClient {
           && classified.retryable && transientRetries < maxTransientRetries) {
           transientRetries += 1;
           kind = "transient_retry";
-          await new Promise((resolve) => setTimeout(resolve, delayMs * transientRetries));
+          activeRetryBackoffMs = delayMs * transientRetries;
+          await new Promise((resolve) => setTimeout(resolve, activeRetryBackoffMs));
           continue;
         }
         throw error;

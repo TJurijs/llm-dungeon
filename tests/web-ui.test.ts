@@ -19,7 +19,8 @@ describe("web UI copy", () => {
     expect(UI_COPY.ru.newCampaign).toBe("Новая кампания");
     expect(UI_COPY.ru.actionPlaceholder).toBe("Что вы делаете?");
     expect(UI_COPY.ru.llmConfiguration).toBe("Настройки LLM");
-    expect(UI_COPY.en.llmConfigurationHint).toContain(".env");
+    expect(UI_COPY.en).not.toHaveProperty("llmConfigurationHint");
+    expect(UI_COPY.en).not.toHaveProperty("adapterUncalibrated");
     expect(UI_COPY.en.workingHint).not.toContain(":retry");
     expect(Object.keys(UI_COPY.ru).sort()).toEqual(Object.keys(UI_COPY.en).sort());
     expect(submitShortcut({ platform: "MacIntel" })).toBe("⌘ + Enter");
@@ -36,9 +37,11 @@ describe("web UI copy", () => {
   it("uses a semantic campaign sidebar, streamlined setup, settings, and state dock", async () => {
     const html = await readFile(path.join(process.cwd(), "web", "index.html"), "utf8");
     expect(html).toContain('id="campaign-sidebar" class="sidebar"');
+    expect(html).not.toContain("adapter calibration");
     expect(html).toContain('id="new-campaign"');
     expect(html).toContain('id="provider-onboarding" class="provider-onboarding" hidden');
     expect(html).toContain('data-i18n="providerOnboardingSupported"');
+    expect(html).toContain('id="empty-open-settings" class="primary" type="button" data-i18n="openSettings" hidden');
     expect(html).toContain("./.env");
     expect(html).toContain('id="campaign-list"');
     expect(html).toContain('id="chat-log" class="chat-log" role="log"');
@@ -71,8 +74,9 @@ describe("web UI copy", () => {
     expect(html).toContain('data-settings-section="providers"');
     expect(html).toContain('data-settings-panel="defaults"');
     expect(html).toContain('data-settings-panel="providers"');
-    expect(html).toContain('id="llm-pricing-hint"');
-    expect(html).toContain('data-i18n="qualityLegend"');
+    expect(html).not.toContain('id="llm-pricing-hint"');
+    expect(html).not.toContain('data-i18n="qualityLegend"');
+    expect(html).toContain('id="llm-status-legend" class="model-status-legend"');
     expect(html).toContain('id="llm-providers" class="llm-provider-list"');
     expect(html).not.toContain('id="settings-api-key"');
     expect(html).not.toContain('id="settings-provider"');
@@ -89,6 +93,22 @@ describe("web UI copy", () => {
     expect(html).toContain('data-view="threads"');
   });
 
+  it("routes an unconfigured clean install to provider Settings while keeping the normal campaign action", async () => {
+    const [app, copy] = await Promise.all([
+      readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "ui-copy.js"), "utf8"),
+    ]);
+    expect(app).toContain('$("#empty-new-campaign").hidden = !configured;');
+    expect(app).toContain('$("#empty-open-settings").hidden = configured;');
+    expect(app).toContain('$("#empty-open-settings").addEventListener("click", openProviderSettings);');
+    expect(copy).toContain('providerOnboardingTitle: "Welcome to llm-dungeon"');
+    expect(UI_COPY.en.providerOnboardingSupported).toContain("xAI");
+    expect(UI_COPY.ru.providerOnboardingSupported).toContain("xAI");
+    expect(UI_COPY.en.providerOnboardingSupported).not.toContain("Anthropic");
+    expect(UI_COPY.ru.providerOnboardingSupported).not.toContain("Anthropic");
+    expect(UI_COPY.en.openSettings).toBe("Open Settings");
+  });
+
   it("leaves developer evaluation and prompt inspection tools out of the Web surface", async () => {
     const [app, html] = await Promise.all([
       readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
@@ -101,13 +121,19 @@ describe("web UI copy", () => {
   });
 
   it("keeps every concurrently running model probe visibly in progress", async () => {
-    const setup = await readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8");
+    const [setup, styles] = await Promise.all([
+      readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
+    ]);
     expect(setup).toContain("const testingModels = new Set()");
     expect(setup).toContain("testingModels.add(testKey)");
     expect(setup).toContain("testingModels.delete(testKey)");
     expect(setup).toContain('status: "testing"');
+    expect(setup).toContain('createElement("span", "model-protocol-spinner")');
+    expect(setup).toContain('statusBadge.setAttribute("aria-live", "polite")');
+    expect(styles).toContain("@keyframes model-protocol-spin");
     expect(setup).toContain('copy.append(createElement("p", "llm-model-error", model.error))');
-    expect(setup).toContain([
+    expect(setup.replaceAll("\r\n", "\n")).toContain([
       "testingModels.delete(testKey);",
       "      renderLlmConfiguration(true);",
       "      restoreActionFocus();",
@@ -150,18 +176,19 @@ describe("web UI copy", () => {
     expect(styles).toContain(".llm-provider-card[open]");
     expect(styles).toContain(".llm-provider-tools-panel");
     expect(styles).toContain(".composer-model-picker option");
-    expect(styles).toContain("@media (max-width: 1100px)");
     expect(styles).toContain("@media (min-width: 761px) and (max-width: 1100px)");
     expect(styles).toContain("@media (max-width: 900px)");
     expect(styles).toContain(".inspection-resizer { display: none !important; }");
-    expect(styles).toContain(".llm-model-error { grid-column: 1 / -1;");
+    expect(styles).toContain(".llm-model-row.is-custom .llm-model-copy { flex-wrap: wrap; }");
+    expect(styles).toContain(".llm-model-error { min-width: 0; flex: 1 0 100%;");
   });
 
   it("uses meaningful transcript identities and offers permanent deletion only beside archived campaigns", async () => {
-    const [app, chat, styles] = await Promise.all([
+    const [app, chat, styles, html] = await Promise.all([
       readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "chat-ui.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "index.html"), "utf8"),
     ]);
     expect(chatEntryPresentation({ title: "You", text: "Act", mode: "normal" })).toMatchObject({ type: "user", icon: "player" });
     expect(chatEntryPresentation({ title: "D100 check", text: "Roll", mode: "normal" })).toMatchObject({ type: "check", icon: "◆" });
@@ -177,8 +204,12 @@ describe("web UI copy", () => {
     expect(app).not.toContain('confirm(formatTemplate("deleteCampaignConfirm"');
     expect(app).not.toContain("confirm(t(\"archiveConfirm\"))");
     expect(app).toContain('campaignApiPath(campaignId, "setup")');
+    expect(app).toContain('campaignApiPath(campaign.campaignId, "title")');
+    expect(html).toContain('id="edit-campaign-title"');
+    expect(html).toContain('id="campaign-title-form"');
     expect(app).toContain('$("#archive-campaign-dialog").showModal()');
     expect(styles).toContain(".delete-campaign-button svg");
+    expect(styles).toContain(".edit-campaign-title svg");
     expect(styles).toContain("#delete-campaign-warning { white-space: pre-wrap;");
   });
 
@@ -210,9 +241,10 @@ describe("web UI copy", () => {
   });
 
   it("uses global world and tested model defaults for streamlined campaign setup", async () => {
-    const [app, setup] = await Promise.all([
+    const [app, setup, styles] = await Promise.all([
       readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
     ]);
     expect(setup).toContain('$("#setup-world")');
     expect(setup).toContain('...(worldRules.trim() ? { worldRules } : {})');
@@ -222,28 +254,74 @@ describe("web UI copy", () => {
     expect(setup).toContain("status.llm?.defaultModel");
     expect(setup).toContain('"/api/llm/models/test"');
     expect(setup).toContain('"/api/llm/models"');
+    expect(setup).toContain('"DELETE"');
     expect(setup).toContain('"/api/llm/default"');
     expect(setup).toContain("customModelProvider");
+    expect(setup).toContain("createRemoveIcon");
+    expect(setup).toContain('t("addModel")');
+    expect(setup).toContain('t("activeDefault")');
+    expect(setup).toContain('button.dataset.llmAction === "remove"');
+    expect(setup).toContain('row.classList.add("is-custom")');
     expect(setup).toContain('addEventListener("submit", handleCustomModel)');
     expect(setup).toContain("result.ok === false");
-    expect(setup).toContain("estimated50TurnsUsd");
-    expect(setup).toContain("pricingEstimateHint");
+    expect(setup).not.toContain("estimated50TurnsUsd");
+    expect(setup).not.toContain("pricingEstimateHint");
     expect(setup).toContain('"/api/llm/keys"');
     expect(setup).toContain("dataset.providerKeyForm");
     expect(setup).toContain("modelQualityCopy");
     expect(setup).toContain("modelSpeedCopy");
-    expect(setup).toContain('speed.title = t("speedEstimateHint")');
-    expect(setup).toContain('`model-recommended ${model.recommended ? "" : "is-empty"}`');
+    expect(setup).toContain('provider.id === "openai" && model.keyAccess === "not_allowed"');
+    expect(setup).toContain('createElement("span", "model-key-restriction", "(!)")');
+    expect(setup).toContain('marker.title = t("modelNotAllowedByKey")');
+    expect(setup).not.toContain('speedMeasuredHint');
+    expect(setup).toContain('if (model.recommended) heading.append(createElement("span", "model-recommended", t("recommended")))');
     expect(setup).toContain('if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")))');
     expect(setup).toContain('createElement("details", "llm-provider-tools")');
     expect(setup).toContain("createOverflowIcon");
     expect(setup).toContain('row.classList.add("is-default")');
     expect(setup).toContain('createElement("details", "llm-provider-card")');
-    expect(setup).toContain("* 10) / 10");
-    expect(UI_COPY.en.estimated50Turns).toBe("≈{price}");
-    expect(UI_COPY.en.qualityLegend).toContain("High — strongest");
+    expect(setup).toContain("modelCostCopy");
+    expect(setup).toContain("createModelSignalIcon");
+    expect(setup).toContain("renderModelStatusLegend");
+    expect(setup).toContain("MODEL_SIGNAL_PATHS");
+    expect(setup).toContain('createModelSignal("protocol"');
+    expect(setup).not.toContain("amount.toFixed(2)");
+    expect(UI_COPY.en.speedFast).toBe("Fast");
     expect(UI_COPY.en.speedAverage).toBe("Average");
+    expect(UI_COPY.en.speedVerySlow).toBe("Very slow");
+    expect(UI_COPY.en.costModerate).toBe("Average");
+    expect(UI_COPY.en.costVeryExpensive).toBe("Very high");
+    expect(UI_COPY.en.modelStatusLegend).toBe("Model status legend");
     expect(UI_COPY.ru.speedSlow).toBe("Медленная");
+    expect(setup).toContain("if (!model.known)");
+    expect(setup).toContain('t(model.status === "untested" ? "testModel" : "retestModel")');
+    expect(setup).toContain('${supported ? "is-supported" : "is-unsupported"}');
+    expect(setup).toContain('model.quality?.[language]');
+    expect(setup).not.toContain('model.adapterStatus');
+    expect(setup).toContain('model.technicalStatus?.[language]');
+    expect(setup).toContain('const primaryLanguage = "en"');
+    expect(setup).toContain('createElement("details", "model-language-details")');
+    expect(setup).toContain('statusBadge.dataset.llmAction = "test"');
+    expect(setup).toContain('statusBadge.title = `${protocolLabel} · ${t("retestModel")}`');
+    expect(setup).not.toContain('["calibration", "legendCalibration"]');
+    expect(styles).toContain(".model-protocol-retest");
+    expect(setup).toContain('const summary = createElement("summary", "model-language-summary");');
+    expect(setup).toContain("summary.append(technicalGroup, qualityGroup);");
+    expect(setup).not.toContain('`+${additionalLanguages.length}`');
+    expect(setup).toContain('createTechnicalSignal(model, language)');
+    expect(setup).toContain('createQualitySignal(model, language)');
+    expect(setup).toContain('recoveries >= 5 ? "recovery-high" : recoveries >= 2 ? "recovery-medium" : "recovery-low"');
+    expect(styles).toContain(".technical-playable_with_recovery.recovery-low");
+    expect(styles).toContain(".technical-playable_with_recovery.recovery-medium");
+    expect(styles).toContain(".technical-playable_with_recovery.recovery-high");
+    expect(UI_COPY.en.technicalRecovery).toBe("Recoverable");
+    expect(setup).not.toContain('`${language.toUpperCase()} ${label}`');
+    expect(setup).not.toContain('createElement("strong", "model-language-name"');
+    expect(styles).toContain(".model-language-menu");
+    expect(styles).toContain(".model-language-summary .model-signal");
+    expect(setup).not.toContain("legacyQuality");
+    expect(setup).not.toContain('model.recommendationEligibility?.eligible');
+    expect(setup).not.toContain('t("certificationPending")');
     expect(setup).toContain("return status.llm?.defaultModel ?? null");
     expect(setup).not.toContain("status.llm?.defaultModel ?? (status.config");
     expect(setup).not.toContain("apiKey");
@@ -256,6 +334,7 @@ describe("web UI copy", () => {
     expect(app).toContain('setupSettings.selectSettingsSection("providers")');
     expect(app).toContain("recommendedCard.open = true");
     expect(app).toContain('body: JSON.stringify(choice)');
+    expect(app).toContain('option.hidden ? t("legacyModel") : t("needsTest")');
     expect(app).not.toContain("campaignModelConfig");
   });
 

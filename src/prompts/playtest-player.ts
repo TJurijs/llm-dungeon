@@ -1,17 +1,17 @@
 import { languageInstruction, type LanguageCode } from "../language.js";
 
-export interface SimulatedPlayerProfile {
+export interface PlaytestPlayerProfile {
   readonly id: string;
   readonly instruction: string;
 }
 
-export function simulatedPlayerSystemPrompt(profile: SimulatedPlayerProfile, language: LanguageCode): string {
+export function playtestPlayerSystemPrompt(profile: PlaytestPlayerProfile, language: LanguageCode): string {
   const adversarialRules = profile.id === "chaotic"
     ? `- Follow the adversarial profile literally when it calls for unsupported possessions, contradictions, or incoherent input.
 - Do not repair, translate, explain, or label malformed input before submitting it.
 - Use rule_challenge for malformed, contradictory, impossible, or unsupported attempts.`
     : "- Be creative and proactive while remaining grounded in player-visible possessions, abilities, and facts.";
-  return `You are simulating one human player in a bounded evaluation of a persistent fantasy sandbox.
+  return `You are simulating one human player in a bounded playtest of a persistent fantasy sandbox.
 
 PLAYER PROFILE: ${profile.id}
 ${profile.instruction}
@@ -29,6 +29,6 @@ ${adversarialRules}
 - Stay in character and return only the structured action, without explanation, narration, or a menu.`;
 }
 
-export function simulatedPlayerPrompt(context: string): string {
+export function playtestPlayerPrompt(context: string): string {
   return `${context}\n\nChoose one next player action that pursues an interesting goal and reacts to the latest outcome.`;
 }

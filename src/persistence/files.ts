@@ -2,6 +2,25 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+const ATOMIC_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
+
+function isTransientRenameError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
+async function renameWithTransientRetry(source: string, target: string): Promise<void> {
+  for (const delayMs of [0, ...ATOMIC_RENAME_RETRY_DELAYS_MS]) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      await rename(source, target);
+      return;
+    } catch (error) {
+      if (!isTransientRenameError(error) || delayMs === ATOMIC_RENAME_RETRY_DELAYS_MS.at(-1)) throw error;
+    }
+  }
+}
+
 export async function pathExists(target: string): Promise<boolean> {
   try {
     await stat(target);
@@ -26,7 +45,7 @@ export async function atomicWriteText(target: string, content: string): Promise<
   const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(temporary, content, "utf8");
-    await rename(temporary, target);
+    await renameWithTransientRetry(temporary, target);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;

@@ -1,52 +1,28 @@
 # llm-dungeon
 
-**A local, persistent LLM dungeon master for open-ended, narrative-first RPG
-campaigns.**
+**A local web app for persistent, narrative-first RPG campaigns with an LLM
+as your dungeon master.**
 
 Describe what your character does in plain language. The DM narrates the
-consequences, calls visible d100 checks when the outcome is uncertain, and
-remembers durable characters, locations, inventory, facts, and story threads
+consequences, calls visible d100 checks when an outcome is uncertain, and keeps
+track of durable characters, locations, inventory, facts, and story threads
 between sessions.
 
-![llm-dungeon campaign showing an exceptional d100 success](docs/images/llm-dungeon-gameplay.jpg)
+![An llm-dungeon campaign showing an exceptional d100 success](docs/images/llm-dungeon-gameplay.jpg)
 
-*The real browser UI with an isolated demo campaign, a checked action, and its
-exceptional result.*
+The app supports multiple independent campaigns, English and Russian gameplay,
+and a curated choice of models from Google Gemini, OpenRouter, xAI, OpenAI, and
+DeepSeek. The Anthropic adapter remains available for existing campaigns and
+legacy/custom configuration, but Anthropic is not offered for new public model
+selection. Campaign saves remain local and are stored in a readable,
+Markdown-first format.
 
-Play in a browser or terminal with your own Gemini, OpenRouter, OpenAI,
-Anthropic, or DeepSeek API key.
+## Start playing
 
-- Keep and switch between multiple independent campaigns.
-- Store saves as readable Markdown-first files that are easy to inspect and
-  back up.
-- Play in English or Russian and choose a model for each campaign.
-- Resolve every uncertain action, including combat, with the same transparent
-  d100 mechanic.
+You need [Node.js 22 or newer](https://nodejs.org/), npm, and an API key from at
+least one supported LLM provider.
 
-Each campaign has one forward-only save: there is no undo, rewind, or
-resurrection after a terminal ending.
-
-## Requirements
-
-- Node.js 22 or newer
-- npm
-- A current JavaScript-enabled browser for the browser interface
-- Internet access and an API key for at least one supported provider: Google
-  Gemini, OpenRouter, OpenAI, Anthropic, or DeepSeek
-
-Provider requests may incur charges. Model tests, campaign previews and
-regeneration, gameplay, Ask, and Appeal all make provider requests. Displayed
-cost estimates are informational; confirm current pricing and limits with your
-provider.
-
-The browser server is for local, single-user use. It has no authentication or
-TLS and binds to `127.0.0.1` by default. Do not expose it to the internet or an
-untrusted network.
-
-## Install from the repository
-
-The project is distributed primarily as source through its Git repository. It
-is not published as an installable npm package.
+### 1. Download and install
 
 ```bash
 git clone https://github.com/TJurijs/llm-dungeon.git
@@ -54,108 +30,154 @@ cd llm-dungeon
 npm ci
 ```
 
-Run the commands below from the repository directory.
+The project is distributed from this repository and is not published as an npm
+package.
 
-## Configure provider keys
+### 2. Start the web app
 
-Create a local environment file:
+```bash
+npm run web
+```
+
+Open [http://127.0.0.1:4317](http://127.0.0.1:4317) in your browser. Keep the
+command running while you play. Press `Ctrl+C` when you want to stop the app.
+
+### 3. Connect an LLM provider
+
+On a clean installation, the welcome screen explains that a provider is needed
+and offers a button that opens **Settings → LLM providers**.
+
+For the easiest start:
+
+1. Open **Google Gemini**.
+2. Open its **•••** menu and enter a Gemini API key.
+3. Return to the welcome screen.
+
+The key entered in Settings is temporary: it stays only in server memory and is
+cleared when the app stops. For persistent configuration, see
+[Keep your API key between restarts](#keep-your-api-key-between-restarts).
+
+`gemini-3.5-flash` is enabled and selected as the default model from the first
+launch. It remains the recommended starting choice.
+
+### 4. Create your first campaign
+
+1. Select **New campaign**.
+2. Enter a premise, a character concept, and your gameplay language.
+3. Optionally expand **Model** or **World and DM style** to customize them.
+4. Select **Generate preview**.
+5. Accept, edit, or regenerate the preview.
+6. Type what your character does and select **Send**. You can also use
+   `Ctrl+Enter` or `Cmd+Enter`.
+
+That is all you need to begin playing. The campaign appears in the left sidebar
+and resumes from the same state the next time you start the app.
+
+## Keep your API key between restarts
+
+Copy the included environment template to `.env` in the project folder:
 
 ```bash
 cp .env.example .env
 ```
 
-On PowerShell, use `Copy-Item .env.example .env`.
+On PowerShell:
 
-Add only the keys you use:
+```powershell
+Copy-Item .env.example .env
+```
+
+Add only the key or keys you use:
 
 ```dotenv
 GEMINI_API_KEY=
 OPENROUTER_API_KEY=
+XAI_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 DEEPSEEK_API_KEY=
 ```
 
-For the simplest first run, configure `GEMINI_API_KEY`. Google Gemini is the
-recommended provider, and `gemini-3.5-flash` is the recommended, extensively
-playtested DM model.
+The supported providers are:
 
-Shell environment variables take precedence over `.env`. The application reads
-`.env` at startup, so restart it after changing a key. Never commit, publish, or
-share this file.
+| Provider | Environment variable |
+| --- | --- |
+| Google Gemini | `GEMINI_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
 
-The browser's **Settings → LLM providers** page also accepts a temporary session
-key. It overrides the matching environment key, remains only in server memory,
-and is cleared when the server stops.
+Restart the web app after changing `.env`. A temporary session key overrides
+the matching environment key until the app stops. Never commit, publish, or
+share your `.env` file.
 
-## Browser interface
+Provider requests may incur charges. Gameplay, campaign previews and
+regeneration, Ask, Appeal, and custom-model tests can all make provider
+requests. Prices shown by the app are estimates; confirm current pricing and
+limits with the provider.
 
-Start the browser UI:
+## How campaigns work
 
-```bash
-npm run web-cli
+Each campaign has its own premise, character, language, world style, model, and
+forward-only save. Select campaigns in the sidebar to switch between them.
+Several campaigns can coexist without sharing story state.
+
+The LLM improvises the fiction, while the application owns dice, validation,
+state changes, persistence, and crash recovery. Every uncertain action uses the
+same visible d100 mechanic, including combat; there are no separate hit points
+or initiative rules.
+
+The state panel provides three player-safe views:
+
+- **Character**, including inventory
+- **Location**
+- **Story threads**
+
+The campaign header also lets you inspect the starting setup and export a
+readable Markdown transcript.
+
+### Ask without taking a turn
+
+Select **Ask** to prefill an out-of-character question:
+
+```text
+:ask What does my character know about this symbol?
 ```
 
-Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Stop the server with
-`Ctrl+C`.
+Ask does not roll dice, advance time, change state, consume a turn, or persist
+an answer into the campaign history. The button only prefills the composer; it
+does not send anything until you select **Send**.
 
-To run the compiled build instead:
+### Appeal a result
 
-```bash
-npm run build
-npm run start:web-cli
+Select **Appeal** to request an administrative review:
+
+```text
+:appeal The inventory appears to be missing the torch I picked up.
+:appeal --turn 4 The result seems inconsistent with the recorded roll.
 ```
 
-### Test and enable a model
-
-Before the browser can use a model:
-
-1. Open **Settings → LLM providers** and expand the provider.
-2. Confirm that its key is detected.
-3. Select **Test** beside a suggested model. To use another model ID, open the
-   provider options and select **Test & add**.
-4. Wait for the compatibility test to pass. It makes real provider requests in
-   both English and Russian.
-5. A passing model is enabled automatically. Use **Enable** or **Disable** to
-   change its availability, and **Set default** to use it for new campaigns.
-
-If no valid default exists, the first passing model becomes the default. A model
-may require retesting after compatibility requirements change. Passing the test
-confirms protocol compatibility, not storytelling quality.
-
-### Create, play, and switch campaigns
-
-1. Select **New campaign**.
-2. Enter a premise, character concept, and language.
-3. Review the collapsed model and **World and DM style** settings. They are
-   prefilled from global defaults but can be changed for this campaign.
-4. Select **Generate preview**, then accept, edit, or regenerate it.
-5. Enter an action and select **Send**, or press `Ctrl+Enter`/`Cmd+Enter`.
-
-Campaigns appear in the left sidebar. Select another campaign to switch to it;
-each keeps its own save, language, world profile, and model. Separate campaigns
-may generate concurrently.
-
-The state panel provides player-safe Character, Location, and Story views. The
-campaign header can display its starting setup and export a readable Markdown
-log.
+An appeal may correct current state when the durable evidence supports it. It
+never rewrites a committed turn, rerolls, rewinds the story, advances fictional
+time, or resurrects a finished character. Like Ask, the button only prefills
+the composer.
 
 ### Change a campaign's model
 
-For an active campaign, use the model selector beside the composer. Only models
-with a configured key that are enabled and passed compatibility testing for the
-campaign language are listed.
+Use the model selector beside the composer. It lists only models that have a
+configured key, are enabled, and are compatible with the campaign's language.
+Changing the global default in Settings affects new campaigns only.
 
-Changing the global default does not affect existing campaigns. A campaign's
-model cannot change while it is archived, finished, busy, or has an unfinished
-request; retry or discard the pending request first.
+A model cannot change while a campaign is archived, finished, generating, or
+has an unfinished request. Retry or discard the pending request first.
 
-### Archive and delete campaigns
+### Archive or delete a campaign
 
-Use **Campaign actions → Archive campaign** and confirm the in-app dialog.
-Archiving is irreversible within the application: the campaign becomes
-read-only and cannot be resumed, but its transcript, state, setup, and export
-remain available.
+Use **Campaign actions → Archive campaign** and confirm the in-app dialog. An
+archived campaign is permanently read-only, but its transcript, state, setup,
+and export remain available.
 
 Permanent deletion is available only for archived campaigns:
 
@@ -164,100 +186,198 @@ Permanent deletion is available only for archived campaigns:
 3. Type the exact campaign title.
 4. Select **Delete forever**.
 
-Deletion removes the save and its browser transcript cache and cannot be undone.
-Export or back up the campaign first if you may need it later.
+Deletion cannot be undone. Export or back up the campaign first if you may want
+it later.
 
-### Ask questions and submit appeals
+## Models, calibration, and certification
 
-The **Ask** and **Appeal** buttons only prefill the composer. They never send or
-change anything until you complete the text and select **Send**.
+The public curated lineup is intentionally small:
+
+| Provider | Curated models |
+| --- | --- |
+| Google Gemini (recommended) | `gemini-3.5-flash` (recommended/default), `gemini-3.1-flash-lite` |
+| OpenRouter | `qwen/qwen3.7-plus` |
+| xAI | `grok-4.5` |
+| OpenAI | `gpt-5.6-terra` |
+| DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` |
+
+Anthropic has no public provider card for new selection. Its adapter has not
+been deleted: existing campaigns that already reference Anthropic or another
+retired model remain openable, and persisted campaign configuration is not
+rewritten merely because the public lineup changes.
+
+In **Settings → LLM providers**, you can enable or disable available models and
+choose the default used by new campaigns. The model cards show only current
+certification quality; superseded quality labels are not displayed.
+
+To try another model ID, expand a public provider and select **Add**. Adding a
+custom model does not contact the provider. Its row includes a **Test** button
+that checks the real setup and gameplay schemas independently in English and
+Russian. Passing one language is enough to use the custom model for that
+language. Custom models can be removed unless they are referenced by a default,
+campaign, or campaign draft.
+
+A compatibility test answers only whether a route can follow the strict setup
+and Gameplay Contract V1 schemas for a language. It does not calibrate provider
+parameters, certify gameplay, establish narrative quality, or make a model
+recommendable.
+
+The model assessment system keeps these results separate:
+
+- **Adapter status:** `uncalibrated`, `calibrated`,
+  `calibration_inconclusive`, or `no_compatible_profile`.
+- **Technical gameplay status:** `clean`, `playable_with_recovery`, `unstable`,
+  `unsupported`, or `inconclusive`.
+- **Language-specific quality:** `high`, `medium`, `low`, `unrated`, or
+  `awaiting_judgment`.
+- **Recommendation eligibility:** derived independently from current evidence;
+  it is never equivalent to passing a schema test.
+
+Calibration is a non-scored adapter exercise. It finds a strict,
+provider-supported `ModelExecutionProfile` for one provider, model, and route,
+including schema mode/projection, temperature, reasoning, token field,
+phase-specific budgets, and timeouts. Direct and OpenRouter routes are distinct.
+Variants run sequentially and change one variable at a time; budget escalation
+requires confirmed truncation. Every attempt is retained, and the chosen
+profile is frozen by fingerprint before certification. Changing that profile
+invalidates its certification.
+
+## Developer playtests
+
+Calibration, certification, autoplay, stress testing, tuning, judging, and
+prompt inspection are terminal/developer tools; they are not browser gameplay
+features. One versioned playtest engine owns all six initial packages:
+
+| Package | Purpose |
+| --- | --- |
+| `certification-v1` | One passable canonical ten-turn gauge of core gameplay behavior with deterministic rolls and no AI player; valid terminal outcomes remain complete fixtures, while later coverage may continue in a fresh isolated fixture. This is the only package allowed to update authoritative certification metadata. |
+| `campaign-autoplay-v1` | Resumable 25–200 turn generated campaigns with a fixed player model/profile, seeded rolls, checkpoints, and final judgment. |
+| `persistence-soak-v1` | Long-horizon revisitation of early facts, items, promises, NPCs, and places after context compaction. |
+| `adversarial-boundaries-v1` | Unsupported possessions and abilities, contradictory or incoherent claims, secret-extraction attempts, and bundled actions. |
+| `mechanics-v1` | Combat, social opposition, investigation, check calibration, action economy, and proportional consequences. |
+| `tuning-v1` | Controlled comparison of one declared variable with the same state, actions, rolls, package, and judge. |
+
+Invoke the command family through `npm run dev --`, for example
+`npm run dev -- playtest packages`:
 
 ```text
-:ask What does my character know about this symbol?
-:appeal The inventory appears to be missing the torch I picked up.
-:appeal --turn 4 The result seems inconsistent with the recorded roll.
+playtest packages
+playtest calibrate [--target <provider:model@route>] [--input-cost <usd-per-million> --output-cost <usd-per-million>] --max-cost <usd>
+playtest probe [--target <provider:model@route>] [--languages <codes>] --max-cost <usd>
+playtest replay <diagnostic-bundle> [--variant <profile.json>] --max-cost <usd>
+playtest run <package> [--candidate <provider:model@route>] [--judge <provider:model@route>] --max-cost <usd>
+playtest certify [--candidate <provider:model@route>] [--judge <provider:model@route>] --max-cost <usd>
+playtest matrix <package> --candidate <provider:model@route> --candidate <provider:model@route> [--judge <provider:model@route>] --max-cost <usd>
+playtest resume <run-id>
+playtest judge <run-id>
+playtest report <run-id>
+playtest compare <run-id> <run-id>
 ```
 
-`:ask` returns an out-of-character answer without rolling, advancing a turn,
-changing state, or persisting a campaign turn. `:appeal` appends an
-administrative review turn. It may correct current state when justified, but
-never rewrites a committed turn, rerolls, rewinds, advances fictional time, or
-restores a dead or ended campaign.
+Candidate, player-driver, and judge targets must each have a current frozen
+execution profile. Judged packages use a separate Gemini 3.5 Flash call by
+default; `--judge` overrides that fixed target for a run. The judge may be the
+same underlying model as the candidate because it receives a new blinded,
+non-mutating request after gameplay completes. Generated and hybrid packages additionally require
+`--player <provider:model@route>` and may select one of the nine behavior inputs
+with `--player-profile <profile>`. The `<usd>` values above are mandatory hard
+ceilings, not suggested budgets; choose them only after reviewing the intended
+package and provider pricing. These commands can make paid calls and should not
+be run merely as part of local verification.
 
-## Terminal interface
+Use repeatable `--model-price <provider:model@route=input-usd-per-million,output-usd-per-million>` overrides
+for unpriced custom candidate, player, or judge models. Tuning runs declare
+exactly one `model:`, `adapter:`, or `prompt:` variable with
+`--tuning-variable <kind:description>`; comparison rejects mismatched package,
+seed, language, player, judge, limits, concurrency, or unrelated target/source
+controls. A current calibrated execution profile is also reused for ordinary
+terminal and browser gameplay with that model and route.
 
-Start the interactive terminal interface with:
+The former `evaluate`, `evaluate:resume`, and `evaluate:report` spellings are
+deprecated aliases into this playtest engine; they do not run a second legacy
+evaluation framework.
 
-```bash
-npm run dev
-```
+Autoplay remains an external harness that submits one ordinary player action at
+a time. It does not give the dungeon master tools or autonomous background
+actions. Optional concurrency applies only across independent jobs and
+campaigns: a global worker limit, provider-specific pools, a shared reserved
+cost budget, and per-campaign serialization prevent turns in one campaign from
+overlapping. Runs support cancellation and artifact-driven resume.
 
-Useful commands:
+Failures are attributed separately to `candidate_model`,
+`adapter_configuration`, `provider_route`, `account_access`, `judge`,
+`player_driver`, `application`, or `inconclusive`, with separate telemetry
+lanes. Candidate technical metrics are frozen before the separate judge call
+runs. Judge configuration stays fixed across a comparison
+batch and should be blind to candidate identity where possible. Non-candidate
+failures, latency, repairs, and cost cannot lower the candidate's technical
+status, though infrastructure failures may make a run inconclusive. Judging is
+rerunnable without replaying gameplay; failed judging leaves quality at
+`awaiting_judgment`.
 
-```bash
-npm run dev -- play [campaign-id]  # Open or choose a campaign
-npm run dev -- new                 # Create another campaign
-npm run dev -- campaigns           # List active and archived campaigns
-npm run dev -- configure           # Set the terminal provider/model default
-npm run dev -- language en         # Default new campaigns to English
-npm run dev -- language ru         # Default new campaigns to Russian
-```
+Reports distinguish scheduler queue time, provider-call duration, retry/backoff
+time, and player-visible turn duration. Canonical speed uses concurrency 1;
+parallel runs are marked as loaded latency. A failed call may create a
+secret-safe diagnostic bundle for bounded, non-committing focused replay.
+`playtest replay` keeps its own locked manifest, hard cost ceiling, scheduler,
+and resumable evidence without opening a campaign store. A
+successful replay variant still requires a fresh frozen profile and a complete
+`certification-v1` run.
 
-During play:
+Existing campaigns and historical evaluation artifacts are preserved but are
+not presented as current technical or quality certification. Do not run paid live calibration, certification,
+autoplay, stress, replay, or judging without explicit authorization and an
+agreed cost ceiling.
 
-```text
-:character                       Show character and inventory
-:location                        Show the current location
-:threads                         Show story threads
-:ask <question>                  Ask without advancing a turn
-:appeal <explanation>            Submit a general appeal
-:appeal --turn N <explanation>   Appeal a specific committed turn
-:retry                           Retry an unfinished request
-:discard                         Discard an unfinished request
-:switch                          Switch to another unarchived campaign
-:new                             Create another campaign
-:help                            Show command help
-:quit                            Exit
-```
+## Saves and backups
 
-Terminal configuration accepts a provider/model ID only after that exact model
-has passed the current English-and-Russian compatibility test and remains
-enabled under browser **Settings → LLM providers**. Test new models in the
-browser first. Existing campaigns retain their pinned model. Archival,
-permanent deletion, export, and model testing are available through the browser
-interface.
+Campaign data is stored under `data/campaigns/`. To make a restorable backup:
 
-After building, start the terminal with `npm start`.
-
-## Campaign data and backups
-
-Campaigns are stored under `data/campaigns/`. To make a restorable backup:
-
-1. Stop the browser server and every terminal game process.
+1. Stop the web app.
 2. Copy the entire `data/` directory to a secure location.
-3. Keep it together; do not merge or edit individual save files.
+3. Keep the directory together; do not merge or edit individual save files.
 
-Restore a backup only while the application is stopped. Archived campaigns are
-included in `data/`. A Markdown export is readable but is not a restorable save.
+Restore a backup only while the app is stopped. Archived campaigns are included
+in `data/`. A Markdown export is readable, but it is not a restorable save.
 
-Back up `config/` separately if you also want language, world-style, model-test,
-and terminal defaults. Treat `.env` as a secret; do not place it in a shared
-backup.
+Back up `config/` separately if you also want global language, world-style,
+model compatibility, and default-model settings. Treat `.env` as a secret and
+do not place it in a shared backup.
 
-## Important limitations
+## Build and update
 
-- Saves move forward only; dead, ended, and archived campaigns cannot resume.
-- Combat is narrative and uses the same d100 checks as other uncertain actions;
-  there are no hit points or initiative system.
-- Model availability, output quality, pricing, and uptime depend on third-party
-  providers.
-- English and Russian are the supported interface and gameplay languages.
+To run a compiled production build locally:
+
+```bash
+npm run build
+npm run start:web
+```
+
+To update an existing checkout:
+
+```bash
+git pull
+npm ci
+npm run web
+```
+
+Back up `data/` before updating if the campaigns are important to you.
+
+## Privacy and limitations
+
+- The app and campaign files run locally, but prompts are sent to the LLM
+  provider you configure.
+- The local server has no authentication or TLS and binds to `127.0.0.1` by
+  default. Do not expose it to the internet or an untrusted network.
+- Saves move forward only. Dead, ended, and archived campaigns cannot resume.
+- Model quality, pricing, limits, and uptime depend on third-party providers.
+- English and Russian are the currently supported interface and gameplay
+  languages.
 - There is no supported public or multi-user API.
-- The local browser server is not designed for public hosting.
 
 ## Development verification
 
-Run the complete deterministic gate before releasing changes:
+Before releasing a code change, run:
 
 ```bash
 npm test -- --run

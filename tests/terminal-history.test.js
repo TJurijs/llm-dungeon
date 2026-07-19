@@ -202,7 +202,7 @@ describe("browser terminal history", () => {
   });
 
   it("uses a separate local-storage namespace for every campaign", () => {
-    expect(terminalStorageKey(null)).toBe("llm-dungeon:web-cli-terminal:no-campaign");
+    expect(terminalStorageKey(null)).toBe("llm-dungeon:web-terminal:no-campaign");
     expect(terminalStorageKey("campaign:one")).not.toBe(terminalStorageKey("campaign:two"));
   });
 

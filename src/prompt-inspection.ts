@@ -1,4 +1,3 @@
-import { judgePrompt, judgeSystemPrompt, type JudgeProfile, type TechnicalHealthStats } from "./evaluation/judge.js";
 import { type LanguageCode } from "./language.js";
 import { resolveCheck } from "./mechanics.js";
 import {
@@ -24,7 +23,10 @@ import {
   CONNECTION_SYSTEM_PROMPT,
   connectionSetupPrompt,
 } from "./prompts/connection.js";
-import { simulatedPlayerPrompt, simulatedPlayerSystemPrompt } from "./prompts/evaluation.js";
+import { playtestPlayerPrompt, playtestPlayerSystemPrompt } from "./prompts/playtest-player.js";
+import { assessCoverage, buildMechanicalAudit } from "./playtest/audit.js";
+import { playtestJudgePrompt, playtestJudgeSystemPrompt } from "./playtest/judge.js";
+import { CERTIFICATION_PACKAGE } from "./playtest/packages.js";
 
 export const PROMPT_PHASES = [
   "dm-system",
@@ -64,8 +66,8 @@ const PROMPT_SOURCE_FILES: Record<PromptPhase, readonly string[]> = {
   appeal: ["src/prompts/appeal.ts"],
   "schema-repair": ["src/prompts/recovery.ts"],
   "domain-correction": ["src/prompts/recovery.ts"],
-  "simulated-player": ["src/prompts/evaluation.ts"],
-  judge: ["src/evaluation/judge.ts"],
+  "simulated-player": ["src/prompts/playtest-player.ts"],
+  judge: ["src/playtest/judge.ts"],
   "connection-probe": ["src/prompts/connection.ts"],
 };
 
@@ -85,23 +87,6 @@ function previewCheck() {
     failureCampaignStatus: "none",
   }, 55);
 }
-
-const JUDGE_PROFILE: JudgeProfile = {
-  id: "example-profile",
-  instruction: "Pursue an established goal and react to consequences.",
-};
-
-const EMPTY_TECHNICAL_HEALTH: TechnicalHealthStats = {
-  gameplayDmCalls: 0,
-  gameplayPlayerCalls: 0,
-  failedDmCalls: 0,
-  failedPlayerCalls: 0,
-  dmFailureRate: 0,
-  schemaRepairCalls: 0,
-  transientRetryCalls: 0,
-  domainRepairCalls: 0,
-  failedCallCostUsd: 0,
-};
 
 export function inspectPrompt(
   phase: PromptPhase,
@@ -172,14 +157,23 @@ export function inspectPrompt(
       sections = ["original-task", "domain-correction"];
       break;
     case "simulated-player":
-      system = simulatedPlayerSystemPrompt({ id: "curious-explorer", instruction: "Explore unfamiliar places and follow discoveries." }, language);
-      prompt = simulatedPlayerPrompt("<PLAYER-VISIBLE CONTEXT — no secrets>");
+      system = playtestPlayerSystemPrompt({ id: "curious-explorer", instruction: "Explore unfamiliar places and follow discoveries." }, language);
+      prompt = playtestPlayerPrompt("<PLAYER-VISIBLE CONTEXT — no secrets>");
       sections = ["player-profile", "output-language", "player-visible-context", "next-action"];
       break;
     case "judge":
-      system = judgeSystemPrompt(language);
-      prompt = judgePrompt(JUDGE_PROFILE, "<PLAYER-FACING TRANSCRIPT>", [], "<STARTING DM STATE>", "<FINAL DM STATE>", EMPTY_TECHNICAL_HEALTH);
-      sections = ["judge-policy", "current-state-reconciliation", "check-difficulty", "deterministic-metrics", "transcript", "mechanical-audit", "starting-state", "final-state"];
+      system = playtestJudgeSystemPrompt(language);
+      prompt = playtestJudgePrompt({
+        playtestPackage: CERTIFICATION_PACKAGE,
+        language,
+        transcript: "<PLAYER-FACING TRANSCRIPT>",
+        turns: [],
+        startingState: "<STARTING DM STATE>",
+        finalState: "<FINAL DM STATE>",
+        mechanicalAudit: buildMechanicalAudit([]),
+        coverage: assessCoverage(CERTIFICATION_PACKAGE, []),
+      });
+      sections = ["judge-policy", "quality-rubric", "current-state-reconciliation", "check-difficulty", "deterministic-coverage", "transcript", "mechanical-audit", "starting-state", "final-state"];
       break;
     case "connection-probe":
       system = CONNECTION_SYSTEM_PROMPT;

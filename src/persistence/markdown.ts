@@ -11,7 +11,7 @@ import {
   type Thread,
 } from "../schemas.js";
 import type { CommittedTurn, PlayerVisibleTurn, TurnKind } from "../types.js";
-import { CheckResultSchema, formatCheck } from "../mechanics.js";
+import { CheckResultSchema, formatCheck, type CheckResult } from "../mechanics.js";
 import { DEFAULT_LANGUAGE, type LanguageCode } from "../language.js";
 import { UsageSchema, type Usage } from "../usage.js";
 
@@ -366,6 +366,16 @@ export function parseTurnOperations(log: string): StateOperation[] {
   return StateOperationSchema.array().parse(JSON.parse(fenced[1]));
 }
 
+/** Decode the private, application-locked check payload for recovery/auditing. */
+export function parseTurnCheck(log: string): CheckResult | undefined {
+  const parsed = matter(log);
+  const section = extractSection(parsed.content, "Check").trim();
+  if (section === "_No check._") return undefined;
+  const fenced = section.match(/^```json\s*([\s\S]*?)\s*```$/);
+  if (!fenced?.[1]) throw new Error("Turn log has invalid structured check metadata");
+  return CheckResultSchema.parse(JSON.parse(fenced[1]));
+}
+
 /** Decode private provider usage metadata without exposing narrative or operations. */
 export function parseTurnGenerationMetadata(log: string): TurnGenerationMetadata {
   const parsed = matter(log);
@@ -436,9 +446,7 @@ export function validatePreparedTurnLog(log: string): TurnOperationLedger {
   const checkSection = extractSection(parsed.content, "Check").trim();
   if (!checkSection) throw new Error("Prepared turn log is missing its Check section");
   if (checkSection !== "_No check._") {
-    const fencedCheck = checkSection.match(/^```json\s*([\s\S]*?)\s*```$/);
-    if (!fencedCheck?.[1]) throw new Error("Prepared turn log has invalid structured check metadata");
-    CheckResultSchema.parse(JSON.parse(fencedCheck[1]));
+    parseTurnCheck(log);
     if (kind === "appeal") throw new Error("An appeal turn cannot contain a check");
   }
 
