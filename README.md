@@ -12,10 +12,7 @@ between sessions.
 
 The app supports multiple independent campaigns, English and Russian gameplay,
 and a curated choice of models from Google Gemini, OpenRouter, xAI, OpenAI, and
-DeepSeek. The Anthropic adapter remains available for existing campaigns and
-legacy/custom configuration, but Anthropic is not offered for new public model
-selection. Campaign saves remain local and are stored in a readable,
-Markdown-first format.
+DeepSeek. 
 
 ## Start playing
 
@@ -29,9 +26,6 @@ git clone https://github.com/TJurijs/llm-dungeon.git
 cd llm-dungeon
 npm ci
 ```
-
-The project is distributed from this repository and is not published as an npm
-package.
 
 ### 2. Start the web app
 
@@ -121,7 +115,7 @@ limits with the provider.
 ## How campaigns work
 
 Each campaign has its own premise, character, language, world style, model, and
-forward-only save. Select campaigns in the sidebar to switch between them.
+forward-only roguelike style save. Select campaigns in the sidebar to switch between them.
 Several campaigns can coexist without sharing story state.
 
 The LLM improvises the fiction, while the application owns dice, validation,
@@ -156,7 +150,7 @@ Select **Appeal** to request an administrative review:
 
 ```text
 :appeal The inventory appears to be missing the torch I picked up.
-:appeal --turn 4 The result seems inconsistent with the recorded roll.
+:appeal Turn 4 The result seems inconsistent with the recorded roll.
 ```
 
 An appeal may correct current state when the durable evidence supports it. It
@@ -201,11 +195,6 @@ The public curated lineup is intentionally small:
 | OpenAI | `gpt-5.6-terra` |
 | DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` |
 
-Anthropic has no public provider card for new selection. Its adapter has not
-been deleted: existing campaigns that already reference Anthropic or another
-retired model remain openable, and persisted campaign configuration is not
-rewritten merely because the public lineup changes.
-
 In **Settings → LLM providers**, you can enable or disable available models and
 choose the default used by new campaigns. The model cards show only current
 certification quality; superseded quality labels are not displayed.
@@ -218,7 +207,7 @@ language. Custom models can be removed unless they are referenced by a default,
 campaign, or campaign draft.
 
 A compatibility test answers only whether a route can follow the strict setup
-and Gameplay Contract V1 schemas for a language. It does not calibrate provider
+and Gameplay Contract schemas for a language. It does not calibrate provider
 parameters, certify gameplay, establish narrative quality, or make a model
 recommendable.
 
