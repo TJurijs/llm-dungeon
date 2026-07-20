@@ -1,3 +1,4 @@
+/** @param {Navigator & { userAgentData?: { platform?: string } }} [navigatorValue] */
 export function submitShortcut(navigatorValue = navigator) {
   const platform = navigatorValue.userAgentData?.platform || navigatorValue.platform || "";
   return /mac/i.test(platform) ? "⌘ + Enter" : "Ctrl + Enter";
@@ -29,6 +30,10 @@ export function hasConfiguredProviderKey(llm, keyStatus) {
     .some((provider) => Boolean(provider.keyPresent));
 }
 
+/**
+ * @param {*} llm
+ * @param {{ availableOnly?: boolean, requireKey?: boolean, language?: string, includeHidden?: boolean }} [options]
+ */
 export function llmModelEntries(llm, {
   availableOnly = false,
   requireKey = false,
@@ -91,7 +96,9 @@ export async function requestJson(url, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(body.error || `Request failed (${response.status})`);
+    const error = /** @type {Error & { status?: number }} */ (
+      new Error(body.error || `Request failed (${response.status})`)
+    );
     error.status = response.status;
     throw error;
   }

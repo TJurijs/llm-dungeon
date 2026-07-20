@@ -323,7 +323,9 @@ function renderCampaignItem(campaign) {
 }
 
 function renderSidebar() {
-  const focusedCampaignId = document.activeElement?.closest?.("[data-campaign-id]")?.dataset.campaignId;
+  const focusedCampaignId = /** @type {HTMLElement | null | undefined} */ (
+    document.activeElement?.closest?.("[data-campaign-id]")
+  )?.dataset.campaignId;
   const active = campaigns.filter((campaign) => !campaign.archived);
   const archived = campaigns.filter((campaign) => campaign.archived);
   const activeList = $("#campaign-list");
@@ -338,7 +340,7 @@ function renderSidebar() {
   $("#archived-count").textContent = String(archived.length);
   $("#archived-campaigns").hidden = archived.length === 0;
   if (focusedCampaignId) {
-    [...document.querySelectorAll("[data-campaign-id]")]
+    [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-campaign-id]"))]
       .find((button) => button.dataset.campaignId === focusedCampaignId)
       ?.focus({ preventScroll: true });
   }
@@ -617,8 +619,9 @@ function openProviderSettings() {
   showView("settings", { focus: false });
   setupSettings.selectSettingsSection("providers");
   const recommendedProvider = status.llm?.providers?.find((provider) => provider.recommended);
-  const recommendedCard = [...document.querySelectorAll("[data-provider-details]")]
-    .find((card) => card.dataset.providerDetails === recommendedProvider?.id);
+  const recommendedCard = [.../** @type {NodeListOf<HTMLDetailsElement>} */ (
+    document.querySelectorAll("[data-provider-details]")
+  )].find((card) => card.dataset.providerDetails === recommendedProvider?.id);
   if (recommendedCard) recommendedCard.open = true;
   $("#llm-settings-title").focus({ preventScroll: true });
 }

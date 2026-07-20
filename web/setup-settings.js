@@ -823,11 +823,11 @@ export function createSetupSettingsController(dependencies) {
   }
 
   function selectSettingsSection(section) {
-    for (const button of document.querySelectorAll("[data-settings-section]")) {
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-settings-section]"))) {
       if (button.dataset.settingsSection === section) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    for (const panel of document.querySelectorAll("[data-settings-panel]")) {
+    for (const panel of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-settings-panel]"))) {
       panel.hidden = panel.dataset.settingsPanel !== section;
     }
   }
