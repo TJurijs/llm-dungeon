@@ -2,6 +2,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { z } from "zod";
 
+export class WebApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "WebApiError";
+  }
+}
+
 export function asError(error: unknown): string {
   if (error instanceof z.ZodError) {
     return error.issues
@@ -9,6 +16,18 @@ export function asError(error: unknown): string {
       .join("; ");
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Map thrown errors onto the API's HTTP status envelope. */
+export function statusFor(error: unknown): number {
+  if (error instanceof WebApiError) return error.status;
+  if (error instanceof z.ZodError) return 400;
+  const message = asError(error);
+  if (/was not found/i.test(message)) return 404;
+  if (/locked by another running process|another operation is still running|archived and cannot|read-only|unfinished request|uncommitted turn|campaign has ended/i.test(message)) {
+    return 409;
+  }
+  return 400;
 }
 
 export async function readJsonBody(request: IncomingMessage): Promise<unknown> {
