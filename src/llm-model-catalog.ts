@@ -5,42 +5,9 @@ import { z } from "zod";
 import { GAMEPLAY_PROTOCOL_VERSION } from "./llm/gameplay-protocol.js";
 import { LanguageCodeSchema, type LanguageCode } from "./language.js";
 import { atomicWriteJson } from "./persistence/files.js";
-import { acquireFileLock } from "./persistence/lock.js";
+import { withSerializedFileLock } from "./persistence/lock.js";
 
 export const LLM_MODEL_CATALOG_VERSION = 1 as const;
-
-const MODEL_CATALOG_LOCK_WAIT_MS = 5_000;
-const MODEL_CATALOG_LOCK_RETRY_MS = 25;
-const modelCatalogProcessQueues = new Map<string, Promise<void>>();
-
-async function queueModelCatalogOperation<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
-  const previous = modelCatalogProcessQueues.get(lockPath) ?? Promise.resolve();
-  let releaseQueue!: () => void;
-  const current = new Promise<void>((resolve) => { releaseQueue = resolve; });
-  const tail = previous.then(() => current, () => current);
-  modelCatalogProcessQueues.set(lockPath, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    releaseQueue();
-    if (modelCatalogProcessQueues.get(lockPath) === tail) modelCatalogProcessQueues.delete(lockPath);
-  }
-}
-
-async function acquireModelCatalogLock(lockPath: string): Promise<() => Promise<void>> {
-  const deadline = Date.now() + MODEL_CATALOG_LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      return await acquireFileLock(lockPath, "LLM model catalog");
-    } catch (error) {
-      if (!/locked by another running process/i.test(String((error as Error).message)) || Date.now() >= deadline) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, MODEL_CATALOG_LOCK_RETRY_MS));
-    }
-  }
-}
 
 export const LlmProviderIdSchema = z.enum([
   "gemini",
@@ -693,13 +660,6 @@ export class LlmModelCatalog {
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    return queueModelCatalogOperation(path.resolve(this.lockPath), async () => {
-      const release = await acquireModelCatalogLock(this.lockPath);
-      try {
-        return await operation();
-      } finally {
-        await release();
-      }
-    });
+    return withSerializedFileLock(this.lockPath, "LLM model catalog", operation);
   }
 }

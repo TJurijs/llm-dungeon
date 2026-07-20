@@ -13,47 +13,10 @@ import {
 import { RECOMMENDED_MODEL_SELECTION, ModelSelectionSchema } from "./llm-model-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "./model-execution-profile.js";
 import { atomicWriteJson } from "./persistence/files.js";
-import { acquireFileLock } from "./persistence/lock.js";
+import { withSerializedFileLock } from "./persistence/lock.js";
 import { CERTIFICATION_PACKAGE_VERSION } from "./certification-version.js";
 
 export const MODEL_ASSESSMENT_CATALOG_VERSION = 1 as const;
-const MODEL_ASSESSMENT_LOCK_WAIT_MS = 5_000;
-const MODEL_ASSESSMENT_LOCK_RETRY_MS = 25;
-const modelAssessmentProcessQueues = new Map<string, Promise<void>>();
-
-async function queueModelAssessmentOperation<T>(
-  lockPath: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = modelAssessmentProcessQueues.get(lockPath) ?? Promise.resolve();
-  let releaseQueue!: () => void;
-  const current = new Promise<void>((resolve) => { releaseQueue = resolve; });
-  const tail = previous.then(() => current, () => current);
-  modelAssessmentProcessQueues.set(lockPath, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    releaseQueue();
-    if (modelAssessmentProcessQueues.get(lockPath) === tail) {
-      modelAssessmentProcessQueues.delete(lockPath);
-    }
-  }
-}
-
-async function acquireModelAssessmentLock(lockPath: string): Promise<() => Promise<void>> {
-  const deadline = Date.now() + MODEL_ASSESSMENT_LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      return await acquireFileLock(lockPath, "model assessment catalog");
-    } catch (error) {
-      if (!/locked by another running process/i.test(String((error as Error).message))
-        || Date.now() >= deadline) throw error;
-      await new Promise((resolve) => setTimeout(resolve, MODEL_ASSESSMENT_LOCK_RETRY_MS));
-    }
-  }
-}
-
 const RouteKeySchema = ModelSelectionSchema.extend({
   route: z.string().trim().min(1).max(100),
 }).strict();
@@ -449,16 +412,11 @@ export class ModelAssessmentCatalog {
   }
 
   private async mutate(change: (catalog: PersistedAssessmentCatalog) => void): Promise<void> {
-    await queueModelAssessmentOperation(path.resolve(this.lockPath), async () => {
-      const release = await acquireModelAssessmentLock(this.lockPath);
-      try {
-        const catalog = await this.load();
-        change(catalog);
-        catalog.models.sort((left, right) => assessmentKey(left).localeCompare(assessmentKey(right)));
-        await atomicWriteJson(this.filePath, PersistedAssessmentCatalogSchema.parse(catalog));
-      } finally {
-        await release();
-      }
+    await withSerializedFileLock(this.lockPath, "model assessment catalog", async () => {
+      const catalog = await this.load();
+      change(catalog);
+      catalog.models.sort((left, right) => assessmentKey(left).localeCompare(assessmentKey(right)));
+      await atomicWriteJson(this.filePath, PersistedAssessmentCatalogSchema.parse(catalog));
     });
   }
 }
