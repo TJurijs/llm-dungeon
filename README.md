@@ -115,6 +115,12 @@ An appeal reviews the durable campaign evidence and may correct current state.
 It does not rewrite a committed turn, reroll, rewind the story, or resurrect a
 finished character.
 
+### Change language
+
+The Language setting controls the interface and is the initial language for a
+new campaign. You can choose a different story language while creating that
+campaign without changing the interface.
+
 ### Change models
 
 Use the selector beside the composer. It shows models that have a configured
@@ -182,8 +188,8 @@ npm run web
 
 ## Troubleshooting
 
-- **The app says a key is missing:** add it in Settings or `.env`, then restart
-  after editing `.env`.
+- **The app says a key is missing:** add it in Settings or `.env`, then use the
+  reload icon in the LLM Providers header after editing `.env`.
 - **A model is unavailable:** confirm its provider key is present and that the
   model supports the campaign language.
 - **A turn was interrupted:** use the offered retry or discard action.

@@ -267,7 +267,7 @@
             <section id="settings-defaults-panel" class="settings-card settings-panel" data-settings-panel="defaults" aria-labelledby="world-settings-title">
               <h2 id="world-settings-title" data-i18n="globalDefaults">Global defaults</h2>
               <p class="field-hint" data-i18n="globalDefaultsHint">Used when creating a new campaign. Existing campaigns are unchanged.</p>
-              <label for="settings-language" data-i18n="defaultLanguage">Default language</label>
+              <label for="settings-language" data-i18n="defaultLanguage">Language</label>
               <select id="settings-language"></select>
               <label for="settings-world" data-i18n="worldStyle">World and DM style</label>
               <textarea id="settings-world" rows="18" maxlength="500000" spellcheck="false"></textarea>
@@ -279,10 +279,16 @@
 
             <section id="settings-providers-panel" class="settings-card settings-panel llm-settings-card" data-settings-panel="providers" aria-labelledby="llm-settings-title" hidden>
               <header class="llm-settings-header">
-                <div>
-                  <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
+                <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
+                <div class="llm-header-actions">
+                  <button id="reload-project-env" class="icon-button llm-header-action" type="button" data-i18n-aria-label="reloadEnv" data-i18n-title="reloadEnv" aria-label="Reload .env" title="Reload .env">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"></path><path d="M18.4 16a8 8 0 1 1 .8-7.1L20 11"></path></svg>
+                  </button>
+                  <button id="test-provider-connections" class="icon-button llm-header-action" type="button" data-i18n-aria-label="testConnections" data-i18n-title="testConnections" aria-label="Check connection" title="Check connection">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.2-5 4.2 10 2.4-5h6.2"></path></svg>
+                  </button>
+                  <div id="llm-status-legend" class="model-status-legend" aria-label="Model status legend"></div>
                 </div>
-                <div id="llm-status-legend" class="model-status-legend" aria-label="Model status legend"></div>
               </header>
               <p id="llm-default-summary" class="llm-default-summary"></p>
               <div id="llm-providers" class="llm-provider-list" aria-live="polite"></div>

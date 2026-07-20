@@ -196,7 +196,8 @@ describe("web UI copy", () => {
       .toBe("openrouter · moonshotai/kimi-k2.6 · $0.0042");
     expect(generationTooltip({ provider: "gemini", model: "gemini-3.5-flash", costUsd: 0.024, costBasis: "estimated" }))
       .toBe("gemini · gemini-3.5-flash · ≈$0.02");
-    expect(chat).toContain('presentation.type === "user" && playerName ? playerName : entry.title');
+    expect(chat).toContain('if (presentation.type === "user" && playerName) return playerName;');
+    expect(chat).toContain('if (presentation.type === "question") return labels.answerNoTurn;');
     expect(app).toContain('body.playerName.trim()');
     expect(app).toContain('deleteButton.dataset.deleteCampaignId = campaign.campaignId');
     expect(app).toContain('method: "DELETE"');
@@ -328,6 +329,13 @@ describe("web UI copy", () => {
     expect(setup).not.toContain("/api/config/provider");
     expect(setup).toContain('runSetupOperation($("#generate-campaign"), t("working"), initializeSetup)');
     expect(setup).toContain("if (requestId !== setupGenerationSequence) return;");
+    expect(setup).toContain("withIconButtonBusy");
+    expect(setup).not.toContain('applyLocale($("#setup-language").value)');
+    expect(app).toContain('applyLocale(status.language ?? "en")');
+    expect(app).toContain('const localeChanged = applyLocale(next.language ?? "en");');
+    expect(app).not.toContain("selectedCampaign()?.language ?? next.language");
+    expect(app).toContain("function interfaceTranslator()");
+    expect(app).not.toContain("function campaignTranslator");
     expect(setup).toContain('$("#campaign-setup-form").addEventListener("input", invalidateDraft)');
     expect(app).toContain("const currentConfig = campaign?.config ?? status.llm?.defaultModel ?? status.config;");
     expect(app).toContain("hasConfiguredProviderKey(status.llm, status.keyStatus)");

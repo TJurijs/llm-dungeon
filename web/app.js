@@ -8,7 +8,7 @@ import {
 import { actionPrefillValue, BrowserChatHistory, createChatEntry, createThinkingEntry } from "./chat-ui.js";
 import { renderInspectionView, inspectionMessage } from "./inspection-ui.js";
 import { createSetupSettingsController } from "./setup-settings.js";
-import { UI_COPY, localeCopy } from "./ui-copy.js";
+import { UI_COPY } from "./ui-copy.js";
 import {
   campaignCostText,
   confirmationTitleValue,
@@ -53,9 +53,8 @@ function t(key) {
   return UI_COPY[locale]?.[key] ?? UI_COPY.en[key] ?? key;
 }
 
-function campaignTranslator(campaignId, language) {
-  const targetLanguage = language ?? campaignById(campaignId)?.language ?? "en";
-  return (key) => localeCopy(targetLanguage, key);
+function interfaceTranslator() {
+  return (key) => t(key);
 }
 
 function campaignById(campaignId) {
@@ -89,6 +88,7 @@ function applyLocale(language) {
   document.documentElement.lang = locale;
   $$('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); });
   $$('[data-i18n-aria-label]').forEach((element) => { element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel)); });
+  $$('[data-i18n-title]').forEach((element) => { element.title = t(element.dataset.i18nTitle); });
   $("#action").placeholder = t("actionPlaceholder");
   $("#action").setAttribute("aria-label", t("whatDo"));
   $("#send-action").setAttribute("aria-label", t("sendAction"));
@@ -176,7 +176,7 @@ function appendHistory(campaignId, value, { render = true } = {}) {
 }
 
 function appendCommittedResponse(campaignId, result, { render = true } = {}) {
-  const campaignT = campaignTranslator(campaignId, result.state?.language);
+  const campaignT = interfaceTranslator();
   if (result.checkText) appendHistory(campaignId, { title: campaignT("check"), text: result.checkText, mode: "normal" }, { render: false });
   if (result.kind === "appeal") {
     const target = Number.isSafeInteger(result.appealTargetTurn) ? ` · ${campaignT("turn")} ${result.appealTargetTurn}` : "";
@@ -230,8 +230,18 @@ function renderChat({ scroll = false } = {}) {
   log.hidden = false;
   composer.hidden = false;
   log.dataset.campaignId = campaign.campaignId;
-  const playerName = characterNames.get(campaign.campaignId) ?? campaignTranslator(campaign.campaignId, campaign.language)("you");
-  log.replaceChildren(...chatHistory.entries(campaign.campaignId).map((entry) => createChatEntry(entry, playerName)));
+  const playerName = characterNames.get(campaign.campaignId) ?? interfaceTranslator()("you");
+  const labels = {
+    check: t("check"),
+    answerNoTurn: t("answerNoTurn"),
+    error: t("error"),
+    openingHeading: t("openingHeading"),
+    appealHeading: t("appealHeading"),
+    dm: t("dm"),
+    turn: t("turn"),
+    campaignTitle: campaign.title,
+  };
+  log.replaceChildren(...chatHistory.entries(campaign.campaignId).map((entry) => createChatEntry(entry, playerName, labels)));
   if (inFlightCampaigns.has(campaign.campaignId)) log.append(createThinkingEntry({ dm: t("dm"), working: t("working") }));
   updateComposer(campaign);
   if (scroll) requestAnimationFrame(() => { $("#chat-scroll").scrollTop = $("#chat-scroll").scrollHeight; });
@@ -575,8 +585,7 @@ function showView(name, { focus = true } = {}) {
   for (const view of $$(".app-view")) view.hidden = view.id !== `${name}-view`;
   closeSidebar();
   if (name === "chat") {
-    const campaign = selectedCampaign();
-    applyLocale(campaign?.language ?? status.language ?? "en");
+    applyLocale(status.language ?? "en");
     renderCampaignChrome();
     renderChat({ scroll: true });
     if (focus) $("#campaign-title").focus({ preventScroll: true });
@@ -625,7 +634,7 @@ function handleCampaignCta() {
 async function reconcileTranscript(campaignId) {
   const campaign = campaignById(campaignId);
   if (!campaign) return;
-  const campaignT = campaignTranslator(campaignId, campaign.language);
+  const campaignT = interfaceTranslator();
   if (selectedCampaignId === campaignId) $("#chat-log").setAttribute("aria-busy", "true");
   try {
     const body = await api(campaignApiPath(campaignId, "transcript"));
@@ -678,9 +687,7 @@ async function performStatusRefresh() {
   campaigns = nextCampaigns;
   selectedCampaignId = nextSelected;
   if (selectionChanged) restoreActionDraft(nextSelected);
-  const localeChanged = currentView === "chat"
-    ? applyLocale(selectedCampaign()?.language ?? next.language ?? "en")
-    : false;
+  const localeChanged = applyLocale(next.language ?? "en");
   if (campaignsChanged || selectionChanged || localeChanged) {
     renderSidebar();
     renderCampaignChrome();
@@ -737,7 +744,7 @@ function resizeComposer() {
 async function submitAction() {
   const campaign = selectedCampaign();
   const campaignId = campaign?.campaignId;
-  const campaignT = campaignTranslator(campaignId, campaign?.language);
+  const campaignT = interfaceTranslator();
   const action = $("#action").value.trim();
   if (!campaignId || !action) return;
   if (campaign.pending && ![":retry", ":discard"].includes(action)) {
@@ -1001,7 +1008,7 @@ const setupSettings = createSetupSettingsController({
   applyLocale,
   getStatus: () => status,
   onCampaignCreated: async (body) => {
-    const campaignT = campaignTranslator(body.state.campaignId, body.state.language);
+    const campaignT = interfaceTranslator();
     updateCampaignFromState(body.state, body.config);
     if (typeof body.playerName === "string" && body.playerName.trim()) characterNames.set(body.state.campaignId, body.playerName.trim());
     appendHistory(body.state.campaignId, {

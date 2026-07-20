@@ -5,37 +5,15 @@ import { DungeonEngine } from "../engine.js";
 import { loadProjectEnv } from "../env.js";
 import { loadAppConfig, saveAppConfig, type LanguageCode } from "../language.js";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../connection-probe.js";
-import { probeProviderConnection } from "../connection-probe.js";
 import { LlmModelCatalog, ModelUnavailableError } from "../llm-model-catalog.js";
 import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
 import { ModelExecutionProfileStore } from "../model-execution-profile-store.js";
-import type { FrozenModelExecutionProfile, ModelExecutionProfileDraft } from "../model-execution-profile.js";
-import {
-  calibrateModel as calibratePlaytestModel,
-  createUnifiedPlaytestRunner,
-  resolvePlaytestTarget as resolveFrozenPlaytestTarget,
-  type CalibrateModelResult,
-  type PlaytestModelTarget,
-  type PlaytestProgressEvent,
-  type PlaytestRunner,
-} from "../playtest.js";
+import type { FrozenModelExecutionProfile } from "../model-execution-profile.js";
 import { createProvider as createLlmProvider, loadProviderConfig } from "../providers.js";
 import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
-import { inferTokenPrice } from "../pricing.js";
-import {
-  PlaytestCostManager,
-  estimatePlaytestCost,
-  estimatePlaytestReservation,
-} from "../playtest/cost.js";
 import { StateStore } from "../store.js";
 import { atomicWriteJson } from "../persistence/files.js";
-import type {
-  GameEngine,
-  LlmProvider,
-  NewGameInput,
-  StructuredRequest,
-  StructuredResult,
-} from "../types.js";
+import type { GameEngine, LlmProvider, NewGameInput } from "../types.js";
 import { resolveWorldProfile, saveWorldProfile, type ResolvedWorldProfile } from "../world-profile.js";
 import { takePrompt } from "./prompt.js";
 
@@ -57,33 +35,6 @@ export interface CliSetupSession {
   engine: GameEngine;
 }
 
-class CompatibilityCostProvider implements LlmProvider {
-  readonly id: string;
-  readonly model: string;
-
-  constructor(
-    private readonly base: LlmProvider,
-    private readonly cost: PlaytestCostManager,
-    private readonly price: { inputPerMillion: number; outputPerMillion: number },
-  ) {
-    this.id = base.id;
-    this.model = base.model;
-  }
-
-  async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
-    const estimate = estimatePlaytestReservation(request as StructuredRequest<unknown>, this.price);
-    const reservation = await this.cost.acquire(estimate);
-    try {
-      const result = await this.base.generateStructured(request);
-      this.cost.commit(reservation, estimatePlaytestCost(result.usage, this.price, estimate));
-      return result;
-    } catch (error) {
-      this.cost.commit(reservation, estimate);
-      throw error;
-    }
-  }
-}
-
 function projectPaths(root: string): CliProjectPaths {
   const resolvedRoot = path.resolve(root);
   return {
@@ -98,7 +49,7 @@ function projectPaths(root: string): CliProjectPaths {
 export class CliProjectContext {
   constructor(
     readonly paths: CliProjectPaths,
-    private readonly environment: NodeJS.ProcessEnv = process.env,
+    protected readonly environment: NodeJS.ProcessEnv = process.env,
   ) {}
 
   async configureProvider(): Promise<ProviderConfig> {
@@ -182,10 +133,6 @@ export class CliProjectContext {
     );
   }
 
-  playtestsRoot(): string {
-    return path.resolve(this.paths.playtestsRoot ?? path.join(this.paths.root, "playtests"));
-  }
-
   executionProfiles(): ModelExecutionProfileStore {
     return new ModelExecutionProfileStore(this.paths.root);
   }
@@ -214,83 +161,6 @@ export class CliProjectContext {
       && assessment.profileFingerprint === profile.fingerprint
       ? profile
       : undefined;
-  }
-
-  async resolvePlaytestTarget(
-    config: ProviderConfig,
-    route?: string,
-    cost?: { inputPerMillion: number; outputPerMillion: number },
-  ): Promise<PlaytestModelTarget> {
-    return resolveFrozenPlaytestTarget(this.executionProfiles(), config, route, cost);
-  }
-
-  async calibrateModel(
-    config: ProviderConfig,
-    options: {
-      maxCostUsd: number;
-      route?: string | undefined;
-      variants?: readonly ModelExecutionProfileDraft[] | undefined;
-      evidenceId?: string | undefined;
-      cost?: { inputPerMillion: number; outputPerMillion: number } | undefined;
-    },
-  ): Promise<CalibrateModelResult> {
-    return calibratePlaytestModel({
-      projectRoot: this.paths.root,
-      playtestsRoot: this.playtestsRoot(),
-      config,
-      environment: this.environment,
-      ...options,
-    });
-  }
-
-  async probeModelCompatibility(
-    config: ProviderConfig,
-    languages: readonly LanguageCode[],
-    maxCostUsd: number,
-  ): Promise<{ passed: LanguageCode[]; failed: Array<{ language: LanguageCode; error: string }>; costUsd: number }> {
-    const route = config.provider === "openrouter" ? "openrouter" : "direct";
-    const profile = await this.executionProfiles().require({
-      provider: config.provider,
-      model: config.model,
-      route,
-    });
-    const price = inferTokenPrice(config.provider, config.model);
-    if (!price) throw new Error(`No built-in token price for ${config.provider}/${config.model}`);
-    const cost = new PlaytestCostManager(maxCostUsd);
-    const provider = new CompatibilityCostProvider(this.createProvider(config, profile), cost, price);
-    const catalog = new LlmModelCatalog(this.paths.root, {
-      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
-    });
-    const passed: LanguageCode[] = [];
-    const failed: Array<{ language: LanguageCode; error: string }> = [];
-    for (const language of languages) {
-      try {
-        await probeProviderConnection(provider, [language]);
-        await catalog.recordTestSuccess(
-          { provider: config.provider, model: config.model },
-          { testedLanguages: [language] },
-        );
-        passed.push(language);
-      } catch (error) {
-        const summary = (error instanceof Error ? error.message : "Provider compatibility test failed")
-          .replace(/[\r\n\t]+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 500);
-        await catalog.recordTestFailure({ provider: config.provider, model: config.model }, {
-          failedLanguages: [language],
-          failureSummary: summary || "Provider compatibility test failed",
-        });
-        failed.push({ language, error: summary || "Provider compatibility test failed" });
-      }
-    }
-    return { passed, failed, costUsd: cost.spentUsd };
-  }
-
-  createPlaytestRunner(onProgress?: (event: PlaytestProgressEvent) => void): PlaytestRunner {
-    return createUnifiedPlaytestRunner({
-      projectRoot: this.paths.root,
-      playtestsRoot: this.playtestsRoot(),
-      environment: this.environment,
-      ...(onProgress ? { onProgress } : {}),
-    });
   }
 
   private async campaignCatalog(defaultProviderConfig?: ProviderConfig): Promise<CampaignCatalog> {

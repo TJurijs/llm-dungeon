@@ -1,6 +1,6 @@
 import { ProfileIdSchema, type ProfileId } from "../playtest.js";
 import { PlaytestCli, type LegacyEvaluateOptions } from "./playtest.js";
-import type { CliProjectContext } from "./project-context.js";
+import type { PlaytestProjectContext } from "./playtest-project-context.js";
 
 /** @deprecated Use the `playtest` command group. */
 export interface EvaluateOptions extends LegacyEvaluateOptions {}
@@ -34,7 +34,7 @@ export function profilePool(value: string): ProfileId[] {
 export class EvaluationCli {
   private readonly playtest: PlaytestCli;
 
-  constructor(project: CliProjectContext) {
+  constructor(project: PlaytestProjectContext) {
     this.playtest = new PlaytestCli(project);
   }
 

@@ -506,7 +506,8 @@ export const CERTIFICATION_SCRIPT: ScriptedTurn[] = [
   },
 ];
 
-export const CERTIFICATION_PACKAGE_VERSION = 3 as const;
+export { CERTIFICATION_PACKAGE_VERSION } from "../certification-version.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "../certification-version.js";
 
 export const CERTIFICATION_PACKAGE: PlaytestPackage = PlaytestPackageSchema.parse({
   id: "certification-v1",

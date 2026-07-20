@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
@@ -10,7 +10,7 @@ import {
   probeProviderConnection,
 } from "./connection-probe.js";
 import { DungeonEngine } from "./engine.js";
-import { loadProjectEnv } from "./env.js";
+import { loadProjectEnv, reloadProjectEnv } from "./env.js";
 import { campaignSetupDefaults, LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
 import { parseAppealCommand } from "./appeal.js";
 import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
@@ -45,6 +45,7 @@ import type {
   ModelRecommendationEligibility,
 } from "./model-status.js";
 import { fetchOpenAiModels, type OpenAiModelsFetcher } from "./openai-model-access.js";
+import { checkProviderConnection, type ProviderConnectionResult } from "./provider-connection.js";
 import { parseQuestionCommand } from "./question.js";
 import {
   ProviderConfigSchema,
@@ -73,6 +74,8 @@ type ProviderFactory = (
   executionProfile?: FrozenModelExecutionProfile,
 ) => LlmProvider;
 type BrowserModelSelection = Pick<ProviderConfig, "provider" | "model">;
+type ProviderConnectionTester = (provider: LlmProviderId, apiKey: string) => Promise<ProviderConnectionResult>;
+type ProviderConnectionStatus = "unknown" | "connected" | "failed";
 
 export interface WebServerOptions {
   root: string;
@@ -82,6 +85,7 @@ export interface WebServerOptions {
   maxConcurrentCampaignOperations?: number;
   pricingFetcher?: (() => Promise<unknown>) | false;
   openAiModelsFetcher?: OpenAiModelsFetcher | false;
+  connectionTester?: ProviderConnectionTester;
 }
 
 interface SetupDraft {
@@ -167,6 +171,7 @@ export class DungeonWebController {
   readonly dataRoot: string;
   readonly webRoot: string;
   private readonly environment: NodeJS.ProcessEnv;
+  private projectEnvKeys: string[];
   private readonly providerFactory: ProviderFactory;
   private readonly operations: CampaignOperationCoordinator;
   private readonly modelCatalog: LlmModelCatalog;
@@ -174,12 +179,14 @@ export class DungeonWebController {
   private readonly executionProfiles: ModelExecutionProfileStore;
   private readonly modelPricing: OpenRouterPricingCatalog;
   private readonly openAiModelsFetcher: OpenAiModelsFetcher | undefined;
+  private readonly connectionTester: ProviderConnectionTester;
   private openAiModelAccessCache: {
     apiKey: string;
     allowedModels: ReadonlySet<string> | undefined;
     expiresAt: number;
   } | undefined;
   private readonly sessionKeys = new Map<LlmProviderId, string>();
+  private readonly connectionStatuses = new Map<LlmProviderId, { keyFingerprint: string; status: Exclude<ProviderConnectionStatus, "unknown"> }>();
   private readonly drafts = new Map<string, SetupDraft>();
   private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
   private campaignCatalog: CampaignCatalog | undefined;
@@ -188,8 +195,8 @@ export class DungeonWebController {
     this.providerConfigPath = path.join(root, "config", "provider.json");
     this.dataRoot = path.join(root, "data");
     this.webRoot = path.join(root, "web");
-    if (!options.environment) loadProjectEnv(root);
     this.environment = options.environment ?? process.env;
+    this.projectEnvKeys = loadProjectEnv(root, this.environment);
     this.providerFactory = options.providerFactory ?? ((config, environment, executionProfile) => createProvider(
       config,
       environment,
@@ -209,6 +216,7 @@ export class DungeonWebController {
     this.openAiModelsFetcher = options.openAiModelsFetcher === false
       ? undefined
       : options.openAiModelsFetcher ?? (options.environment === undefined ? fetchOpenAiModels : undefined);
+    this.connectionTester = options.connectionTester ?? checkProviderConnection;
   }
 
   private effectiveEnvironment(): NodeJS.ProcessEnv {
@@ -277,6 +285,17 @@ export class DungeonWebController {
     // authority for the browser model catalog. Campaign-owned legacy models
     // are projected by the campaign response and synthesized by the UI.
     return this.modelCatalog.snapshot();
+  }
+
+  private keyFingerprint(apiKey: string): string {
+    return createHash("sha256").update(apiKey).digest("hex");
+  }
+
+  private connectionStatus(provider: LlmProviderId, apiKey: string | undefined): ProviderConnectionStatus {
+    const key = apiKey?.trim();
+    if (!key) return "unknown";
+    const checked = this.connectionStatuses.get(provider);
+    return checked?.keyFingerprint === this.keyFingerprint(key) ? checked.status : "unknown";
   }
 
   private isPublicSelection(selection: ModelSelection): boolean {
@@ -396,6 +415,7 @@ export class DungeonWebController {
       recommended: boolean;
       keyPresent: boolean;
       keySource: "session" | "environment" | "missing";
+      keyConnectionStatus: ProviderConnectionStatus;
       models: Array<{
         id: string;
         label: string;
@@ -434,6 +454,7 @@ export class DungeonWebController {
   }> {
     const snapshot = await this.modelSnapshot();
     const keys = this.keyStatus();
+    const environment = this.effectiveEnvironment();
     const openAiModels = await this.openAiModelAccess();
     this.modelPricing.refreshInBackground();
     return {
@@ -448,6 +469,7 @@ export class DungeonWebController {
         keySource: this.sessionKeys.has(provider.id)
           ? "session"
           : keys[provider.id] ? "environment" : "missing",
+        keyConnectionStatus: this.connectionStatus(provider.id, environment[provider.envKey]),
         models: await Promise.all(provider.models.map(async (model) => {
           const pricing = this.modelPricing.estimate(provider.id, model.model);
           const speed = modelSpeedRating(provider.id, model.model);
@@ -506,7 +528,7 @@ export class DungeonWebController {
       const keyName = definition?.envKey ?? "the provider API key";
       throw new WebApiError(
         409,
-        `Configure ${keyName} in Settings, or add it to .env and restart the server`,
+        `Configure ${keyName} in Settings, or add it to .env and reload it in Settings`,
       );
     }
   }
@@ -710,6 +732,7 @@ export class DungeonWebController {
       const key = body.key.trim();
       if (key) this.sessionKeys.set(body.provider, key);
       else this.sessionKeys.delete(body.provider);
+      this.connectionStatuses.delete(body.provider);
       if (body.provider === "openai") this.openAiModelAccessCache = undefined;
       sendJson(response, 200, { llm: await this.llmPresentation() });
       return true;
@@ -759,6 +782,38 @@ export class DungeonWebController {
         protocolVersion: first?.protocolVersion ?? null,
         ...(passed.length > 0 || failed[0] === undefined ? {} : { error: failed[0].error }),
       });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/environment/reload" && method === "POST") {
+      const previousEnvironment = this.effectiveEnvironment();
+      this.projectEnvKeys = reloadProjectEnv(this.root, this.environment, this.projectEnvKeys);
+      const nextEnvironment = this.effectiveEnvironment();
+      for (const provider of PUBLIC_LLM_PROVIDER_DEFINITIONS) {
+        if (previousEnvironment[provider.envKey]?.trim() !== nextEnvironment[provider.envKey]?.trim()) {
+          this.connectionStatuses.delete(provider.id);
+        }
+      }
+      this.openAiModelAccessCache = undefined;
+      sendJson(response, 200, { reloaded: true, llm: await this.llmPresentation() });
+      return true;
+    }
+
+    if (url.pathname === "/api/llm/connections/test" && method === "POST") {
+      const environment = this.effectiveEnvironment();
+      const checks = PUBLIC_LLM_PROVIDER_DEFINITIONS
+        .filter((provider) => Boolean(environment[provider.envKey]?.trim()))
+        .map((provider) => ({ provider, apiKey: environment[provider.envKey]!.trim() }));
+      const results = await Promise.all(checks.map(({ provider, apiKey }) => this.connectionTester(provider.id, apiKey)));
+      if (!results.length) throw new WebApiError(409, "Configure at least one provider API key before checking connections");
+      for (const [index, result] of results.entries()) {
+        const check = checks[index]!;
+        this.connectionStatuses.set(result.provider, {
+          keyFingerprint: this.keyFingerprint(check.apiKey),
+          status: result.status === "connected" ? "connected" : "failed",
+        });
+      }
+      sendJson(response, 200, { results, llm: await this.llmPresentation() });
       return true;
     }
 

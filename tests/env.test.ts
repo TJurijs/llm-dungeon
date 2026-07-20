@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadProjectEnv } from "../src/env.js";
+import { loadProjectEnv, reloadProjectEnv } from "../src/env.js";
 
 describe("project .env loading", () => {
   it("loads fallback values without replacing shell variables", async () => {
@@ -37,5 +37,21 @@ describe("project .env loading", () => {
   it("allows projects without a .env file", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-no-env-"));
     expect(loadProjectEnv(root, {})).toEqual([]);
+  });
+
+  it("replaces only values previously loaded from .env", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-env-reload-"));
+    const environment: NodeJS.ProcessEnv = { GEMINI_API_KEY: "from-shell" };
+    await writeFile(path.join(root, ".env"), "OPENAI_API_KEY=old-value\nDEEPSEEK_API_KEY=remove-me\n", "utf8");
+    const previous = loadProjectEnv(root, environment);
+
+    await writeFile(path.join(root, ".env"), "OPENAI_API_KEY=new-value\nOPENROUTER_API_KEY=added\n", "utf8");
+    expect(reloadProjectEnv(root, environment, previous).sort()).toEqual(["OPENAI_API_KEY", "OPENROUTER_API_KEY"]);
+    expect(environment).toMatchObject({
+      GEMINI_API_KEY: "from-shell",
+      OPENAI_API_KEY: "new-value",
+      OPENROUTER_API_KEY: "added",
+    });
+    expect(environment.DEEPSEEK_API_KEY).toBeUndefined();
   });
 });

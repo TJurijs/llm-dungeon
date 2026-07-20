@@ -14,7 +14,7 @@ import { RECOMMENDED_MODEL_SELECTION, ModelSelectionSchema } from "./llm-model-c
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "./model-execution-profile.js";
 import { atomicWriteJson } from "./persistence/files.js";
 import { acquireFileLock } from "./persistence/lock.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "./playtest/packages.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "./certification-version.js";
 
 export const MODEL_ASSESSMENT_CATALOG_VERSION = 1 as const;
 const MODEL_ASSESSMENT_LOCK_WAIT_MS = 5_000;

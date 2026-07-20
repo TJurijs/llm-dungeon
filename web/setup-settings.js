@@ -586,7 +586,10 @@ export function createSetupSettingsController(dependencies) {
       const keyCopy = provider.keySource === "session"
         ? t("sessionKeyDetected")
         : provider.keyPresent ? t("environmentKeyDetected") : t("keyMissing");
-      const keyBadge = createElement("span", `llm-key-status ${provider.keyPresent ? "success" : "warning"}`, keyCopy);
+      const keyTone = provider.keyConnectionStatus === "connected"
+        ? "success"
+        : provider.keyConnectionStatus === "failed" ? "error" : "warning";
+      const keyBadge = createElement("span", `llm-key-status ${keyTone}`, keyCopy);
       header.append(heading, keyBadge);
       const tools = createElement("details", "llm-provider-tools");
       const toolsTrigger = createElement("summary", "llm-provider-tools-trigger");
@@ -765,6 +768,45 @@ export function createSetupSettingsController(dependencies) {
     saveSessionKey(form, "");
   }
 
+  async function reloadProjectEnv() {
+    const button = $("#reload-project-env");
+    await withIconButtonBusy(button, async () => {
+      await api("/api/llm/environment/reload", { method: "POST", body: JSON.stringify({}) });
+      await refreshStatus({ ensureFresh: true });
+      renderLlmConfiguration();
+      showToast(t("envReloaded"), "success");
+    }).catch((error) => showToast(error.message, "error"));
+  }
+
+  async function testProviderConnections() {
+    const button = $("#test-provider-connections");
+    await withIconButtonBusy(button, async () => {
+      const result = await api("/api/llm/connections/test", { method: "POST", body: JSON.stringify({}) });
+      await refreshStatus({ ensureFresh: true });
+      renderLlmConfiguration();
+      const connected = result.results.filter((entry) => entry.status === "connected").map((entry) => entry.provider);
+      const failed = result.results.filter((entry) => entry.status !== "connected")
+        .map((entry) => `${entry.provider} (${t(entry.status === "unauthorized" ? "connectionUnauthorized" : "connectionUnavailable")})`);
+      showToast(
+        failed.length
+          ? formatTemplate(t("connectionsPartial"), { connected: connected.join(", ") || "—", failed: failed.join(", ") })
+          : formatTemplate(t("connectionsPassed"), { providers: connected.join(", ") }),
+        failed.length ? "error" : "success",
+      );
+    }).catch((error) => showToast(error.message, "error"));
+  }
+
+  async function withIconButtonBusy(button, operation) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      return await operation();
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+
   async function loadSettingsWorld(language) {
     const body = await api(`/api/config/world?language=${encodeURIComponent(language)}`);
     if ($("#settings-language").value !== language) return;
@@ -813,7 +855,6 @@ export function createSetupSettingsController(dependencies) {
     $("#setup-model").addEventListener("change", updateSetupModelWarning);
     $("#setup-language").addEventListener("change", () => {
       $("#campaign-preview").hidden = true;
-      applyLocale($("#setup-language").value);
       refreshSetupPlaceholders();
       syncSetupModelControls();
       loadSetupWorld($("#setup-language").value).catch((error) => showToast(error.message, "error"));
@@ -834,6 +875,8 @@ export function createSetupSettingsController(dependencies) {
     $("#llm-providers").addEventListener("click", handleProviderKeyClear);
     $("#llm-providers").addEventListener("submit", handleCustomModel);
     $("#llm-providers").addEventListener("submit", handleProviderKeySubmit);
+    $("#reload-project-env").addEventListener("click", reloadProjectEnv);
+    $("#test-provider-connections").addEventListener("click", testProviderConnections);
     $(".settings-navigation").addEventListener("click", (event) => {
       const button = event.target.closest("[data-settings-section]");
       if (button) selectSettingsSection(button.dataset.settingsSection);

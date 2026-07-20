@@ -27,3 +27,13 @@ export function loadProjectEnv(
   }
   return loaded;
 }
+
+/** Replaces only values this process previously loaded from the project `.env`. */
+export function reloadProjectEnv(
+  root: string,
+  environment: NodeJS.ProcessEnv,
+  previouslyLoaded: Iterable<string>,
+): string[] {
+  for (const name of previouslyLoaded) delete environment[name];
+  return loadProjectEnv(root, environment);
+}

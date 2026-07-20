@@ -293,7 +293,10 @@ describe("multi-campaign terminal integration", () => {
         .toContain("default provider and model for new campaigns");
       expect(program.commands.find((command) => command.name() === "language")?.description())
         .toContain("default language for new campaigns");
-      expect(program.commands.map((command) => command.name())).toContain("campaigns");
+      const commandNames = program.commands.map((command) => command.name());
+      expect(commandNames).toContain("campaigns");
+      expect(commandNames).not.toContain("playtest");
+      expect(commandNames).not.toContain("evaluate");
     } finally {
       play.mockRestore();
     }

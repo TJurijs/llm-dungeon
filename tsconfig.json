@@ -19,5 +19,20 @@
     "sourceMap": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests",
+    "src/playtest.ts",
+    "src/playtest-cli.ts",
+    "src/prompt-inspection.ts",
+    "src/prompts/playtest-player.ts",
+    "src/legacy-evaluation-artifacts.ts",
+    "src/web/evaluation-artifacts.ts",
+    "src/playtest/**",
+    "src/cli/playtest.ts",
+    "src/cli/evaluation.ts",
+    "src/cli/playtest-program.ts",
+    "src/cli/playtest-project-context.ts"
+  ]
 }

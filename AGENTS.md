@@ -130,7 +130,7 @@ observable behavior and documented invariants during refactors.
   physical invariants.
 - `src/schemas.ts` is the authoritative runtime domain contract.
 - `src/mechanics.ts` is the sole d100 calculation authority.
-- `src/playtest/` is the single versioned engine for calibration,
+- `src/playtest/` is the developer-only, single versioned engine for calibration,
   certification, autoplay, stress, tuning, scheduling, telemetry, assessment,
   judging, manifests, reports, resume, and focused replay. Packages describe
   experiments; player profiles describe simulated-player behavior.
@@ -140,9 +140,11 @@ observable behavior and documented invariants during refactors.
   treating them as live state. Do not
   restore `src/evaluation.ts`, the old `src/evaluation/` runner stack, or any
   write/resume path for legacy runs.
-- `src/cli.ts` is a thin entry point. `src/cli/` separates command routing, human
-  gameplay, playtest commands, thin deprecated evaluation aliases, prompting,
-  and project configuration.
+- `src/cli.ts` is the shipped thin entry point. `src/playtest-cli.ts` and the
+  playtest-specific CLI modules are developer-only and excluded from `dist`;
+  `src/cli/` separates runtime command routing, human gameplay, developer
+  playtest commands, thin deprecated evaluation aliases, prompting, and project
+  configuration.
 - `src/web-server.ts`, `src/web/`, and `web/` are the browser presentation
   surface over the same engine. There is no separate Web engine or source
   entry point.
@@ -353,7 +355,7 @@ new facts.
 - One playtest engine owns `certification-v1`, `campaign-autoplay-v1`,
   `persistence-soak-v1`, `adversarial-boundaries-v1`, `mechanics-v1`, and
   `tuning-v1`. Do not reintroduce separate evaluation and autoplay runners.
-- The terminal surface includes `playtest packages`, `playtest calibrate`,
+- The developer terminal surface (`npm run playtest -- playtest ...`) includes `playtest packages`, `playtest calibrate`,
   `playtest replay <diagnostic-bundle>`, and
   `playtest run <package>`; `playtest certify`, `playtest matrix <package>`, and
   `playtest resume <run-id>`; plus `playtest judge <run-id>`,
@@ -457,7 +459,8 @@ and do not use destructive Git commands to manufacture a clean tree.
   setup collects premise, character, and language, then uses the configured
   default provider/model. World and DM style is collapsed, prefilled from the
   selected language's global profile, and may be customized for that campaign.
-- Settings separates global language/world defaults from `.env` key presence,
+- Settings uses one saved language for the interface and as the overridable
+  default for new campaigns. It separates those global language/world defaults from `.env` key presence,
   available models, default model selection, and compatibility testing.
   Temperature and output limits remain internal. Existing campaigns retain
   their own provider/model, language, and world profile, and the composer model

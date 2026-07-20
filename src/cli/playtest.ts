@@ -41,7 +41,7 @@ import {
 import { inferTokenPrice } from "../pricing.js";
 import { PlaytestCostManager } from "../playtest/cost.js";
 import { PlaytestProviderScheduler } from "../playtest/scheduler.js";
-import type { CliProjectContext } from "./project-context.js";
+import type { PlaytestProjectContext } from "./playtest-project-context.js";
 
 export interface ParsedModelSpec {
   config: ProviderConfig;
@@ -231,7 +231,7 @@ class PlaytestProgressRenderer {
 }
 
 export class PlaytestCli {
-  constructor(private readonly project: CliProjectContext) {}
+  constructor(private readonly project: PlaytestProjectContext) {}
 
   packages(): void {
     const lines = listPlaytestPackages().map((playtestPackage) => [

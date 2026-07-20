@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCliProgram } from "../src/cli/program.js";
+import { createPlaytestCliProgram } from "../src/cli/playtest-program.js";
 import {
   EvaluationCli,
 } from "../src/cli/evaluation.js";
@@ -10,7 +10,7 @@ import {
   providerConcurrency,
   type PlaytestRunOptions,
 } from "../src/cli/playtest.js";
-import type { CliProjectContext } from "../src/cli/project-context.js";
+import type { PlaytestProjectContext } from "../src/cli/playtest-project-context.js";
 import type { PlaytestModelTarget, PlaytestRunConfig } from "../src/playtest.js";
 import type { ProviderConfig } from "../src/schemas.js";
 
@@ -20,7 +20,7 @@ function target(config: ProviderConfig, route: string): PlaytestModelTarget {
   return { config, route, executionProfileFingerprint: fingerprint };
 }
 
-function fakeProject(): CliProjectContext {
+function fakeProject(): PlaytestProjectContext {
   const configured: ProviderConfig = {
     provider: "gemini",
     model: "gemini-3.5-flash",
@@ -39,7 +39,7 @@ function fakeProject(): CliProjectContext {
     language: vi.fn(async () => "en"),
     resolvePlaytestTarget: vi.fn(async (config: ProviderConfig, route?: string) =>
       target(config, route ?? "direct")),
-  } as unknown as CliProjectContext;
+  } as unknown as PlaytestProjectContext;
 }
 
 describe("playtest terminal commands", () => {
@@ -145,7 +145,7 @@ describe("playtest terminal commands", () => {
     const probe = vi.spyOn(PlaytestCli.prototype, "probe").mockResolvedValue();
     const legacy = vi.spyOn(EvaluationCli.prototype, "run").mockResolvedValue();
     try {
-      const program = createCliProgram(project);
+      const program = createPlaytestCliProgram(project);
       const group = program.commands.find((command) => command.name() === "playtest");
       expect(group?.commands.map((command) => command.name())).toEqual([
         "packages",
@@ -160,15 +160,12 @@ describe("playtest terminal commands", () => {
         "report",
         "compare",
       ]);
-      expect(program.helpInformation()).toMatch(/\nPlaytest\r?\n/);
-      expect(program.helpInformation()).toMatch(/\nEvaluation\r?\n/);
-
-      await program.parseAsync(["node", "llm-dungeon", "playtest", "packages"]);
+      await program.parseAsync(["node", "llm-dungeon-playtest", "playtest", "packages"]);
       expect(packages).toHaveBeenCalledOnce();
 
       await program.parseAsync([
         "node",
-        "llm-dungeon",
+        "llm-dungeon-playtest",
         "playtest",
         "probe",
         "--target",
@@ -186,7 +183,7 @@ describe("playtest terminal commands", () => {
 
       await program.parseAsync([
         "node",
-        "llm-dungeon",
+        "llm-dungeon-playtest",
         "evaluate",
         "--sessions",
         "2",
@@ -214,10 +211,10 @@ describe("playtest terminal commands", () => {
   it("passes repeatable singular --candidate flags to matrix execution", async () => {
     const matrix = vi.spyOn(PlaytestCli.prototype, "matrix").mockResolvedValue();
     try {
-      const program = createCliProgram(fakeProject());
+      const program = createPlaytestCliProgram(fakeProject());
       await program.parseAsync([
         "node",
-        "llm-dungeon",
+        "llm-dungeon-playtest",
         "playtest",
         "matrix",
         "certification-v1",

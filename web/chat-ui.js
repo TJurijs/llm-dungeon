@@ -96,7 +96,23 @@ export function generationTooltip(generation) {
   return `${model} · ${generation.costBasis === "estimated" ? "≈" : ""}${cost}`;
 }
 
-export function createChatEntry(entry, playerName) {
+function localizedEntryTitle(entry, presentation, playerName, labels) {
+  if (presentation.type === "user" && playerName) return playerName;
+  if (!labels) return entry.title;
+  if (presentation.type === "check") return labels.check;
+  if (presentation.type === "question") return labels.answerNoTurn;
+  if (presentation.type === "error") return labels.error;
+  if (presentation.type === "opening") return `${labels.openingHeading} · ${labels.campaignTitle}`;
+  if (presentation.type === "appeal") {
+    return `${labels.appealHeading}${entry.appealTargetTurn ? ` · ${labels.turn} ${entry.appealTargetTurn}` : ""}`;
+  }
+  if (presentation.type === "assistant" && Number.isSafeInteger(entry.turn)) {
+    return `${labels.dm} · ${labels.turn} ${entry.turn}`;
+  }
+  return entry.title;
+}
+
+export function createChatEntry(entry, playerName, labels) {
   const presentation = chatEntryPresentation(entry);
   const article = document.createElement("article");
   article.className = `chat-entry ${presentation.type}`;
@@ -110,7 +126,7 @@ export function createChatEntry(entry, playerName) {
   if (presentation.icon === "player") icon.append(playerIcon());
   else icon.textContent = presentation.icon;
   const label = document.createElement("span");
-  label.textContent = presentation.type === "user" && playerName ? playerName : entry.title;
+  label.textContent = localizedEntryTitle(entry, presentation, playerName, labels);
   header.append(icon, label);
   const body = document.createElement("div");
   body.className = "chat-entry-body";

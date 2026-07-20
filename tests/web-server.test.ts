@@ -6,7 +6,8 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { CampaignCatalog } from "../src/campaign-catalog.js";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
-import { LlmModelCatalog } from "../src/llm-model-catalog.js";
+import { LlmModelCatalog, type LlmProviderId } from "../src/llm-model-catalog.js";
+import type { ProviderConnectionResult } from "../src/provider-connection.js";
 import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
 import { campaignScopePath } from "../src/persistence/campaign-catalog.js";
@@ -153,6 +154,7 @@ interface StartOptions {
   providerFactory?: (config: ProviderConfig, environment: NodeJS.ProcessEnv) => LlmProvider;
   maxConcurrentCampaignOperations?: number;
   openAiModelsFetcher?: ((apiKey: string) => Promise<ReadonlySet<string>>) | false;
+  connectionTester?: (provider: LlmProviderId, apiKey: string) => Promise<ProviderConnectionResult>;
 }
 
 async function start(root: string, options: StartOptions = {}) {
@@ -162,6 +164,7 @@ async function start(root: string, options: StartOptions = {}) {
     environment: options.environment ?? DEFAULT_TEST_ENVIRONMENT,
     maxConcurrentCampaignOperations: options.maxConcurrentCampaignOperations,
     openAiModelsFetcher: options.openAiModelsFetcher ?? false,
+    ...(options.connectionTester === undefined ? {} : { connectionTester: options.connectionTester }),
     providerFactory: options.providerFactory ?? ((config, environment) => {
       environments.push(environment);
       return new WebFakeProvider(config.model);
@@ -1029,13 +1032,13 @@ describe("multi-campaign Web server", () => {
     });
     expect(missing.status).toBe(409);
     expect(await missing.json()).toEqual({
-      error: "Configure OPENAI_API_KEY in Settings, or add it to .env and restart the server",
+      error: "Configure OPENAI_API_KEY in Settings, or add it to .env and reload it in Settings",
     });
 
     const saved = await json(base, "/api/llm/keys", "PUT", { provider: "openai", key: secret });
     expect(JSON.stringify(saved)).not.toContain(secret);
     expect(saved.llm.providers.find((provider: any) => provider.id === "openai"))
-      .toMatchObject({ keyPresent: true, keySource: "session" });
+      .toMatchObject({ keyPresent: true, keySource: "session", keyConnectionStatus: "unknown" });
 
     const tested = await json(base, "/api/llm/models/test", "POST", {
       provider: "openai",
@@ -1047,7 +1050,60 @@ describe("multi-campaign Web server", () => {
 
     const cleared = await json(base, "/api/llm/keys", "PUT", { provider: "openai", key: "" });
     expect(cleared.llm.providers.find((provider: any) => provider.id === "openai"))
-      .toMatchObject({ keyPresent: false, keySource: "missing" });
+      .toMatchObject({ keyPresent: false, keySource: "missing", keyConnectionStatus: "unknown" });
+  });
+
+  it("checks configured provider connections without persisting credentials or model evidence", async () => {
+    const root = await fixtureRoot();
+    const calls: Array<{ provider: string; apiKey: string }> = [];
+    const { base } = await start(root, {
+      environment: { GEMINI_API_KEY: "gemini-secret", OPENAI_API_KEY: "openai-secret" },
+      connectionTester: async (provider, apiKey) => {
+        calls.push({ provider, apiKey });
+        return { provider, status: provider === "gemini" ? "connected" : "unauthorized" };
+      },
+    });
+
+    const checked = await json(base, "/api/llm/connections/test", "POST", {});
+    expect(checked.results).toEqual([
+      { provider: "gemini", status: "connected" },
+      { provider: "openai", status: "unauthorized" },
+    ]);
+    expect(checked.llm.providers.find((provider: any) => provider.id === "gemini"))
+      .toMatchObject({ keySource: "environment", keyConnectionStatus: "connected" });
+    expect(checked.llm.providers.find((provider: any) => provider.id === "openai"))
+      .toMatchObject({ keySource: "environment", keyConnectionStatus: "failed" });
+    expect(checked).toMatchObject({
+      results: [
+        { provider: "gemini", status: "connected" },
+        { provider: "openai", status: "unauthorized" },
+      ],
+    });
+    expect(calls).toEqual([
+      { provider: "gemini", apiKey: "gemini-secret" },
+      { provider: "openai", apiKey: "openai-secret" },
+    ]);
+    expect(JSON.stringify(checked)).not.toContain("secret");
+
+    const changed = await json(base, "/api/llm/keys", "PUT", { provider: "gemini", key: "replacement-secret" });
+    expect(changed.llm.providers.find((provider: any) => provider.id === "gemini"))
+      .toMatchObject({ keySource: "session", keyConnectionStatus: "unknown" });
+  });
+
+  it("reloads project .env keys without replacing injected shell values", async () => {
+    const root = await fixtureRoot();
+    await writeFile(path.join(root, ".env"), "GEMINI_API_KEY=from-file\nOPENAI_API_KEY=old-value\n", "utf8");
+    const environment: NodeJS.ProcessEnv = { GEMINI_API_KEY: "from-shell" };
+    const { base } = await start(root, { environment });
+
+    await writeFile(path.join(root, ".env"), "OPENAI_API_KEY=new-value\nDEEPSEEK_API_KEY=added\n", "utf8");
+    const reloaded = await json(base, "/api/llm/environment/reload", "POST", {});
+    expect(reloaded.reloaded).toBe(true);
+    expect(environment).toMatchObject({
+      GEMINI_API_KEY: "from-shell",
+      OPENAI_API_KEY: "new-value",
+      DEEPSEEK_API_KEY: "added",
+    });
   });
 
   it("does not carry a saved endpoint override across providers during a connection test", async () => {
