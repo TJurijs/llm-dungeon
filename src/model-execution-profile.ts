@@ -213,7 +213,8 @@ export function modelExecutionProfileFingerprint(profile: ModelExecutionProfileD
   return createHash("sha256").update(JSON.stringify(canonicalize(executionContent))).digest("hex");
 }
 
-function deepFreeze<T>(value: T): T {
+/** Recursively freeze a value and everything it references, in place. */
+export function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
     Object.freeze(value);

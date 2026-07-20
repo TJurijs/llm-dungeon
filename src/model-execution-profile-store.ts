@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
+  deepFreeze,
   FrozenModelExecutionProfileSchema,
   MODEL_EXECUTION_ADAPTER_REVISION,
   modelExecutionProfileFingerprint,
@@ -41,14 +42,6 @@ type PersistedModelExecutionProfiles = z.infer<typeof PersistedModelExecutionPro
 
 function profileKey(key: ModelExecutionProfileKey): string {
   return `${key.provider}\u0000${key.model}\u0000${key.route}`;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
-  }
-  return value;
 }
 
 function mergeShippedProfiles(saved: PersistedModelExecutionProfiles): PersistedModelExecutionProfiles {
