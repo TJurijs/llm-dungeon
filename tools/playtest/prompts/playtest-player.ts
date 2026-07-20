@@ -1,4 +1,4 @@
-import { languageInstruction, type LanguageCode } from "../language.js";
+import { languageInstruction, type LanguageCode } from "../../../src/language.js";
 
 export interface PlaytestPlayerProfile {
   readonly id: string;

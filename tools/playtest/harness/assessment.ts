@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ModelAdapterStatus } from "../model-status.js";
+import type { ModelAdapterStatus } from "../../../src/model-status.js";
 import {
   QualityStatusSchema,
   TechnicalGameplayStatusSchema,

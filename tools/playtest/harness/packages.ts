@@ -1,5 +1,5 @@
-import type { LanguageCode } from "../language.js";
-import { SetupResultSchema, type SetupResult } from "../schemas.js";
+import type { LanguageCode } from "../../../src/language.js";
+import { SetupResultSchema, type SetupResult } from "../../../src/schemas.js";
 import {
   PLAYER_PROFILES,
   PlaytestPackageSchema,
@@ -506,8 +506,8 @@ export const CERTIFICATION_SCRIPT: ScriptedTurn[] = [
   },
 ];
 
-export { CERTIFICATION_PACKAGE_VERSION } from "../certification-version.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../certification-version.js";
+export { CERTIFICATION_PACKAGE_VERSION } from "../../../src/certification-version.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "../../../src/certification-version.js";
 
 export const CERTIFICATION_PACKAGE: PlaytestPackage = PlaytestPackageSchema.parse({
   id: "certification-v1",

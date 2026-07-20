@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { ModelAssessmentCatalog } from "./model-assessment-catalog.js";
-import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "./connection-probe.js";
-import { LlmModelCatalog } from "./llm-model-catalog.js";
-import { ModelExecutionProfileStore } from "./model-execution-profile-store.js";
+import { ModelAssessmentCatalog } from "../../src/model-assessment-catalog.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../../src/connection-probe.js";
+import { LlmModelCatalog } from "../../src/llm-model-catalog.js";
+import { ModelExecutionProfileStore } from "../../src/model-execution-profile-store.js";
 import {
   DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS,
   MODEL_EXECUTION_ADAPTER_REVISION,
@@ -13,11 +13,11 @@ import {
   outputBudgetForPhase,
   type FrozenModelExecutionProfile,
   type ModelExecutionProfileDraft,
-} from "./model-execution-profile.js";
-import { inferTokenPrice } from "./pricing.js";
-import { createProvider } from "./providers.js";
-import { ProviderConfigSchema, type ProviderConfig } from "./schemas.js";
-import { structuredFailureDetails } from "./llm/structured-error.js";
+} from "../../src/model-execution-profile.js";
+import { inferTokenPrice } from "../../src/pricing.js";
+import { createProvider } from "../../src/providers.js";
+import { ProviderConfigSchema, type ProviderConfig } from "../../src/schemas.js";
+import { structuredFailureDetails } from "../../src/llm/structured-error.js";
 import {
   CalibrationEvidenceStore,
   calibrationEvidenceId,
@@ -25,33 +25,33 @@ import {
   runCalibrationVariants,
   selectCalibrationProfile,
   type CalibrationVariantResult,
-} from "./playtest/calibration.js";
+} from "./harness/calibration.js";
 import {
   PlaytestModelTargetSchema,
   PlaytestRunConfigSchema,
   type PlaytestModelTarget,
   type PlaytestRunConfig,
-} from "./playtest/contracts.js";
+} from "./harness/contracts.js";
 import {
   estimatePlaytestCost,
   estimatePlaytestReservation,
   PlaytestCostManager,
   type PlaytestModelCost,
-} from "./playtest/cost.js";
-import { PlaytestRunner, type PlaytestProgressEvent } from "./playtest/runner.js";
-import type { LlmProvider, StructuredRequest, StructuredResult } from "./types.js";
+} from "./harness/cost.js";
+import { PlaytestRunner, type PlaytestProgressEvent } from "./harness/runner.js";
+import type { LlmProvider, StructuredRequest, StructuredResult } from "../../src/types.js";
 
-export * from "./playtest/contracts.js";
-export * from "./playtest/packages.js";
-export * from "./playtest/calibration.js";
-export * from "./playtest/assessment.js";
-export * from "./playtest/audit.js";
-export * from "./playtest/failure-attribution.js";
-export * from "./playtest/judge.js";
-export * from "./playtest/manifest.js";
-export * from "./playtest/replay.js";
-export * from "./playtest/report.js";
-export * from "./playtest/runner.js";
+export * from "./harness/contracts.js";
+export * from "./harness/packages.js";
+export * from "./harness/calibration.js";
+export * from "./harness/assessment.js";
+export * from "./harness/audit.js";
+export * from "./harness/failure-attribution.js";
+export * from "./harness/judge.js";
+export * from "./harness/manifest.js";
+export * from "./harness/replay.js";
+export * from "./harness/report.js";
+export * from "./harness/runner.js";
 
 export function defaultPlaytestRoute(provider: ProviderConfig["provider"]): string {
   return provider === "openrouter" ? "openrouter" : "direct";

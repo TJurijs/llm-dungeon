@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { unsupportedNodeMessage } from "./node-version.js";
+import { unsupportedNodeMessage } from "../../src/node-version.js";
 
 async function main(): Promise<void> {
   const versionError = unsupportedNodeMessage(process.versions.node);

@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { classifyFailure, GenerationFailure, type FailureKind } from "../llm/failures.js";
-import { attemptMetadataFor } from "../llm/structured-error.js";
-import type { ProviderAttemptMetadata } from "../types.js";
+import { classifyFailure, GenerationFailure, type FailureKind } from "../../../src/llm/failures.js";
+import { attemptMetadataFor } from "../../../src/llm/structured-error.js";
+import type { ProviderAttemptMetadata } from "../../../src/types.js";
 
 export const FailureOwnerSchema = z.enum([
   "candidate_model",

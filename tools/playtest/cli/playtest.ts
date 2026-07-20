@@ -24,23 +24,23 @@ import {
   WireTurnSchema,
   decodeResolvedTurn,
   decodeTurnDecision,
-} from "../llm/gameplay-protocol.js";
-import { LanguageCodeSchema, type LanguageCode } from "../language.js";
+} from "../../../src/llm/gameplay-protocol.js";
+import { LanguageCodeSchema, type LanguageCode } from "../../../src/language.js";
 import {
   ResolvedTurnSchema,
   SetupResultSchema,
   TurnDecisionSchema,
   ProviderConfigSchema,
   type ProviderConfig,
-} from "../schemas.js";
+} from "../../../src/schemas.js";
 import {
   freezeModelExecutionProfile,
   type FrozenModelExecutionProfile,
   type ModelExecutionProfileDraft,
-} from "../model-execution-profile.js";
-import { inferTokenPrice } from "../pricing.js";
-import { PlaytestCostManager } from "../playtest/cost.js";
-import { PlaytestProviderScheduler } from "../playtest/scheduler.js";
+} from "../../../src/model-execution-profile.js";
+import { inferTokenPrice } from "../../../src/pricing.js";
+import { PlaytestCostManager } from "../harness/cost.js";
+import { PlaytestProviderScheduler } from "../harness/scheduler.js";
 import type { PlaytestProjectContext } from "./playtest-project-context.js";
 
 export interface ParsedModelSpec {

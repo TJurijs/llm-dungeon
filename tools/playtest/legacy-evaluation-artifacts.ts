@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { LanguageCodeSchema } from "./language.js";
+import { LanguageCodeSchema } from "../../src/language.js";
 
 /**
  * Read-only projection of the retired evaluation-v1 manifest. Historical

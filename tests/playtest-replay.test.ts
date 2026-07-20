@@ -9,16 +9,16 @@ import {
   type FrozenModelExecutionProfile,
 } from "../src/model-execution-profile.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
-import { PlaytestCostManager } from "../src/playtest/cost.js";
-import { attributePlaytestFailure } from "../src/playtest/failure-attribution.js";
+import { PlaytestCostManager } from "../tools/playtest/harness/cost.js";
+import { attributePlaytestFailure } from "../tools/playtest/harness/failure-attribution.js";
 import {
   FocusedReplayRunner,
   createDiagnosticBundle,
   readDiagnosticBundle,
   readFocusedReplayManifest,
   writeDiagnosticBundle,
-} from "../src/playtest/replay.js";
-import { PlaytestProviderScheduler } from "../src/playtest/scheduler.js";
+} from "../tools/playtest/harness/replay.js";
+import { PlaytestProviderScheduler } from "../tools/playtest/harness/scheduler.js";
 
 const AnswerSchema = z.object({ answer: z.string() }).strict();
 const PRICE = { inputPerMillion: 1, outputPerMillion: 1 } as const;

@@ -11,7 +11,7 @@ import type { ProviderConnectionResult } from "../src/provider-connection.js";
 import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
 import { campaignScopePath } from "../src/persistence/campaign-catalog.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../src/playtest/packages.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "../tools/playtest/harness/packages.js";
 import { createDungeonWebServer } from "../src/web-server.js";
 import { StateStore } from "../src/store.js";
 import type { ProviderConfig } from "../src/schemas.js";

@@ -1,4 +1,4 @@
-import type { StateOperation } from "../schemas.js";
+import type { StateOperation } from "../../../src/schemas.js";
 import type {
   CoverageRequirement,
   PlaytestPackage,

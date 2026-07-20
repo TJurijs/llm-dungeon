@@ -1,7 +1,7 @@
 import { Command } from "commander";
-import { LANGUAGES, LanguageCodeSchema } from "../language.js";
+import { LANGUAGES, LanguageCodeSchema } from "../../../src/language.js";
 import { inspectPrompt, PROMPT_PHASES, type PromptPhase } from "../prompt-inspection.js";
-import { terminalBanner, terminalHeading } from "../terminal-style.js";
+import { terminalBanner, terminalHeading } from "../../../src/terminal-style.js";
 import {
   EvaluationCli,
   positiveInteger,

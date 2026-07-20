@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { structuredFailureDetails } from "../llm/structured-error.js";
+import { structuredFailureDetails } from "../../../src/llm/structured-error.js";
 import {
   FrozenModelExecutionProfileSchema,
   ModelExecutionProfileDraftSchema,
@@ -10,10 +10,10 @@ import {
   outputBudgetForPhase,
   type FrozenModelExecutionProfile,
   type ModelExecutionProfileDraft,
-} from "../model-execution-profile.js";
-import { atomicWriteJson } from "../persistence/files.js";
-import { acquireFileLock } from "../persistence/lock.js";
-import type { LlmProvider, StructuredRequest } from "../types.js";
+} from "../../../src/model-execution-profile.js";
+import { atomicWriteJson } from "../../../src/persistence/files.js";
+import { acquireFileLock } from "../../../src/persistence/lock.js";
+import type { LlmProvider, StructuredRequest } from "../../../src/types.js";
 import {
   estimatePlaytestCost,
   estimatePlaytestReservation,

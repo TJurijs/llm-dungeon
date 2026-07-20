@@ -1,4 +1,4 @@
-import type { LlmProvider, StructuredRequest, StructuredResult } from "../types.js";
+import type { LlmProvider, StructuredRequest, StructuredResult } from "../../../src/types.js";
 
 export interface ScheduledCallTiming {
   queueWaitMs: number;

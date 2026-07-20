@@ -1,5 +1,5 @@
-import { type LanguageCode } from "./language.js";
-import { resolveCheck } from "./mechanics.js";
+import { type LanguageCode } from "../../src/language.js";
+import { resolveCheck } from "../../src/mechanics.js";
 import {
   adjudicationPromptDocument,
   APPEAL_SYSTEM_PROMPT,
@@ -16,17 +16,17 @@ import {
   setupPromptDocument,
   structuredRepairPrompt,
   turnDomainCorrectionPrompt,
-} from "./prompts.js";
+} from "../../src/prompts.js";
 import {
   CONNECTION_GAMEPLAY_PROMPT,
   CONNECTION_SETUP_PROBE,
   CONNECTION_SYSTEM_PROMPT,
   connectionSetupPrompt,
-} from "./prompts/connection.js";
+} from "../../src/prompts/connection.js";
 import { playtestPlayerPrompt, playtestPlayerSystemPrompt } from "./prompts/playtest-player.js";
-import { assessCoverage, buildMechanicalAudit } from "./playtest/audit.js";
-import { playtestJudgePrompt, playtestJudgeSystemPrompt } from "./playtest/judge.js";
-import { CERTIFICATION_PACKAGE } from "./playtest/packages.js";
+import { assessCoverage, buildMechanicalAudit } from "./harness/audit.js";
+import { playtestJudgePrompt, playtestJudgeSystemPrompt } from "./harness/judge.js";
+import { CERTIFICATION_PACKAGE } from "./harness/packages.js";
 
 export const PROMPT_PHASES = [
   "dm-system",

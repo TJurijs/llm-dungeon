@@ -2,22 +2,22 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { classifyFailure } from "../llm/failures.js";
-import { requestDiagnosticsFor } from "../llm/request-diagnostics.js";
+import { classifyFailure } from "../../../src/llm/failures.js";
+import { requestDiagnosticsFor } from "../../../src/llm/request-diagnostics.js";
 import {
   attemptMetadataFor,
   structuredFailureDetails,
-} from "../llm/structured-error.js";
+} from "../../../src/llm/structured-error.js";
 import {
   outputBudgetForPhase,
   type FrozenModelExecutionProfile,
-} from "../model-execution-profile.js";
+} from "../../../src/model-execution-profile.js";
 import type {
   LlmProvider,
   ProviderAttemptMetadata,
   StructuredRequest,
   StructuredResult,
-} from "../types.js";
+} from "../../../src/types.js";
 import {
   estimatePlaytestCost,
   estimatePlaytestReservation,

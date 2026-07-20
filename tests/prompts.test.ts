@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { inspectPrompt, PROMPT_PHASES } from "../src/prompt-inspection.js";
-import { playtestJudgeSystemPrompt } from "../src/playtest/judge.js";
+import { inspectPrompt, PROMPT_PHASES } from "../tools/playtest/prompt-inspection.js";
+import { playtestJudgeSystemPrompt } from "../tools/playtest/harness/judge.js";
 import { resolveCheck } from "../src/mechanics.js";
 import {
   adjudicationPromptDocument,

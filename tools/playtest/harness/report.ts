@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { atomicWriteText } from "../persistence/files.js";
-import type { ModelTechnicalGameplayStatus } from "../model-status.js";
+import { atomicWriteText } from "../../../src/persistence/files.js";
+import type { ModelTechnicalGameplayStatus } from "../../../src/model-status.js";
 import {
   CandidateTechnicalSnapshotSchema,
   type CandidateTechnicalSnapshot,

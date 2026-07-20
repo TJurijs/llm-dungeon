@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { resolveCheck } from "../src/mechanics.js";
-import { assessCoverage, buildMechanicalAudit } from "../src/playtest/audit.js";
-import { assessPlaytest, buildCandidateTechnicalSnapshot } from "../src/playtest/assessment.js";
+import { assessCoverage, buildMechanicalAudit } from "../tools/playtest/harness/audit.js";
+import { assessPlaytest, buildCandidateTechnicalSnapshot } from "../tools/playtest/harness/assessment.js";
 import {
   PlaytestCallRecordSchema,
   PlaytestTurnRecordSchema,
   type PlaytestCallRecord,
   type PlaytestTurnRecord,
-} from "../src/playtest/contracts.js";
+} from "../tools/playtest/harness/contracts.js";
 import {
   playtestJudgePrompt,
   playtestJudgeSystemPrompt,
   playtestJudgmentSchemaFor,
   renderPlaytestJudgment,
   type PlaytestJudgment,
-} from "../src/playtest/judge.js";
-import { CERTIFICATION_PACKAGE, CERTIFICATION_SCRIPT } from "../src/playtest/packages.js";
+} from "../tools/playtest/harness/judge.js";
+import { CERTIFICATION_PACKAGE, CERTIFICATION_SCRIPT } from "../tools/playtest/harness/packages.js";
 
 function check(turn: number, roll: number) {
   return resolveCheck({

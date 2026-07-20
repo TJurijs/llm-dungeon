@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { secureRollD100, type RollD100 } from "../mechanics.js";
+import { secureRollD100, type RollD100 } from "../../../src/mechanics.js";
 
 function seedNumber(seed: string): number {
   const digest = createHash("sha256").update(seed).digest();

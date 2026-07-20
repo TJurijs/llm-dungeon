@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { LanguageCodeSchema } from "../language.js";
-import { CheckResultSchema } from "../mechanics.js";
+import { LanguageCodeSchema } from "../../../src/language.js";
+import { CheckResultSchema } from "../../../src/mechanics.js";
 import {
   ModelAdapterStatusSchema,
   ModelQualityStatusSchema,
@@ -8,17 +8,17 @@ import {
   type ModelAdapterStatus,
   type ModelQualityStatus,
   type ModelTechnicalGameplayStatus,
-} from "../model-status.js";
+} from "../../../src/model-status.js";
 import {
   OutputTokenFieldSchema,
   SchemaProjectionIdSchema,
-} from "../model-execution-profile.js";
+} from "../../../src/model-execution-profile.js";
 import {
   ProviderConfigSchema,
   SafeIdSchema,
   SetupResultSchema,
   StateOperationSchema,
-} from "../schemas.js";
+} from "../../../src/schemas.js";
 import { FailureOwnerSchema, type FailureOwner } from "./failure-attribution.js";
 
 export const PLAYTEST_ENGINE_VERSION = 1 as const;

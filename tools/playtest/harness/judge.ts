@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { languageInstruction, type LanguageCode } from "../language.js";
-import { CURRENT_STATE_RECONCILIATION } from "../prompts/blocks.js";
-import { CHECK_DIFFICULTY_POLICY } from "../prompts/difficulty.js";
+import { languageInstruction, type LanguageCode } from "../../../src/language.js";
+import { CURRENT_STATE_RECONCILIATION } from "../../../src/prompts/blocks.js";
+import { CHECK_DIFFICULTY_POLICY } from "../../../src/prompts/difficulty.js";
 import { QualityDimensionSchema, type PlaytestPackage, type PlaytestTurnRecord } from "./contracts.js";
 import type { CoverageAssessment, PlaytestMechanicalAudit } from "./audit.js";
 

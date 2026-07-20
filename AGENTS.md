@@ -88,8 +88,9 @@ observable behavior and documented invariants during refactors.
   separates shared blocks, setup, gameplay, adjudication-only difficulty,
   administrative appeal, recovery, evaluation, and connection-probe
   instructions. Avoid provider-specific story logic here.
-- `src/prompt-inspection.ts` renders static, read-only prompt previews with safe
-  placeholders; it must never compose live campaign context for presentation.
+- `tools/playtest/prompt-inspection.ts` renders static, read-only prompt
+  previews with safe placeholders; it must never compose live campaign context
+  for presentation.
 - `src/language.ts` is the sole gameplay-language registry and
   `src/languages/` owns per-language instructions, defaults, and deterministic
   copy.
@@ -130,21 +131,23 @@ observable behavior and documented invariants during refactors.
   physical invariants.
 - `src/schemas.ts` is the authoritative runtime domain contract.
 - `src/mechanics.ts` is the sole d100 calculation authority.
-- `src/playtest/` is the developer-only, single versioned engine for calibration,
-  certification, autoplay, stress, tuning, scheduling, telemetry, assessment,
-  judging, manifests, reports, resume, and focused replay. Packages describe
-  experiments; player profiles describe simulated-player behavior.
-- `src/legacy-evaluation-artifacts.ts` owns the sole versioned read-only v1
-  manifest reader for existing `evaluations/runs/`;
-  `src/web/evaluation-artifacts.ts` presents those legacy artifacts without
-  treating them as live state. Do not
-  restore `src/evaluation.ts`, the old `src/evaluation/` runner stack, or any
-  write/resume path for legacy runs.
-- `src/cli.ts` is the shipped thin entry point. `src/playtest-cli.ts` and the
-  playtest-specific CLI modules are developer-only and excluded from `dist`;
-  `src/cli/` separates runtime command routing, human gameplay, developer
-  playtest commands, thin deprecated evaluation aliases, prompting, and project
-  configuration.
+- `tools/playtest/` is the developer-only playtest harness, physically separate
+  from the shipped app. `tools/playtest/harness/` is the single versioned engine
+  for calibration, certification, autoplay, stress, tuning, scheduling,
+  telemetry, assessment, judging, manifests, reports, resume, and focused
+  replay. Packages describe experiments; player profiles describe
+  simulated-player behavior. The harness may import app modules from `src/`,
+  but app code must never import from `tools/` (lint-enforced).
+- `tools/playtest/legacy-evaluation-artifacts.ts` owns the sole versioned
+  read-only v1 manifest reader for existing `evaluations/runs/`;
+  `tools/playtest/web/evaluation-artifacts.ts` presents those legacy artifacts
+  without treating them as live state. Do not restore `src/evaluation.ts`, the
+  old `src/evaluation/` runner stack, or any write/resume path for legacy runs.
+- `src/cli.ts` is the shipped thin entry point; `src/cli/` separates runtime
+  command routing, human gameplay, prompting, and project configuration.
+  `tools/playtest/playtest-cli.ts` and `tools/playtest/cli/` are the
+  developer-only playtest commands and thin deprecated evaluation aliases,
+  outside the app build and `dist`.
 - `src/web-server.ts`, `src/web/`, and `web/` are the browser presentation
   surface over the same engine. There is no separate Web engine or source
   entry point.

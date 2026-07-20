@@ -7,32 +7,32 @@ import {
   decodeTurnDecision,
   gameplayRequest,
   resolvedGameplayRequest,
-} from "../llm/gameplay-protocol.js";
-import { GenerationFailure } from "../llm/failures.js";
-import { generateStructured } from "../llm/structured-generation.js";
-import { attemptMetadataFor, structuredFailureDetails } from "../llm/structured-error.js";
+} from "../../../src/llm/gameplay-protocol.js";
+import { GenerationFailure } from "../../../src/llm/failures.js";
+import { generateStructured } from "../../../src/llm/structured-generation.js";
+import { attemptMetadataFor, structuredFailureDetails } from "../../../src/llm/structured-error.js";
 import {
   ModelExecutionProfileDraftSchema,
   assertSingleCalibrationVariableChange,
   escalateOutputBudgetAfterTruncation,
   type ModelExecutionProfileDraft,
   type ModelGenerationPhase,
-} from "../model-execution-profile.js";
-import type { ModelAdapterStatus } from "../model-status.js";
-import { atomicWriteJson } from "../persistence/files.js";
+} from "../../../src/model-execution-profile.js";
+import type { ModelAdapterStatus } from "../../../src/model-status.js";
+import { atomicWriteJson } from "../../../src/persistence/files.js";
 import {
   ResolvedTurnSchema,
   SetupResultSchema,
   TurnDecisionSchema,
   type SetupResult,
-} from "../schemas.js";
-import { validateInitialSetup } from "../store.js";
+} from "../../../src/schemas.js";
+import { validateInitialSetup } from "../../../src/store.js";
 import type {
   LlmProvider,
   ProviderAttemptMetadata,
   StructuredRequest,
   StructuredResult,
-} from "../types.js";
+} from "../../../src/types.js";
 import { attributePlaytestFailure, type FailureAttribution } from "./failure-attribution.js";
 
 export const CALIBRATION_SUITE_VERSION = 2 as const;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scriptedRollD100, seededRollD100 } from "../src/playtest/random.js";
+import { scriptedRollD100, seededRollD100 } from "../tools/playtest/harness/random.js";
 
 describe("playtest roll policies", () => {
   it("replays a seeded stream exactly across resume", () => {
