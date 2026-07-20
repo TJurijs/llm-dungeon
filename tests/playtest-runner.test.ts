@@ -558,8 +558,7 @@ describe("playtest runner", () => {
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    let runner: PlaytestRunner;
-    runner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner: PlaytestRunner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
@@ -731,8 +730,7 @@ describe("playtest runner", () => {
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    let runner: PlaytestRunner;
-    runner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner: PlaytestRunner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 

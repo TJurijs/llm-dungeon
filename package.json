@@ -19,6 +19,9 @@
     "typecheck": "npm run typecheck:app && npm run typecheck:playtest",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
     "typecheck:playtest": "tsc -p tools/playtest --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest"
   },

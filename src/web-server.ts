@@ -1131,7 +1131,7 @@ export class DungeonWebController {
 export function createDungeonWebServer(options: WebServerOptions): Server {
   const controller = new DungeonWebController(options.root, options);
   const trustedHost = options.host ?? "127.0.0.1";
-  return createServer(async (request, response) => {
+  const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     try {
       if (rejectUntrustedHost(request, response, trustedHost)) return;
       const url = new URL(request.url ?? "/", "http://localhost");
@@ -1144,7 +1144,8 @@ export function createDungeonWebServer(options: WebServerOptions): Server {
     } catch (error) {
       sendJson(response, statusFor(error), { error: controller.safeError(error) });
     }
-  });
+  };
+  return createServer((request, response) => { void handle(request, response); });
 }
 
 export async function startDungeonWebServer(options: WebServerOptions & { port?: number }): Promise<Server> {

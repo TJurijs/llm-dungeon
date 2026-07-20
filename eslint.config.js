@@ -41,4 +41,32 @@ export default tseslint.config(
       "@typescript-eslint/return-await": ["error", "in-try-catch"],
     },
   },
+  {
+    // Boundary: the shipped app must never depend on the developer playtest
+    // harness. The harness may import app modules freely (it drives the real
+    // engine); the reverse direction is a design violation.
+    files: ["src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/tools/**"],
+              message:
+                "App code must not import the developer playtest harness (tools/). The dependency is one-way: tools may import src.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Tests stub async interfaces with bodies that need no await; that pattern
+    // is deliberate, so the await-presence rule stays app-only.
+    files: ["tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/require-await": "off",
+    },
+  },
 );

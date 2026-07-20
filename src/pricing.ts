@@ -96,7 +96,7 @@ export async function fetchOpenRouterPrices(fetchImplementation: typeof fetch = 
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`OpenRouter pricing request failed (${response.status})`);
-    return response.json();
+    return await response.json();
   } finally {
     clearTimeout(timeout);
   }
