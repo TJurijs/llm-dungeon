@@ -24,7 +24,7 @@ import {
   type LegacyCampaignSource,
 } from "./persistence/campaign-catalog.js";
 import { atomicWriteJson, pathExists, unlinkIfExists } from "./persistence/files.js";
-import { acquireFileLock } from "./persistence/lock.js";
+import { withSerializedFileLock } from "./persistence/lock.js";
 import { validatePreparedTurnLog } from "./persistence/markdown.js";
 import { campaignIdAt } from "./persistence/replacement.js";
 import { ProviderConfigSchema, SafeIdSchema, type GameState, type ProviderConfig } from "./schemas.js";
@@ -70,39 +70,6 @@ interface CatalogEntry {
   scopeRoot: string;
   metadata: CampaignMetadata;
   manifest: GameState;
-}
-
-const catalogProcessQueues = new Map<string, Promise<void>>();
-const CATALOG_LOCK_WAIT_MS = 2_000;
-const CATALOG_LOCK_RETRY_MS = 20;
-
-async function queueCatalogOperation<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
-  const previous = catalogProcessQueues.get(lockPath) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  const tail = previous.then(() => current, () => current);
-  catalogProcessQueues.set(lockPath, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (catalogProcessQueues.get(lockPath) === tail) catalogProcessQueues.delete(lockPath);
-  }
-}
-
-async function acquireCatalogLock(lockPath: string): Promise<() => Promise<void>> {
-  const deadline = Date.now() + CATALOG_LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      return await acquireFileLock(lockPath, "Campaign catalog");
-    } catch (error) {
-      if (!/locked by another running process/i.test(String((error as Error).message)) || Date.now() >= deadline) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, CATALOG_LOCK_RETRY_MS));
-    }
-  }
 }
 
 function optionalProviderConfig(config: ProviderConfig | undefined): { providerConfig?: ProviderConfig } {
@@ -182,14 +149,12 @@ export class CampaignCatalog {
 
   private async withCatalogLock<T>(operation: () => Promise<T>): Promise<T> {
     if (this.lockContext.getStore()) return operation();
-    return queueCatalogOperation(path.resolve(this.lockPath), async () => {
-      const release = await acquireCatalogLock(this.lockPath);
-      try {
-        return await this.lockContext.run(true, operation);
-      } finally {
-        await release();
-      }
-    });
+    return withSerializedFileLock(
+      this.lockPath,
+      "Campaign catalog",
+      () => this.lockContext.run(true, operation),
+      { waitMs: 2_000, retryMs: 20 },
+    );
   }
 
   async ensureReady(): Promise<void> {

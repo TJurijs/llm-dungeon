@@ -112,7 +112,10 @@ observable behavior and documented invariants during refactors.
   migration from the legacy active/archive layout.
 - `src/store.ts` owns one campaign's durable state, structured inspection,
   appeal evidence context, and deterministic gameplay context. A catalog-owned
-  store validates its campaign identity and read-only status.
+  store validates its campaign identity and read-only status. The file is long
+  by design: it is one responsibility expressed as uniform locked/unlocked
+  method pairs, and splitting it was evaluated and rejected because every
+  candidate seam widened the interface without reducing coupling.
 - `src/persistence/markdown.ts` owns serialization and parsing of durable files.
 - `src/persistence/files.ts` owns shared atomic writes and filesystem probes;
   `src/persistence/pending.ts` validates recoverable pending requests and commits.

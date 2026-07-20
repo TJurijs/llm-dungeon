@@ -139,6 +139,66 @@ async function removeStaleLock(target: string): Promise<boolean> {
   }
 }
 
+const serializedProcessQueues = new Map<string, Promise<void>>();
+
+export interface SerializedFileLockOptions {
+  /** How long to keep retrying a lock held by another process. */
+  waitMs?: number;
+  /** Delay between lock acquisition retries. */
+  retryMs?: number;
+}
+
+async function acquireFileLockWithRetry(
+  target: string,
+  label: string,
+  waitMs: number,
+  retryMs: number,
+): Promise<() => Promise<void>> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      return await acquireFileLock(target, label);
+    } catch (error) {
+      if (!/locked by another running process/i.test(String((error as Error).message)) || Date.now() >= deadline) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryMs));
+    }
+  }
+}
+
+/**
+ * Serialize same-process callers per lock path, then run the operation while
+ * holding the cross-process lock file, retrying a busy lock within a bounded
+ * wait. This is the shared exclusive-mutation pattern for every JSON store
+ * that a second app or harness process may touch concurrently.
+ */
+export async function withSerializedFileLock<T>(
+  target: string,
+  label: string,
+  operation: () => Promise<T>,
+  options: SerializedFileLockOptions = {},
+): Promise<T> {
+  const queueKey = path.resolve(target);
+  const previous = serializedProcessQueues.get(queueKey) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const current = new Promise<void>((resolve) => { releaseQueue = resolve; });
+  const tail = previous.then(() => current, () => current);
+  serializedProcessQueues.set(queueKey, tail);
+  await previous.catch(() => undefined);
+  try {
+    const release = await acquireFileLockWithRetry(target, label, options.waitMs ?? 5_000, options.retryMs ?? 25);
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
+  } finally {
+    releaseQueue();
+    if (serializedProcessQueues.get(queueKey) === tail) serializedProcessQueues.delete(queueKey);
+  }
+}
+
 /** Acquire a crash-recoverable, cross-process exclusive lock file. */
 export async function acquireFileLock(target: string, label: string): Promise<() => Promise<void>> {
   await mkdir(path.dirname(target), { recursive: true });

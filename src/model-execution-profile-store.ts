@@ -9,47 +9,10 @@ import {
   type FrozenModelExecutionProfile,
 } from "./model-execution-profile.js";
 import { atomicWriteJson } from "./persistence/files.js";
-import { acquireFileLock } from "./persistence/lock.js";
+import { withSerializedFileLock } from "./persistence/lock.js";
 import { ProviderConfigSchema } from "./schemas.js";
 
 export const MODEL_EXECUTION_PROFILE_STORE_VERSION = 1 as const;
-const MODEL_EXECUTION_PROFILE_LOCK_WAIT_MS = 5_000;
-const MODEL_EXECUTION_PROFILE_LOCK_RETRY_MS = 25;
-const modelExecutionProfileProcessQueues = new Map<string, Promise<void>>();
-
-async function queueModelExecutionProfileOperation<T>(
-  lockPath: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = modelExecutionProfileProcessQueues.get(lockPath) ?? Promise.resolve();
-  let releaseQueue!: () => void;
-  const current = new Promise<void>((resolve) => { releaseQueue = resolve; });
-  const tail = previous.then(() => current, () => current);
-  modelExecutionProfileProcessQueues.set(lockPath, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    releaseQueue();
-    if (modelExecutionProfileProcessQueues.get(lockPath) === tail) {
-      modelExecutionProfileProcessQueues.delete(lockPath);
-    }
-  }
-}
-
-async function acquireModelExecutionProfileLock(lockPath: string): Promise<() => Promise<void>> {
-  const deadline = Date.now() + MODEL_EXECUTION_PROFILE_LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      return await acquireFileLock(lockPath, "model execution profile store");
-    } catch (error) {
-      if (!/locked by another running process/i.test(String((error as Error).message))
-        || Date.now() >= deadline) throw error;
-      await new Promise((resolve) => setTimeout(resolve, MODEL_EXECUTION_PROFILE_LOCK_RETRY_MS));
-    }
-  }
-}
-
 export const ModelExecutionProfileKeySchema = z.object({
   provider: ProviderConfigSchema.shape.provider,
   model: z.string().trim().min(1).max(300),
@@ -137,18 +100,13 @@ export class ModelExecutionProfileStore {
     if (parsed.fingerprint !== modelExecutionProfileFingerprint(parsed)) {
       throw new Error("Cannot persist a frozen execution profile with a stale fingerprint");
     }
-    await queueModelExecutionProfileOperation(path.resolve(this.lockPath), async () => {
-      const release = await acquireModelExecutionProfileLock(this.lockPath);
-      try {
-        const saved = await this.load();
-        saved.profiles = [
-          ...saved.profiles.filter((candidate) => profileKey(candidate.key) !== profileKey(parsed.key)),
-          parsed,
-        ].sort((left, right) => profileKey(left.key).localeCompare(profileKey(right.key)));
-        await atomicWriteJson(this.filePath, PersistedModelExecutionProfilesSchema.parse(saved));
-      } finally {
-        await release();
-      }
+    await withSerializedFileLock(this.lockPath, "model execution profile store", async () => {
+      const saved = await this.load();
+      saved.profiles = [
+        ...saved.profiles.filter((candidate) => profileKey(candidate.key) !== profileKey(parsed.key)),
+        parsed,
+      ].sort((left, right) => profileKey(left.key).localeCompare(profileKey(right.key)));
+      await atomicWriteJson(this.filePath, PersistedModelExecutionProfilesSchema.parse(saved));
     });
   }
 
