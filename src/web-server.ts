@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { z } from "zod";
@@ -65,7 +64,8 @@ import {
 import type { GenerationMetadata, LlmProvider, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
-import { asError, readJsonBody, rejectUnsafeMutation, rejectUntrustedHost, sendJson, sendTextDownload } from "./web/http.js";
+import { asError, readJsonBody, rejectUnsafeMutation, rejectUntrustedHost, sendJson, sendTextDownload, statusFor, WebApiError } from "./web/http.js";
+import { serveStaticAsset } from "./web/static-assets.js";
 import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
 
 type ProviderFactory = (
@@ -105,13 +105,6 @@ interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerCon
   config: BrowserModelSelection | null;
 }
 
-class WebApiError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "WebApiError";
-  }
-}
-
 const SetupModelConfigSchema = z.union([
   ModelSelectionSchema,
   ProviderConfigSchema.strict(),
@@ -134,17 +127,6 @@ const SessionProviderKeyRequestSchema = z.object({
 
 const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
 const MAX_DRAFTS = 20;
-
-function statusFor(error: unknown): number {
-  if (error instanceof WebApiError) return error.status;
-  if (error instanceof z.ZodError) return 400;
-  const message = asError(error);
-  if (/was not found/i.test(message)) return 404;
-  if (/locked by another running process|another operation is still running|archived and cannot|read-only|unfinished request|uncommitted turn|campaign has ended/i.test(message)) {
-    return 409;
-  }
-  return 400;
-}
 
 function decodeCampaignId(segment: string): string {
   let decoded: string;
@@ -1103,28 +1085,7 @@ export class DungeonWebController {
   }
 
   async static(response: ServerResponse, pathname: string): Promise<void> {
-    const files: Record<string, { name: string; type: string }> = {
-      "/": { name: "index.html", type: "text/html; charset=utf-8" },
-      "/index.html": { name: "index.html", type: "text/html; charset=utf-8" },
-      "/app.js": { name: "app.js", type: "text/javascript; charset=utf-8" },
-      "/ui-copy.js": { name: "ui-copy.js", type: "text/javascript; charset=utf-8" },
-      "/ui-utils.js": { name: "ui-utils.js", type: "text/javascript; charset=utf-8" },
-      "/chat-ui.js": { name: "chat-ui.js", type: "text/javascript; charset=utf-8" },
-      "/inspection-ui.js": { name: "inspection-ui.js", type: "text/javascript; charset=utf-8" },
-      "/setup-settings.js": { name: "setup-settings.js", type: "text/javascript; charset=utf-8" },
-      "/terminal-history.js": { name: "terminal-history.js", type: "text/javascript; charset=utf-8" },
-      "/styles.css": { name: "styles.css", type: "text/css; charset=utf-8" },
-    };
-    const asset = files[pathname];
-    if (!asset) { sendJson(response, 404, { error: "Not found" }); return; }
-    const content = await readFile(path.join(this.webRoot, asset.name));
-    response.writeHead(200, {
-      "Content-Type": asset.type,
-      "Cache-Control": "no-cache",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
-    });
-    response.end(content);
+    await serveStaticAsset(this.webRoot, response, pathname);
   }
 }
 
