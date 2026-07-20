@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { PlaytestCallRecordSchema } from "../src/playtest/contracts.js";
+import { PlaytestCallRecordSchema } from "../tools/playtest/harness/contracts.js";
 import {
   reservePlaytestCallCost,
   settlePlaytestCallCost,
   unsettledPlaytestCallCost,
-} from "../src/playtest/cost-ledger.js";
+} from "../tools/playtest/harness/cost-ledger.js";
 
 function recordedCall(costReservationId: string) {
   return PlaytestCallRecordSchema.parse({

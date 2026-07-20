@@ -1,9 +1,9 @@
 import path from "node:path";
-import { PROVIDER_COMPATIBILITY_FINGERPRINT, probeProviderConnection } from "../connection-probe.js";
-import { loadProjectEnv } from "../env.js";
-import { LlmModelCatalog } from "../llm-model-catalog.js";
-import type { LanguageCode } from "../language.js";
-import type { ModelExecutionProfileDraft } from "../model-execution-profile.js";
+import { PROVIDER_COMPATIBILITY_FINGERPRINT, probeProviderConnection } from "../../../src/connection-probe.js";
+import { loadProjectEnv } from "../../../src/env.js";
+import { LlmModelCatalog } from "../../../src/llm-model-catalog.js";
+import type { LanguageCode } from "../../../src/language.js";
+import type { ModelExecutionProfileDraft } from "../../../src/model-execution-profile.js";
 import {
   calibrateModel as calibratePlaytestModel,
   createUnifiedPlaytestRunner,
@@ -17,11 +17,11 @@ import {
   estimatePlaytestCost,
   estimatePlaytestReservation,
   PlaytestCostManager,
-} from "../playtest/cost.js";
-import { inferTokenPrice } from "../pricing.js";
-import type { ProviderConfig } from "../schemas.js";
-import type { LlmProvider, StructuredRequest, StructuredResult } from "../types.js";
-import { CliProjectContext, type CliProjectPaths } from "./project-context.js";
+} from "../harness/cost.js";
+import { inferTokenPrice } from "../../../src/pricing.js";
+import type { ProviderConfig } from "../../../src/schemas.js";
+import type { LlmProvider, StructuredRequest, StructuredResult } from "../../../src/types.js";
+import { CliProjectContext, type CliProjectPaths } from "../../../src/cli/project-context.js";
 
 class CompatibilityCostProvider implements LlmProvider {
   readonly id: string;

@@ -16,25 +16,25 @@ import type {
   StructuredRequest,
   StructuredResult,
 } from "../src/types.js";
-import { CandidateTechnicalSnapshotSchema } from "../src/playtest/assessment.js";
+import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
 import {
   PlaytestCallRecordSchema,
   PlaytestManifestSchema,
   PlaytestRunConfigSchema,
   PlaytestTurnRecordSchema,
   type PlaytestCallRecord,
-} from "../src/playtest/contracts.js";
-import { PlaytestCostManager } from "../src/playtest/cost.js";
-import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../src/playtest/files.js";
-import { TUNING_PACKAGE } from "../src/playtest/packages.js";
+} from "../tools/playtest/harness/contracts.js";
+import { PlaytestCostManager } from "../tools/playtest/harness/cost.js";
+import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../tools/playtest/harness/files.js";
+import { TUNING_PACKAGE } from "../tools/playtest/harness/packages.js";
 import {
   collectPlaytestReport,
   comparePlaytestRuns,
   renderPlaytestReport,
-} from "../src/playtest/report.js";
-import { readDiagnosticBundle } from "../src/playtest/replay.js";
-import { PlaytestProviderScheduler } from "../src/playtest/scheduler.js";
-import { PlaytestTelemetryProvider } from "../src/playtest/telemetry.js";
+} from "../tools/playtest/harness/report.js";
+import { readDiagnosticBundle } from "../tools/playtest/harness/replay.js";
+import { PlaytestProviderScheduler } from "../tools/playtest/harness/scheduler.js";
+import { PlaytestTelemetryProvider } from "../tools/playtest/harness/telemetry.js";
 
 const AnswerSchema = z.object({ answer: z.string() }).strict();
 

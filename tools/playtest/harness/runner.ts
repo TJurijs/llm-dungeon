@@ -2,26 +2,26 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { TransactionValidationError } from "../domain/transaction.js";
-import { DungeonEngine } from "../engine.js";
-import { generateStructured } from "../llm/structured-generation.js";
-import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
+import { TransactionValidationError } from "../../../src/domain/transaction.js";
+import { DungeonEngine } from "../../../src/engine.js";
+import { generateStructured } from "../../../src/llm/structured-generation.js";
+import { ModelAssessmentCatalog } from "../../../src/model-assessment-catalog.js";
 import {
   FrozenModelExecutionProfileSchema,
   type FrozenModelExecutionProfile,
-} from "../model-execution-profile.js";
-import { atomicWriteJson, atomicWriteText } from "../persistence/files.js";
-import { acquireFileLock } from "../persistence/lock.js";
+} from "../../../src/model-execution-profile.js";
+import { atomicWriteJson, atomicWriteText } from "../../../src/persistence/files.js";
+import { acquireFileLock } from "../../../src/persistence/lock.js";
 import {
   parsePlayerVisibleTurn,
   parseTurnCheck,
   parseTurnOperations,
-} from "../persistence/markdown.js";
+} from "../../../src/persistence/markdown.js";
 import { playtestPlayerPrompt, playtestPlayerSystemPrompt } from "../prompts/playtest-player.js";
-import { inferTokenPrice } from "../pricing.js";
-import { StateStore } from "../store.js";
-import type { LlmProvider, TurnResult } from "../types.js";
-import { resolveWorldProfile } from "../world-profile.js";
+import { inferTokenPrice } from "../../../src/pricing.js";
+import { StateStore } from "../../../src/store.js";
+import type { LlmProvider, TurnResult } from "../../../src/types.js";
+import { resolveWorldProfile } from "../../../src/world-profile.js";
 import {
   CandidateTechnicalSnapshotSchema,
   assessPlaytest,

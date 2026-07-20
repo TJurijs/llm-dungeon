@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPlaytestCliProgram } from "../src/cli/playtest-program.js";
+import { createPlaytestCliProgram } from "../tools/playtest/cli/playtest-program.js";
 import {
   EvaluationCli,
-} from "../src/cli/evaluation.js";
+} from "../tools/playtest/cli/evaluation.js";
 import {
   PlaytestCli,
   languageList,
   modelSpec,
   providerConcurrency,
   type PlaytestRunOptions,
-} from "../src/cli/playtest.js";
-import type { PlaytestProjectContext } from "../src/cli/playtest-project-context.js";
-import type { PlaytestModelTarget, PlaytestRunConfig } from "../src/playtest.js";
+} from "../tools/playtest/cli/playtest.js";
+import type { PlaytestProjectContext } from "../tools/playtest/cli/playtest-project-context.js";
+import type { PlaytestModelTarget, PlaytestRunConfig } from "../tools/playtest/playtest.js";
 import type { ProviderConfig } from "../src/schemas.js";
 
 const fingerprint = "a".repeat(64);

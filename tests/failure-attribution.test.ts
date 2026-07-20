@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GenerationFailure } from "../src/llm/failures.js";
-import { attributePlaytestFailure } from "../src/playtest/failure-attribution.js";
+import { attributePlaytestFailure } from "../tools/playtest/harness/failure-attribution.js";
 import type { ProviderAttemptMetadata } from "../src/types.js";
 
 const metadata: ProviderAttemptMetadata = {

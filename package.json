@@ -11,14 +11,14 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "web": "tsx src/cli.ts web",
-    "playtest": "tsx src/playtest-cli.ts",
+    "playtest": "tsx tools/playtest/playtest-cli.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/cli.js",
     "start:web": "node dist/cli.js web",
     "typecheck": "npm run typecheck:app && npm run typecheck:playtest",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
-    "typecheck:playtest": "tsc -p tsconfig.playtest.json --noEmit",
+    "typecheck:playtest": "tsc -p tools/playtest --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -33,8 +33,11 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^3.2.0"
   }
 }

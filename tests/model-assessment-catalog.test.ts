@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../src/playtest/packages.js";
+import { CERTIFICATION_PACKAGE_VERSION } from "../tools/playtest/harness/packages.js";
 
 const fingerprintA = "a".repeat(64);
 const fingerprintB = "b".repeat(64);

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendPlaytestJsonLine,
   readPlaytestJsonLines,
-} from "../src/playtest/files.js";
+} from "../tools/playtest/harness/files.js";
 
 describe("playtest JSONL recovery", () => {
   it("removes an interrupted final fragment before appending a resumed record", async () => {

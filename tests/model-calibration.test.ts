@@ -13,7 +13,7 @@ import {
   runCalibrationVariants,
   runModelCalibrationProbe,
   selectCalibrationProfile,
-} from "../src/playtest/calibration.js";
+} from "../tools/playtest/harness/calibration.js";
 import { GenerationFailure } from "../src/llm/failures.js";
 import type {
   LlmProvider,

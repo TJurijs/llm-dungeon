@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CampaignTurnScheduler, PlaytestProviderScheduler } from "../src/playtest/scheduler.js";
-import { PlaytestCostLimitError, PlaytestCostManager } from "../src/playtest/cost.js";
+import { CampaignTurnScheduler, PlaytestProviderScheduler } from "../tools/playtest/harness/scheduler.js";
+import { PlaytestCostLimitError, PlaytestCostManager } from "../tools/playtest/harness/cost.js";
 
 describe("playtest scheduling", () => {
   it("enforces provider-specific limits while allowing independent providers", async () => {

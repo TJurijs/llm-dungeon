@@ -1,5 +1,5 @@
-import type { StructuredRequest, StructuredResult } from "../types.js";
-import { estimateTokenCost, roundUsd } from "../pricing.js";
+import type { StructuredRequest, StructuredResult } from "../../../src/types.js";
+import { estimateTokenCost, roundUsd } from "../../../src/pricing.js";
 
 export interface PlaytestModelCost {
   inputPerMillion: number;

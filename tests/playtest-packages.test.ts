@@ -10,8 +10,8 @@ import {
   PlaytestPackageSchema,
   PlaytestRunConfigSchema,
   ProfileIdSchema,
-} from "../src/playtest/contracts.js";
-import { hashPlaytestValue } from "../src/playtest/files.js";
+} from "../tools/playtest/harness/contracts.js";
+import { hashPlaytestValue } from "../tools/playtest/harness/files.js";
 import {
   ADVERSARIAL_BOUNDARIES_PACKAGE,
   CAMPAIGN_AUTOPLAY_PACKAGE,
@@ -24,7 +24,7 @@ import {
   TUNING_PACKAGE,
   getPlaytestPackage,
   listPlaytestPackages,
-} from "../src/playtest/packages.js";
+} from "../tools/playtest/harness/packages.js";
 
 const candidate = {
   config: {

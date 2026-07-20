@@ -18,14 +18,14 @@ import {
   type PlaytestModelTarget,
   type PlaytestRunConfig,
   type PlaytestTurnRecord,
-} from "../src/playtest/contracts.js";
+} from "../tools/playtest/harness/contracts.js";
 import {
   CERTIFICATION_CANONICAL_SETUPS,
   CERTIFICATION_PACKAGE,
   CERTIFICATION_PACKAGE_VERSION,
   CERTIFICATION_SCRIPT,
-} from "../src/playtest/packages.js";
-import { PlaytestRunner } from "../src/playtest/runner.js";
+} from "../tools/playtest/harness/packages.js";
+import { PlaytestRunner } from "../tools/playtest/harness/runner.js";
 import { StateStore } from "../src/store.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 

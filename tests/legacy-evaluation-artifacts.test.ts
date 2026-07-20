@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readLegacyEvaluationManifest } from "../src/legacy-evaluation-artifacts.js";
+import { readLegacyEvaluationManifest } from "../tools/playtest/legacy-evaluation-artifacts.js";
 import { resolveCheck } from "../src/mechanics.js";
 import {
   evaluationArtifactPath,
   evaluationTranscriptPresentation,
-} from "../src/web/evaluation-artifacts.js";
+} from "../tools/playtest/web/evaluation-artifacts.js";
 
 async function legacyFixture(): Promise<{
   root: string;

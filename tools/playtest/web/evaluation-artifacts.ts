@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { readLegacyEvaluationManifest } from "../legacy-evaluation-artifacts.js";
-import { CheckResultSchema, formatCheck } from "../mechanics.js";
-import { asError } from "./http.js";
+import { CheckResultSchema, formatCheck } from "../../../src/mechanics.js";
+import { asError } from "../../../src/web/http.js";
 
 const EvaluationTranscriptTurnSchema = z.object({
   turn: z.number().int().positive(),
