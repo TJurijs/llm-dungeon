@@ -34,7 +34,7 @@ observable behavior and documented invariants during refactors.
 - Google Gemini, OpenRouter, xAI, OpenAI, Anthropic, and DeepSeek adapters remain
   supported for persisted/custom configuration. New public selection exposes
   only Gemini (`gemini-3.5-flash`, `gemini-3.1-flash-lite`), OpenRouter
-  (`qwen/qwen3.7-plus`), xAI (`grok-4.5`), OpenAI (`gpt-5.6-terra`), and DeepSeek
+  (`qwen/qwen3.7-plus`), xAI (`grok-4.5`), OpenAI (`gpt-5.4`), and DeepSeek
   (`deepseek-v4-flash`, `deepseek-v4-pro`). Anthropic has no curated model or
   public provider card. Do not remove an adapter or break a legacy campaign
   because its provider/model is retired from public selection.

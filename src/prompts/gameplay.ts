@@ -67,7 +67,7 @@ Application-calculated outcome: ${result.outcome}`,
       "RESOLUTION TASK",
       `This is the final post-roll resolution stage. You MUST return decision=resolved; returning check_required or proposing another check is invalid.
 SELECTED LOCKED OUTCOME: ${result.outcome}
-SELECTED LOCKED STAKE â€” NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: ${selectedOutcomeStake(result)}
+SELECTED LOCKED STAKE — NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: ${selectedOutcomeStake(result)}
 Narrate and apply exactly that selected locked outcome and stake. Before returning, verify that narration, effects, and summary all contain its required success, setback, injury, loss, or other consequence. Do not change the check, modifiers, roll, stakes, campaign status, or outcome. Preserve the attempted action's scope and quantity; do not add a cost, loss, injury, movement, or escalation beyond the selected locked stake or its necessary immediate execution. Return every durable consequence as an effect. The application applies any locked checked ending, so do not emit end_campaign.`,
     ),
     GAMEPLAY_CONTRACT,

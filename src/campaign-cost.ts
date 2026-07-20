@@ -52,3 +52,22 @@ export function summarizeCampaignCost(turns: readonly TurnGenerationMetadata[]):
     unpricedTurns,
   };
 }
+
+/** Combines immutable committed-turn aggregates without reopening earlier logs. */
+export function combineCampaignCostSummaries(
+  left: CampaignCostSummary,
+  right: CampaignCostSummary,
+): CampaignCostSummary {
+  const pricedBases = [left, right]
+    .filter((summary) => summary.pricedTurns > 0)
+    .map((summary) => summary.basis);
+  const basis = pricedBases.includes("mixed") || new Set(pricedBases).size > 1
+    ? "mixed" as const
+    : pricedBases[0] ?? "estimated";
+  return {
+    totalUsd: roundUsd(left.totalUsd + right.totalUsd),
+    basis,
+    pricedTurns: left.pricedTurns + right.pricedTurns,
+    unpricedTurns: left.unpricedTurns + right.unpricedTurns,
+  };
+}

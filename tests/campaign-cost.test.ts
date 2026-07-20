@@ -1,5 +1,8 @@
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { replyGeneration, summarizeCampaignCost } from "../src/campaign-cost.js";
+import { createTestStore } from "./helpers.js";
 
 describe("campaign cost", () => {
   it("prefers exact billed cost and estimates legacy Gemini usage", () => {
@@ -36,5 +39,32 @@ describe("campaign cost", () => {
       model: "gemini-3.5-flash",
       usage: { inputTokens: 10_000, outputTokens: 1_000 },
     })).toEqual({ provider: "gemini", model: "gemini-3.5-flash", costUsd: 0.024, costBasis: "estimated" });
+  });
+
+  it("increments a cached committed-turn total without reopening immutable history", async () => {
+    const store = await createTestStore();
+    expect(await store.campaignCost()).toEqual({
+      totalUsd: 0,
+      basis: "estimated",
+      pricedTurns: 0,
+      unpricedTurns: 1,
+    });
+    await store.commitTurn({
+      action: "Wait and watch.",
+      resolved: { narration: "You wait.", turnSummary: "Time passes.", operations: [] },
+      provider: "gemini",
+      model: "gemini-3.5-flash",
+      usage: { inputTokens: 10_000, outputTokens: 1_000 },
+    });
+
+    // A committed historical log is immutable. Making it unreadable here proves
+    // the same store advanced its cached aggregate from the newly committed log.
+    await writeFile(path.join(store.currentDir, "turns", "000000.md"), "invalid historical fixture", "utf8");
+    expect(await store.campaignCost()).toEqual({
+      totalUsd: 0.024,
+      basis: "estimated",
+      pricedTurns: 1,
+      unpricedTurns: 1,
+    });
   });
 });

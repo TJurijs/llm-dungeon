@@ -45,7 +45,12 @@ import {
   renderTurnLog,
   type TurnOperationLedger,
 } from "./persistence/markdown.js";
-import { replyGeneration, summarizeCampaignCost, type CampaignCostSummary } from "./campaign-cost.js";
+import {
+  combineCampaignCostSummaries,
+  replyGeneration,
+  summarizeCampaignCost,
+  type CampaignCostSummary,
+} from "./campaign-cost.js";
 import {
   ChronicleEventSchema,
   EntitySchema,
@@ -252,6 +257,11 @@ export class StateStore {
   readonly readOnly: boolean;
   private readonly catalogMetadataPath: string | undefined;
   private readonly lockContext = new AsyncLocalStorage<boolean>();
+  private campaignCostCache: {
+    campaignId: string;
+    turn: number;
+    summary: CampaignCostSummary;
+  } | undefined;
 
   constructor(readonly dataRoot: string, options: StateStoreOptions = {}) {
     this.campaignId = options.campaignId === undefined
@@ -664,8 +674,9 @@ export class StateStore {
       resolved: { ...committed.resolved, operations: transaction.operations },
     };
 
+    const renderedTurnLog = renderTurnLog(nextTurn, normalizedCommitted);
     const writes: Record<string, string> = {
-      [`turns/${String(nextTurn).padStart(6, "0")}.md`]: renderTurnLog(nextTurn, normalizedCommitted),
+      [`turns/${String(nextTurn).padStart(6, "0")}.md`]: renderedTurnLog,
     };
     for (const entity of [...entities.values()].filter((candidate) => candidate.updatedTurn === nextTurn)) {
       writes[`entities/${loaded.entityFiles.get(entity.id) ?? entityFilename(entity.id)}`] = renderEntity(EntitySchema.parse(entity));
@@ -689,6 +700,19 @@ export class StateStore {
     };
     await atomicWriteText(this.pendingPath, `${JSON.stringify(pending, null, 2)}\n`);
     await executePendingCommit(this.currentDir, this.pendingPath, pending);
+    if (this.campaignCostCache?.campaignId === loaded.manifest.campaignId
+      && this.campaignCostCache.turn === loaded.manifest.turn) {
+      this.campaignCostCache = {
+        campaignId: loaded.manifest.campaignId,
+        turn: nextTurn,
+        summary: combineCampaignCostSummaries(
+          this.campaignCostCache.summary,
+          summarizeCampaignCost([parseTurnGenerationMetadata(renderedTurnLog)]),
+        ),
+      };
+    } else {
+      this.campaignCostCache = undefined;
+    }
     return {
       state: ManifestSchema.parse(manifest),
       operations: transaction.operations,
@@ -706,8 +730,18 @@ export class StateStore {
   async campaignCost(): Promise<CampaignCostSummary> {
     return this.withCampaignLock(async () => {
       const loaded = await this.loadUnlocked();
+      if (this.campaignCostCache?.campaignId === loaded.manifest.campaignId
+        && this.campaignCostCache.turn === loaded.manifest.turn) {
+        return { ...this.campaignCostCache.summary };
+      }
       const logs = await this.recentTurnLogsUnlocked(loaded.manifest.turn + 1);
-      return summarizeCampaignCost(logs.map(parseTurnGenerationMetadata));
+      const summary = summarizeCampaignCost(logs.map(parseTurnGenerationMetadata));
+      this.campaignCostCache = {
+        campaignId: loaded.manifest.campaignId,
+        turn: loaded.manifest.turn,
+        summary,
+      };
+      return { ...summary };
     });
   }
 

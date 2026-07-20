@@ -80,7 +80,7 @@ describe("prompt suite V1", () => {
     expect(resolution.text).toContain("returning check_required or proposing another check is invalid");
     expect(resolution.text).toContain("Preserve the attempted action's scope and quantity");
     expect(resolution.text).toContain("SELECTED LOCKED OUTCOME: success");
-    expect(resolution.text).toContain("SELECTED LOCKED STAKE â€” NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: Succeed.");
+    expect(resolution.text).toContain("SELECTED LOCKED STAKE — NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: Succeed.");
     expect(resolution.text).toContain("narration, effects, and summary all contain its required success, setback, injury, loss, or other consequence");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("directly relevant and actually brought to bear");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("cannot supply expertise, knowledge, access, or authority");
