@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -62,11 +63,6 @@ export interface LlmProviderDefinition extends SupportedLlmProviderDefinition {
   candidateModels: readonly string[];
 }
 
-export const RECOMMENDED_MODEL_SELECTION = {
-  provider: "gemini",
-  model: "gemini-3.5-flash",
-} as const satisfies ModelSelection;
-
 /**
  * Adapter/key metadata for every provider whose persisted configurations remain
  * supported. This is deliberately broader than the public browser lineup.
@@ -79,50 +75,6 @@ export const SUPPORTED_LLM_PROVIDER_DEFINITIONS = [
   { id: "anthropic", label: "Anthropic", envKey: "ANTHROPIC_API_KEY" },
   { id: "deepseek", label: "DeepSeek", envKey: "DEEPSEEK_API_KEY" },
 ] as const satisfies readonly SupportedLlmProviderDefinition[];
-
-/** Public browser provider metadata only. Credentials never enter the catalog. */
-export const PUBLIC_LLM_PROVIDER_DEFINITIONS = [
-  {
-    id: "gemini",
-    label: "Google Gemini",
-    envKey: "GEMINI_API_KEY",
-    recommended: true,
-    candidateModels: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
-  },
-  {
-    id: "openrouter",
-    label: "OpenRouter",
-    envKey: "OPENROUTER_API_KEY",
-    recommended: false,
-    candidateModels: [
-      "qwen/qwen3.7-plus",
-    ],
-  },
-  {
-    id: "xai",
-    label: "xAI",
-    envKey: "XAI_API_KEY",
-    recommended: false,
-    candidateModels: ["grok-4.5"],
-  },
-  {
-    id: "openai",
-    label: "OpenAI",
-    envKey: "OPENAI_API_KEY",
-    recommended: false,
-    candidateModels: ["gpt-5.4"],
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    envKey: "DEEPSEEK_API_KEY",
-    recommended: false,
-    candidateModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
-  },
-] as const satisfies readonly LlmProviderDefinition[];
-
-/** Backward-compatible name for callers interested in the curated public lineup. */
-export const LLM_PROVIDER_DEFINITIONS = PUBLIC_LLM_PROVIDER_DEFINITIONS;
 
 const ModelIdSchema = z.string().trim().min(1).max(300);
 export const ModelSelectionSchema = z.object({
@@ -223,6 +175,65 @@ const PersistedCatalogSchema = z.object({
 });
 type PersistedCatalog = z.infer<typeof PersistedCatalogSchema>;
 
+/**
+ * The curated public lineup, recommended default, retired curated models, and
+ * shipped compatibility-probe results are data, not logic: they change when
+ * providers rename models or new probe runs land, and they ship in
+ * defaults/llm-models.json. Adapter coupling (labels, env keys, provider ids)
+ * stays in code above; the data joins it by provider id.
+ */
+const CURATED_MODEL_DATA_URL = new URL("../defaults/llm-models.json", import.meta.url);
+
+const ShippedModelTestDataSchema = ModelSelectionSchema.extend({
+  testedAt: z.string().datetime({ offset: true }),
+  protocolVersion: z.number().int().nonnegative(),
+  testFingerprint: z.string().trim().min(1).max(500),
+  testedLanguages: z.array(LanguageCodeSchema),
+  /** Human provenance for the probe result; never surfaced to the app. */
+  note: z.string().optional(),
+}).strict();
+
+const CuratedModelDataSchema = z.object({
+  version: z.literal(LLM_MODEL_CATALOG_VERSION),
+  recommended: ModelSelectionSchema,
+  providers: z.array(z.object({
+    id: LlmProviderIdSchema,
+    recommended: z.boolean(),
+    candidateModels: z.array(ModelIdSchema).min(1),
+  }).strict()).min(1),
+  retiredModels: z.array(ModelSelectionSchema),
+  shippedTests: z.array(ShippedModelTestDataSchema),
+}).strict();
+
+const CURATED_MODEL_DATA = CuratedModelDataSchema.parse(
+  JSON.parse(readFileSync(CURATED_MODEL_DATA_URL, "utf8")),
+);
+
+export const RECOMMENDED_MODEL_SELECTION: ModelSelection = CURATED_MODEL_DATA.recommended;
+
+/** Public browser provider metadata only. Credentials never enter the catalog. */
+export const PUBLIC_LLM_PROVIDER_DEFINITIONS: readonly LlmProviderDefinition[] =
+  CURATED_MODEL_DATA.providers.map((provider) => {
+    const supported = SUPPORTED_LLM_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider.id);
+    if (!supported) {
+      throw new Error(`Curated provider ${provider.id} has no supported adapter definition`);
+    }
+    return {
+      ...supported,
+      recommended: provider.recommended,
+      candidateModels: provider.candidateModels,
+    };
+  });
+
+if (!PUBLIC_LLM_PROVIDER_DEFINITIONS.some((provider) =>
+  provider.id === RECOMMENDED_MODEL_SELECTION.provider
+  && provider.candidateModels.includes(RECOMMENDED_MODEL_SELECTION.model))) {
+  throw new Error("The recommended model must be a curated candidate of a public provider");
+}
+
+/** Backward-compatible name for callers interested in the curated public lineup. */
+export const LLM_PROVIDER_DEFINITIONS = PUBLIC_LLM_PROVIDER_DEFINITIONS;
+
 export interface CatalogModel extends ModelSelection {
   candidate: boolean;
   state: ModelCompatibilityState;
@@ -283,93 +294,20 @@ function selectionKey(selection: ModelSelection): string {
  * Models that were previously curated remain valid persisted references, but
  * must not be mistaken for user-added custom models or public choices.
  */
-const RETIRED_CURATED_MODEL_KEYS = new Set([
-  selectionKey({ provider: "openrouter", model: "google/gemini-3.5-flash" }),
-  selectionKey({ provider: "openrouter", model: "moonshotai/kimi-k2.6" }),
-  selectionKey({ provider: "openrouter", model: "openai/gpt-5.4" }),
-  selectionKey({ provider: "openrouter", model: "openai/gpt-5.4-mini" }),
-  selectionKey({ provider: "openrouter", model: "anthropic/claude-sonnet-4.6" }),
-  selectionKey({ provider: "openrouter", model: "deepseek/deepseek-v4-flash" }),
-  selectionKey({ provider: "openrouter", model: "deepseek/deepseek-v4-pro" }),
-  selectionKey({ provider: "openrouter", model: "x-ai/grok-4.5" }),
-  selectionKey({ provider: "xai", model: "grok-4.3" }),
-  selectionKey({ provider: "openai", model: "gpt-5.6-sol" }),
-  selectionKey({ provider: "openai", model: "gpt-5.6-luna" }),
-  selectionKey({ provider: "openai", model: "gpt-5.6-terra" }),
-  selectionKey({ provider: "openai", model: "gpt-5.4-mini" }),
-  selectionKey({ provider: "openai", model: "gpt-5-mini" }),
-  selectionKey({ provider: "openai", model: "gpt-4.1" }),
-  selectionKey({ provider: "anthropic", model: "claude-sonnet-4-6" }),
-  selectionKey({ provider: "anthropic", model: "claude-sonnet-5" }),
-  selectionKey({ provider: "anthropic", model: "claude-haiku-4-5" }),
-  selectionKey({ provider: "anthropic", model: "claude-opus-4-8" }),
-]);
+const RETIRED_CURATED_MODEL_KEYS = new Set(
+  CURATED_MODEL_DATA.retiredModels.map((selection) => selectionKey(selection)),
+);
 
 export function isRetiredCuratedModel(selection: ModelSelection): boolean {
   return RETIRED_CURATED_MODEL_KEYS.has(selectionKey(selection));
 }
 
-const SHIPPED_MODEL_TESTS: Readonly<Record<string, ModelTestMetadata>> = {
-  [selectionKey(RECOMMENDED_MODEL_SELECTION)]: {
-    testedAt: "2026-07-19T21:48:13.379Z",
-    protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-    testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "gemini", model: "gemini-3.1-flash-lite" })]: {
-    testedAt: "2026-07-19T22:38:15.782Z", protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "openrouter", model: "qwen/qwen3.7-plus" })]: {
-    testedAt: "2026-07-19T22:38:31.649Z", protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "anthropic", model: "claude-sonnet-4-6" })]: {
-    // Direct compatibility probe run in this project. It passed English only;
-    // Russian must remain unavailable until it has its own strict probe result.
-    testedAt: "2026-07-19T00:01:14.082Z",
-    protocolVersion: 1,
-    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
-    testedLanguages: ["en"],
-  },
-  [selectionKey({ provider: "anthropic", model: "claude-sonnet-5" })]: {
-    // Strict direct-provider setup and Gameplay V1 probe passed after applying
-    // the model's required temperature omission. The interrupted acceptance
-    // run is presentation evidence only and does not change compatibility.
-    testedAt: "2026-07-19T01:19:13.976Z",
-    protocolVersion: 1,
-    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
-    testedLanguages: ["en"],
-  },
-  [selectionKey({ provider: "deepseek", model: "deepseek-v4-flash" })]: {
-    testedAt: "2026-07-19T22:15:40.430Z",
-    protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-    testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "deepseek", model: "deepseek-v4-pro" })]: {
-    testedAt: "2026-07-19T22:42:08.291Z",
-    protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-    testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "xai", model: "grok-4.5" })]: {
-    testedAt: "2026-07-19T22:38:49.174Z",
-    protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-    testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "openai", model: "gpt-5.4" })]: {
-    testedAt: "2026-07-19T22:38:58.887Z", protocolVersion: 1,
-    testFingerprint: "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570", testedLanguages: ["en", "ru"],
-  },
-  [selectionKey({ provider: "xai", model: "grok-4.3" })]: {
-    testedAt: "2026-07-18T19:29:37.506Z",
-    protocolVersion: 1,
-    testFingerprint: "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
-    testedLanguages: ["en", "ru"],
-  },
-};
+const SHIPPED_MODEL_TESTS: Readonly<Record<string, ModelTestMetadata>> = Object.fromEntries(
+  CURATED_MODEL_DATA.shippedTests.map(({ provider, model, note: _note, ...test }) => [
+    selectionKey({ provider, model }),
+    ModelTestMetadataSchema.parse(test),
+  ]),
+);
 
 function shippedModel(
   selection: ModelSelection,
