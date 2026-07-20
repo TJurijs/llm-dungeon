@@ -113,22 +113,31 @@ type PersistedAssessmentCatalog = z.infer<typeof PersistedAssessmentCatalogSchem
 export type AdapterAssessment = z.infer<typeof AdapterAssessmentSchema>;
 export type CertificationAssessment = z.infer<typeof CertificationAssessmentSchema>;
 
-interface ShippedCertification {
-  language: LanguageCode;
-  technicalStatus: CertificationAssessment["technicalStatus"];
-  recoveryCount: number;
-  qualityStatus: CertificationAssessment["qualityStatus"];
-  candidateMetricsHash: string;
-  reference: string;
-  recordedAt: string;
-}
+const ShippedCertificationSchema = z.object({
+  language: LanguageCodeSchema,
+  technicalStatus: ModelTechnicalGameplayStatusSchema,
+  recoveryCount: z.number().int().nonnegative(),
+  qualityStatus: ModelQualityStatusSchema,
+  candidateMetricsHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reference: z.string().min(1),
+  recordedAt: z.string().datetime({ offset: true }),
+}).strict();
 
-function shippedAssessment(input: z.infer<typeof RouteKeySchema> & {
-  profileFingerprint: string;
-  calibrationReference: string;
-  calibratedAt: string;
-  certifications: readonly ShippedCertification[];
-}): z.infer<typeof ModelAssessmentSchema> {
+const ShippedModelAssessmentSchema = RouteKeySchema.extend({
+  profileFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  calibrationReference: z.string().min(1),
+  calibratedAt: z.string().datetime({ offset: true }),
+  certifications: z.array(ShippedCertificationSchema).min(1),
+}).strict();
+
+const ShippedAssessmentFileSchema = z.object({
+  version: z.literal(MODEL_ASSESSMENT_CATALOG_VERSION),
+  models: z.array(ShippedModelAssessmentSchema),
+}).strict();
+
+function shippedAssessment(
+  input: z.infer<typeof ShippedModelAssessmentSchema>,
+): z.infer<typeof ModelAssessmentSchema> {
   return ModelAssessmentSchema.parse({
     provider: input.provider,
     model: input.model,
@@ -163,40 +172,31 @@ function shippedAssessment(input: z.infer<typeof RouteKeySchema> & {
   });
 }
 
-const SHIPPED_MODEL_ASSESSMENTS = [
-  shippedAssessment({ provider: "gemini", model: "gemini-3.5-flash", route: "direct", profileFingerprint: "957a28d5a3284d58a23032d92e2ed3e68c69c506c33722f14d722527f85a412e", calibrationReference: "playtests/calibration/gemini-3.5-flash-initial", calibratedAt: "2026-07-19T14:58:25.697Z", certifications: [
-    { language: "en", technicalStatus: "clean", recoveryCount: 0, qualityStatus: "high", candidateMetricsHash: "2ec783316ec4e78e7e905aae0cc8e1246078583a2b652120820a5a0a64b5ac83", reference: "playtests/jobs/gemini-3.5-flash-en", recordedAt: "2026-07-19T22:33:20.118Z" },
-    { language: "ru", technicalStatus: "playable_with_recovery", recoveryCount: 1, qualityStatus: "high", candidateMetricsHash: "8237edb3768ae375412c6bd68ccbd7f2161a3bf3666164ca1afa15b31d3f3a67", reference: "playtests/jobs/gemini-3.5-flash-ru", recordedAt: "2026-07-19T22:33:20.150Z" },
-  ] }),
-  shippedAssessment({ provider: "gemini", model: "gemini-3.1-flash-lite", route: "direct", profileFingerprint: "af8ddfd75ce068f9aca9573ca43bf38a4915f3b91f1f47040aa5a38dcbee4caa", calibrationReference: "playtests/calibration/gemini-3.1-flash-lite-initial", calibratedAt: "2026-07-19T20:01:51.243Z", certifications: [
-    { language: "en", technicalStatus: "clean", recoveryCount: 0, qualityStatus: "high", candidateMetricsHash: "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e", reference: "playtests/jobs/gemini-3.1-flash-lite-en", recordedAt: "2026-07-19T22:33:19.686Z" },
-    { language: "ru", technicalStatus: "clean", recoveryCount: 0, qualityStatus: "high", candidateMetricsHash: "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9", reference: "playtests/jobs/gemini-3.1-flash-lite-ru", recordedAt: "2026-07-19T22:33:19.717Z" },
-  ] }),
-  shippedAssessment({ provider: "openrouter", model: "qwen/qwen3.7-plus", route: "openrouter", profileFingerprint: "cde93c7e308b9ff9a0f250490bd0bc106d9c9230de7c186a1babeeafa2abbcac", calibrationReference: "playtests/calibration/qwen-qwen3.7-plus-initial", calibratedAt: "2026-07-19T20:43:30.760Z", certifications: [
-    { language: "en", technicalStatus: "playable_with_recovery", recoveryCount: 1, qualityStatus: "high", candidateMetricsHash: "5aec5000977e69deedfb4033215880259c63f80bef5a528409f0d516dc424573", reference: "playtests/jobs/qwen-qwen3.7-plus-en", recordedAt: "2026-07-19T20:46:53.798Z" },
-    { language: "ru", technicalStatus: "unstable", recoveryCount: 1, qualityStatus: "awaiting_judgment", candidateMetricsHash: "92b78cb3a2156d441bde83808a6c942e220aea4017b3f4094c3f5530d8b19add", reference: "playtests/jobs/qwen-qwen3.7-plus-ru", recordedAt: "2026-07-19T20:44:36.448Z" },
-  ] }),
-  shippedAssessment({ provider: "xai", model: "grok-4.5", route: "direct", profileFingerprint: "c9840a035b832ebe260978af336b369447c259ab87d6e2d1b5c8bcebfd2e3360", calibrationReference: "playtests/calibration/grok-4.5-initial", calibratedAt: "2026-07-19T20:34:44.395Z", certifications: [
-    { language: "en", technicalStatus: "clean", recoveryCount: 0, qualityStatus: "high", candidateMetricsHash: "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9", reference: "playtests/jobs/grok-4.5-en", recordedAt: "2026-07-19T22:33:20.952Z" },
-    { language: "ru", technicalStatus: "clean", recoveryCount: 0, qualityStatus: "high", candidateMetricsHash: "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9", reference: "playtests/jobs/grok-4.5-ru", recordedAt: "2026-07-19T22:33:20.984Z" },
-  ] }),
-  shippedAssessment({ provider: "openai", model: "gpt-5.4", route: "direct", profileFingerprint: "e078d694d7e7bfec060ae40411031802e04faf8f6733f52ab299f65f7de04c83", calibrationReference: "playtests/calibration/gpt-5.4-initial", calibratedAt: "2026-07-19T21:04:16.063Z", certifications: [
-    { language: "en", technicalStatus: "playable_with_recovery", recoveryCount: 1, qualityStatus: "high", candidateMetricsHash: "1f9e98fc70fdbc02169b734969a94b0a28eddf78abb3bd727bf89309ebbb13b0", reference: "playtests/jobs/gpt-5.4-en", recordedAt: "2026-07-19T22:33:20.539Z" },
-    { language: "ru", technicalStatus: "playable_with_recovery", recoveryCount: 1, qualityStatus: "medium", candidateMetricsHash: "bcbb22c8daca0e354272c1f44ebfb178c80a6b2493bdc881932fb72838e897aa", reference: "playtests/jobs/gpt-5.4-ru", recordedAt: "2026-07-19T22:33:20.570Z" },
-  ] }),
-  shippedAssessment({ provider: "deepseek", model: "deepseek-v4-flash", route: "direct", profileFingerprint: "11e6d104df6bfddf818aac35ab0727784ef1f636761bddfc39033e973ea6102e", calibrationReference: "playtests/calibration/deepseek-v4-flash-repair-thinking-final", calibratedAt: "2026-07-19T22:15:29.409Z", certifications: [
-    { language: "en", technicalStatus: "playable_with_recovery", recoveryCount: 3, qualityStatus: "high", candidateMetricsHash: "72ec11d1123e2d8d48506085091fe99a469dc4cabddb91e4112263e8d10c6966", reference: "playtests/jobs/deepseek-v4-flash-en", recordedAt: "2026-07-19T22:31:21.677Z" },
-    { language: "ru", technicalStatus: "playable_with_recovery", recoveryCount: 2, qualityStatus: "high", candidateMetricsHash: "87f577cf705e5b6883de69a8a91e3cdb1fbac7fd6a487effe6ca2030a2d5d0d7", reference: "playtests/jobs/deepseek-v4-flash-ru", recordedAt: "2026-07-19T22:31:21.706Z" },
-  ] }),
-  shippedAssessment({ provider: "deepseek", model: "deepseek-v4-pro", route: "direct", profileFingerprint: "9947b705d9ad3bdad4d86084782f952896bf991b9516f7b239111d30ccc64da7", calibrationReference: "playtests/calibration/deepseek-v4-pro-initial", calibratedAt: "2026-07-19T22:41:54.139Z", certifications: [
-    { language: "en", technicalStatus: "playable_with_recovery", recoveryCount: 2, qualityStatus: "high", candidateMetricsHash: "a858ac4b4165001d22473a2d2d4e2e1d8d80815a554d376538cb2e79314a58c6", reference: "playtests/jobs/deepseek-v4-pro-en", recordedAt: "2026-07-19T22:46:47.960Z" },
-    { language: "ru", technicalStatus: "playable_with_recovery", recoveryCount: 1, qualityStatus: "high", candidateMetricsHash: "62665b44206708b766abd01c281ec3eccaa98c41ce641d9a247493b9bcab88bf", reference: "playtests/jobs/deepseek-v4-pro-ru", recordedAt: "2026-07-19T22:46:47.355Z" },
-  ] }),
-] as const;
+/**
+ * Shipped assessments are certification output produced by the playtest
+ * harness (tools/playtest) and reviewed into defaults/model-assessments.json.
+ * The compact authoring shape is expanded here so packageVersion and adapter
+ * revision always reflect the current application constants.
+ */
+const SHIPPED_MODEL_ASSESSMENTS_URL = new URL("../defaults/model-assessments.json", import.meta.url);
+let shippedAssessmentsCache: readonly z.infer<typeof ModelAssessmentSchema>[] | undefined;
 
-function mergeShippedAssessments(saved: PersistedAssessmentCatalog): PersistedAssessmentCatalog {
+async function shippedModelAssessments(): Promise<readonly z.infer<typeof ModelAssessmentSchema>[]> {
+  if (!shippedAssessmentsCache) {
+    const file = ShippedAssessmentFileSchema.parse(
+      JSON.parse(await readFile(SHIPPED_MODEL_ASSESSMENTS_URL, "utf8")),
+    );
+    shippedAssessmentsCache = file.models.map(shippedAssessment);
+  }
+  return shippedAssessmentsCache;
+}
+
+function mergeShippedAssessments(
+  saved: PersistedAssessmentCatalog,
+  shippedModels: readonly z.infer<typeof ModelAssessmentSchema>[],
+): PersistedAssessmentCatalog {
   const models = new Map<string, z.infer<typeof ModelAssessmentSchema>>();
-  for (const shipped of SHIPPED_MODEL_ASSESSMENTS) models.set(assessmentKey(shipped), structuredClone(shipped));
+  for (const shipped of shippedModels) models.set(assessmentKey(shipped), structuredClone(shipped));
   for (const local of saved.models) {
     const shipped = models.get(assessmentKey(local));
     if (!shipped) {
@@ -437,11 +437,12 @@ export class ModelAssessmentCatalog {
   }
 
   private async load(): Promise<PersistedAssessmentCatalog> {
+    const shipped = await shippedModelAssessments();
     try {
-      return mergeShippedAssessments(PersistedAssessmentCatalogSchema.parse(JSON.parse(await readFile(this.filePath, "utf8"))));
+      return mergeShippedAssessments(PersistedAssessmentCatalogSchema.parse(JSON.parse(await readFile(this.filePath, "utf8"))), shipped);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return mergeShippedAssessments({ version: MODEL_ASSESSMENT_CATALOG_VERSION, models: [] });
+        return mergeShippedAssessments({ version: MODEL_ASSESSMENT_CATALOG_VERSION, models: [] }, shipped);
       }
       throw error;
     }
