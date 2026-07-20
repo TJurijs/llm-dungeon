@@ -80,8 +80,10 @@ observable behavior and documented invariants during refactors.
   evidence, and recommendation concepts. `src/model-assessment-catalog.ts`
   persists current calibration and certification evidence without rewriting
   legacy evaluation history.
-- `src/providers.ts` translates the shared request into Google Gemini,
-  OpenRouter, xAI, OpenAI, Anthropic, and DeepSeek calls.
+- `src/providers.ts` is the provider facade (adapter construction and
+  persisted configuration). `src/providers/` owns the shared chat-completions
+  transport, provider-specific schema projections, and the concrete Google
+  Gemini, OpenRouter, xAI, OpenAI, Anthropic, and DeepSeek adapters.
 - `src/connection-probe.ts` exercises the real setup and gameplay schemas for
   provider compatibility checks.
 - `src/prompts.ts` is the internal Prompt Suite V1 facade. `src/prompts/`
