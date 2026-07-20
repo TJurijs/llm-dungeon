@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+data/
+config/
+playtests/
+evaluations/
+work/
+package-lock.json
+docs/images/
