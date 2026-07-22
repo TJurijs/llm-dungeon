@@ -2,6 +2,34 @@
   "version": 1,
   "models": [
     {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "route": "direct",
+      "profileFingerprint": "1d869b770d7806777b6ac8d3563c8daebc78dbe3e2ccd28367d58b72916954ab",
+      "calibrationReference": "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
+      "calibratedAt": "2026-07-22T10:32:41.459Z",
+      "certifications": [
+        {
+          "language": "en",
+          "technicalStatus": "playable_with_recovery",
+          "recoveryCount": 1,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "9cf0c40c484e3fea7a9676e786b05c1dd3ab0438a1fce9b138ee7b4a444bc951",
+          "reference": "playtests/runs/2026-07-22T10-33-30-757Z-8f73bcd9-8d5d-45b0-91bc-5ad2dc6979c2/jobs/job-001",
+          "recordedAt": "2026-07-22T10:56:12.399Z"
+        },
+        {
+          "language": "ru",
+          "technicalStatus": "playable_with_recovery",
+          "recoveryCount": 1,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "b35bf08b2db0dc6dc584d3e97bdde667564cd66d1159b01c474d24c3c960de82",
+          "reference": "playtests/runs/2026-07-22T10-33-30-757Z-8f73bcd9-8d5d-45b0-91bc-5ad2dc6979c2/jobs/job-002",
+          "recordedAt": "2026-07-22T10:56:30.624Z"
+        }
+      ]
+    },
+    {
       "provider": "gemini",
       "model": "gemini-3.5-flash",
       "route": "direct",

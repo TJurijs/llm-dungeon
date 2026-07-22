@@ -188,13 +188,13 @@ export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProf
   // projection. Temperature and reasoning are omitted so one provider-level
   // starting draft is valid across Haiku (which allows temperature) and the
   // Opus 4.8 / Sonnet 5 family (which reject sampling controls).
-  draft(
-    { provider: "anthropic", model: "claude-haiku-4-5", route: "direct" },
+  ...["claude-haiku-4-5", "claude-sonnet-5"].map((model) => draft(
+    { provider: "anthropic", model, route: "direct" },
     { mode: "projected_strict_json_schema", projection: "anthropic_compatible_v1" },
     { policy: "omitted" },
     { policy: "omitted" },
     "max_tokens",
-  ),
+  )),
 ];
 
 function canonicalize(value: unknown): unknown {
@@ -251,6 +251,21 @@ const SHIPPED_PROFILE_EVIDENCE = [
   { provider: "openai", model: "gpt-5.4", route: "direct", calibratedAt: "2026-07-19T21:04:16.055Z", evidenceRef: "playtests/calibration/gpt-5.4-initial" },
   { provider: "deepseek", model: "deepseek-v4-flash", route: "direct", calibratedAt: "2026-07-19T22:15:29.398Z", evidenceRef: "playtests/calibration/deepseek-v4-flash-repair-thinking-final" },
   { provider: "deepseek", model: "deepseek-v4-pro", route: "direct", calibratedAt: "2026-07-19T22:41:54.129Z", evidenceRef: "playtests/calibration/deepseek-v4-pro-initial" },
+  // Sonnet 5 is the only shipped model whose certification-scale turns proved
+  // the documented default budgets/timeouts insufficient (see the repair and
+  // decision/repair timeout escalation evidence below). Shipping the plain
+  // defaults here would silently reintroduce the truncation/timeout failures
+  // certification-v1 fixed on every fresh checkout, so this entry overrides
+  // outputBudgets/timeout with the exact values validated by that evidence.
+  {
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+    route: "direct",
+    calibratedAt: "2026-07-22T10:32:41.448Z",
+    evidenceRef: "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
+    outputBudgets: { setup: 8000, decision: 4000, lockedResolution: 8000, repair: 16000 },
+    timeout: { setupMs: 180_000, decisionMs: 240_000, lockedResolutionMs: 120_000, repairMs: 240_000 },
+  },
 ] as const;
 
 /** Frozen release evidence used until a local calibration supersedes it. */
@@ -263,6 +278,8 @@ export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProf
     if (!candidate) throw new Error(`Missing shipped execution profile draft for ${evidence.provider}/${evidence.model}`);
     return freezeModelExecutionProfile({
       ...candidate,
+      ...("outputBudgets" in evidence ? { outputBudgets: evidence.outputBudgets } : {}),
+      ...("timeout" in evidence ? { timeout: evidence.timeout } : {}),
       calibratedAt: evidence.calibratedAt,
       evidenceRef: evidence.evidenceRef,
     });
