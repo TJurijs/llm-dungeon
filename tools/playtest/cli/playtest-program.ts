@@ -108,6 +108,11 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .requiredOption("--max-cost <usd>", "hard compatibility-probe cost ceiling", positiveNumber)
     .action((options: CompatibilityProbeOptions) => playtest.probe(options));
   playtests
+    .command("promote <target>")
+    .description("Sync a calibrated/certified model's local evidence into defaults/ for git (does not add it as a public candidate)")
+    .option("--note <text>", "human provenance stored with the shipped compatibility test")
+    .action((target: string, options: { note?: string }) => playtest.promote(target, options));
+  playtests
     .command("replay <bundle>")
     .description("Run bounded non-committing adapter variants against one diagnostic bundle")
     .option("--variant <file>", "JSON profile draft or array; repeat", collectValue, [])

@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T14:58:25.693Z",
+      "evidenceRef": "playtests/calibration/gemini-3.5-flash-initial"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-lite",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T20:01:51.235Z",
+      "evidenceRef": "playtests/calibration/gemini-3.1-flash-lite-initial"
+    },
+    {
+      "provider": "openrouter",
+      "model": "qwen/qwen3.7-plus",
+      "route": "openrouter",
+      "calibratedAt": "2026-07-19T20:43:30.752Z",
+      "evidenceRef": "playtests/calibration/qwen-qwen3.7-plus-initial"
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.5",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T20:34:44.387Z",
+      "evidenceRef": "playtests/calibration/grok-4.5-initial"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T21:04:16.055Z",
+      "evidenceRef": "playtests/calibration/gpt-5.4-initial"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T22:15:29.398Z",
+      "evidenceRef": "playtests/calibration/deepseek-v4-flash-repair-thinking-final"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "route": "direct",
+      "calibratedAt": "2026-07-19T22:41:54.129Z",
+      "evidenceRef": "playtests/calibration/deepseek-v4-pro-initial"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "route": "direct",
+      "calibratedAt": "2026-07-22T10:32:41.463Z",
+      "evidenceRef": "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
+      "outputBudgets": {
+        "setup": 8000,
+        "decision": 4000,
+        "lockedResolution": 8000,
+        "repair": 16000
+      },
+      "timeout": {
+        "setupMs": 180000,
+        "decisionMs": 240000,
+        "lockedResolutionMs": 120000,
+        "repairMs": 240000
+      }
+    }
+  ]
+}

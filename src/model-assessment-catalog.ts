@@ -59,6 +59,7 @@ const ModelAssessmentSchema = RouteKeySchema.extend({
       }
     }),
 }).strict();
+export type ModelAssessment = z.infer<typeof ModelAssessmentSchema>;
 
 const PersistedAssessmentCatalogSchema = z.object({
   version: z.literal(MODEL_ASSESSMENT_CATALOG_VERSION),
@@ -85,13 +86,15 @@ const ShippedCertificationSchema = z.object({
   reference: z.string().min(1),
   recordedAt: z.string().datetime({ offset: true }),
 }).strict();
+export type ShippedCertification = z.infer<typeof ShippedCertificationSchema>;
 
-const ShippedModelAssessmentSchema = RouteKeySchema.extend({
+export const ShippedModelAssessmentSchema = RouteKeySchema.extend({
   profileFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   calibrationReference: z.string().min(1),
   calibratedAt: z.string().datetime({ offset: true }),
   certifications: z.array(ShippedCertificationSchema).min(1),
 }).strict();
+export type ShippedModelAssessment = z.infer<typeof ShippedModelAssessmentSchema>;
 
 const ShippedAssessmentFileSchema = z.object({
   version: z.literal(MODEL_ASSESSMENT_CATALOG_VERSION),
@@ -269,6 +272,13 @@ export class ModelAssessmentCatalog {
   ) {
     this.filePath = path.join(root, "config", "model-assessments.json");
     this.lockPath = path.join(root, "config", ".model-assessments.lock");
+  }
+
+  /** Raw persisted record for a route, with no per-language currency computed. */
+  async get(target: z.infer<typeof RouteKeySchema>): Promise<ModelAssessment | undefined> {
+    const key = RouteKeySchema.parse(target);
+    const catalog = await this.load();
+    return catalog.models.find((entry) => sameRoute(entry, key));
   }
 
   async effective(

@@ -151,6 +151,7 @@ describe("playtest terminal commands", () => {
         "packages",
         "calibrate",
         "probe",
+        "promote",
         "replay",
         "run",
         "certify",

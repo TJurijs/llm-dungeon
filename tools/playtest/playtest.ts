@@ -6,7 +6,6 @@ import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../../src/connection-probe.j
 import { LlmModelCatalog } from "../../src/llm-model-catalog.js";
 import { ModelExecutionProfileStore } from "../../src/model-execution-profile-store.js";
 import {
-  DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS,
   MODEL_EXECUTION_ADAPTER_REVISION,
   ModelExecutionProfileDraftSchema,
   freezeModelExecutionProfile,
@@ -14,6 +13,7 @@ import {
   type FrozenModelExecutionProfile,
   type ModelExecutionProfileDraft,
 } from "../../src/model-execution-profile.js";
+import { defaultDraftFor } from "./harness/default-drafts.js";
 import { inferTokenPrice } from "../../src/pricing.js";
 import { createProvider } from "../../src/providers.js";
 import { ProviderConfigSchema, type ProviderConfig } from "../../src/schemas.js";
@@ -49,6 +49,7 @@ export * from "./harness/audit.js";
 export * from "./harness/failure-attribution.js";
 export * from "./harness/judge.js";
 export * from "./harness/manifest.js";
+export * from "./harness/promote.js";
 export * from "./harness/replay.js";
 export * from "./harness/report.js";
 export * from "./harness/runner.js";
@@ -148,25 +149,6 @@ export function createUnifiedPlaytestRunner(
 
 function safeCalibrationEvidenceId(now: Date): string {
   return `${now.toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
-}
-
-function defaultDraftFor(config: ProviderConfig, route: string): ModelExecutionProfileDraft {
-  const exact = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((profile) =>
-    profile.key.provider === config.provider
-    && profile.key.model === config.model
-    && profile.key.route === route);
-  if (exact) return structuredClone(exact);
-  const providerDefault = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((profile) =>
-    profile.key.provider === config.provider && profile.key.route === route);
-  if (!providerDefault) {
-    throw new Error(
-      `No starting calibration profile exists for ${config.provider} via ${route}; provide --variant <file>`,
-    );
-  }
-  return ModelExecutionProfileDraftSchema.parse({
-    ...structuredClone(providerDefault),
-    key: { provider: config.provider, model: config.model, route },
-  });
 }
 
 export async function readCalibrationVariants(

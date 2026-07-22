@@ -13,6 +13,7 @@ import {
   readCalibrationVariants,
   readDiagnosticBundle,
   readFocusedReplayManifest,
+  promoteModelEvidence,
   type FocusedReplayCodec,
   type PlaytestModelTarget,
   type PlaytestProgressEvent,
@@ -299,6 +300,24 @@ export class PlaytestCli {
       throw new Error(`Compatibility failed for ${result.failed.map((failure) => failure.language.toUpperCase()).join(", ")}`);
     }
     p.outro(`Compatibility current. Cost: $${result.costUsd.toFixed(4)}.`);
+  }
+
+  async promote(target: string, options: { note?: string } = {}): Promise<void> {
+    const selected = modelSpec(target);
+    p.intro(`Promote shipped evidence: ${targetLabel(selected)}`);
+    const result = await promoteModelEvidence({
+      projectRoot: this.project.paths.root,
+      provider: selected.config.provider,
+      model: selected.config.model,
+      route: selected.route,
+      note: options.note,
+    });
+    p.log.success(`Promoted languages: ${result.promotedLanguages.map((language) => language.toUpperCase()).join(", ")}`);
+    for (const skipped of result.skippedLanguages) {
+      p.log.warn(`${skipped.language.toUpperCase()} not promoted: ${skipped.reason}`);
+    }
+    for (const file of result.filesWritten) p.log.info(`Wrote ${file}`);
+    p.outro(`Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same evidence.`);
   }
 
   async replay(bundleFile: string, options: ReplayOptions): Promise<void> {

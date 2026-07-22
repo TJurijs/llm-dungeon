@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { ProviderConfigSchema } from "./schemas.js";
 
@@ -70,19 +71,21 @@ const ReasoningPolicySchema = z.discriminatedUnion("policy", [
   z.object({ policy: z.literal("gemini_thinking_low") }).strict(),
 ]);
 
-const PhaseBudgetsSchema = z.object({
+export const PhaseBudgetsSchema = z.object({
   setup: z.number().int().min(256).max(32_000),
   decision: z.number().int().min(256).max(32_000),
   lockedResolution: z.number().int().min(256).max(32_000),
   repair: z.number().int().min(256).max(32_000),
 }).strict();
+export type PhaseBudgets = z.infer<typeof PhaseBudgetsSchema>;
 
-const TimeoutPolicySchema = z.object({
+export const TimeoutPolicySchema = z.object({
   setupMs: z.number().int().min(1_000).max(600_000),
   decisionMs: z.number().int().min(1_000).max(600_000),
   lockedResolutionMs: z.number().int().min(1_000).max(600_000),
   repairMs: z.number().int().min(1_000).max(600_000),
 }).strict();
+export type TimeoutPolicy = z.infer<typeof TimeoutPolicySchema>;
 
 export const ModelExecutionProfileDraftSchema = z.object({
   schemaVersion: z.literal(MODEL_EXECUTION_PROFILE_VERSION),
@@ -243,30 +246,39 @@ export function freezeModelExecutionProfile(profile: ModelExecutionProfile): Fro
   return deepFreeze(structuredClone(frozen));
 }
 
-const SHIPPED_PROFILE_EVIDENCE = [
-  { provider: "gemini", model: "gemini-3.5-flash", route: "direct", calibratedAt: "2026-07-19T14:58:25.693Z", evidenceRef: "playtests/calibration/gemini-3.5-flash-initial" },
-  { provider: "gemini", model: "gemini-3.1-flash-lite", route: "direct", calibratedAt: "2026-07-19T20:01:51.235Z", evidenceRef: "playtests/calibration/gemini-3.1-flash-lite-initial" },
-  { provider: "openrouter", model: "qwen/qwen3.7-plus", route: "openrouter", calibratedAt: "2026-07-19T20:43:30.752Z", evidenceRef: "playtests/calibration/qwen-qwen3.7-plus-initial" },
-  { provider: "xai", model: "grok-4.5", route: "direct", calibratedAt: "2026-07-19T20:34:44.387Z", evidenceRef: "playtests/calibration/grok-4.5-initial" },
-  { provider: "openai", model: "gpt-5.4", route: "direct", calibratedAt: "2026-07-19T21:04:16.055Z", evidenceRef: "playtests/calibration/gpt-5.4-initial" },
-  { provider: "deepseek", model: "deepseek-v4-flash", route: "direct", calibratedAt: "2026-07-19T22:15:29.398Z", evidenceRef: "playtests/calibration/deepseek-v4-flash-repair-thinking-final" },
-  { provider: "deepseek", model: "deepseek-v4-pro", route: "direct", calibratedAt: "2026-07-19T22:41:54.129Z", evidenceRef: "playtests/calibration/deepseek-v4-pro-initial" },
-  // Sonnet 5 is the only shipped model whose certification-scale turns proved
-  // the documented default budgets/timeouts insufficient (see the repair and
-  // decision/repair timeout escalation evidence below). Shipping the plain
-  // defaults here would silently reintroduce the truncation/timeout failures
-  // certification-v1 fixed on every fresh checkout, so this entry overrides
-  // outputBudgets/timeout with the exact values validated by that evidence.
-  {
-    provider: "anthropic",
-    model: "claude-sonnet-5",
-    route: "direct",
-    calibratedAt: "2026-07-22T10:32:41.448Z",
-    evidenceRef: "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
-    outputBudgets: { setup: 8000, decision: 4000, lockedResolution: 8000, repair: 16000 },
-    timeout: { setupMs: 180_000, decisionMs: 240_000, lockedResolutionMs: 120_000, repairMs: 240_000 },
-  },
-] as const;
+/**
+ * Shipped execution-profile evidence is data, not logic: it changes whenever
+ * a model is calibrated/certified and should ship in defaults/ so every
+ * checkout gets a working profile without re-running paid calibration. Most
+ * entries use the documented default budgets/timeouts (no override needed);
+ * a model whose certification-scale turns proved those defaults insufficient
+ * carries explicit outputBudgets/timeout overrides so a fresh checkout runs
+ * the exact validated values instead of silently reintroducing the failure
+ * that calibration fixed. Use `playtest promote` to generate/update entries
+ * from real local evidence rather than hand-editing this file.
+ */
+const SHIPPED_PROFILE_EVIDENCE_URL = new URL("../defaults/model-execution-profiles.json", import.meta.url);
+
+const ShippedProfileEvidenceSchema = z.object({
+  provider: ProviderConfigSchema.shape.provider,
+  model: z.string().trim().min(1).max(300),
+  route: z.string().trim().min(1).max(100),
+  calibratedAt: z.string().datetime({ offset: true }),
+  evidenceRef: z.string().trim().min(1).max(500),
+  outputBudgets: PhaseBudgetsSchema.optional(),
+  timeout: TimeoutPolicySchema.optional(),
+}).strict();
+export type ShippedProfileEvidence = z.infer<typeof ShippedProfileEvidenceSchema>;
+
+const ShippedProfileEvidenceFileSchema = z.object({
+  version: z.literal(1),
+  profiles: z.array(ShippedProfileEvidenceSchema),
+}).strict();
+
+export const SHIPPED_PROFILE_EVIDENCE: readonly ShippedProfileEvidence[] =
+  ShippedProfileEvidenceFileSchema.parse(
+    JSON.parse(readFileSync(SHIPPED_PROFILE_EVIDENCE_URL, "utf8")),
+  ).profiles;
 
 /** Frozen release evidence used until a local calibration supersedes it. */
 export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProfile[] =
@@ -278,8 +290,8 @@ export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProf
     if (!candidate) throw new Error(`Missing shipped execution profile draft for ${evidence.provider}/${evidence.model}`);
     return freezeModelExecutionProfile({
       ...candidate,
-      ...("outputBudgets" in evidence ? { outputBudgets: evidence.outputBudgets } : {}),
-      ...("timeout" in evidence ? { timeout: evidence.timeout } : {}),
+      ...(evidence.outputBudgets ? { outputBudgets: evidence.outputBudgets } : {}),
+      ...(evidence.timeout ? { timeout: evidence.timeout } : {}),
       calibratedAt: evidence.calibratedAt,
       evidenceRef: evidence.evidenceRef,
     });
