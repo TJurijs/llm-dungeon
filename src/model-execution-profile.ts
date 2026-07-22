@@ -184,6 +184,17 @@ export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProf
     { policy: "deepseek_thinking_for_repairs" },
     "max_tokens",
   )),
+  // Anthropic Messages uses output_config json_schema with the compatible
+  // projection. Temperature and reasoning are omitted so one provider-level
+  // starting draft is valid across Haiku (which allows temperature) and the
+  // Opus 4.8 / Sonnet 5 family (which reject sampling controls).
+  draft(
+    { provider: "anthropic", model: "claude-haiku-4-5", route: "direct" },
+    { mode: "projected_strict_json_schema", projection: "anthropic_compatible_v1" },
+    { policy: "omitted" },
+    { policy: "omitted" },
+    "max_tokens",
+  ),
 ];
 
 function canonicalize(value: unknown): unknown {

@@ -20,6 +20,9 @@ config/.model-execution-profiles.lock.reclaim-*
 config/model-assessments.json
 config/.model-assessments.lock
 config/.model-assessments.lock.reclaim-*
+config/provider-connections.json
+config/.provider-connections.lock
+config/.provider-connections.lock.reclaim-*
 config/world.md
 config/worlds/
 *.log

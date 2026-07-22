@@ -325,6 +325,7 @@ describe("multi-campaign Web server", () => {
       "openrouter",
       "xai",
       "openai",
+      "anthropic",
       "deepseek",
     ]);
     expect(status.llm.pricingBasis).toMatchObject({
@@ -337,7 +338,8 @@ describe("multi-campaign Web server", () => {
       .toMatchObject({ envKey: "GEMINI_API_KEY", recommended: true, keyPresent: true, keySource: "environment" });
     expect(status.llm.providers.filter((provider: any) => provider.recommended).map((provider: any) => provider.id))
       .toEqual(["gemini"]);
-    expect(status.llm.providers.find((provider: any) => provider.id === "anthropic")).toBeUndefined();
+    expect(status.llm.providers.find((provider: any) => provider.id === "anthropic").models
+      .map((model: any) => model.id)).toEqual(["claude-sonnet-5"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
       .map((model: any) => model.id)).toEqual(["gemini-3.5-flash", "gemini-3.1-flash-lite"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "openrouter").models
@@ -453,7 +455,7 @@ describe("multi-campaign Web server", () => {
     expect(await readFile(assessmentPath, "utf8")).toBe(before);
   });
 
-  it("keeps an existing Anthropic campaign playable while hiding Anthropic from new selection", async () => {
+  it("keeps an existing Anthropic campaign playable while still blocking its retired model from new selection", async () => {
     const root = await fixtureRoot();
     const legacyConfig: ProviderConfig = {
       provider: "anthropic",
@@ -476,7 +478,7 @@ describe("multi-campaign Web server", () => {
     });
 
     const status = await json(base, "/api/status");
-    expect(status.llm.providers.some((provider: any) => provider.id === "anthropic")).toBe(false);
+    expect(status.llm.providers.some((provider: any) => provider.id === "anthropic")).toBe(true);
     expect(status.campaigns).toContainEqual(expect.objectContaining({
       campaignId: created.campaignId,
       config: { provider: "anthropic", model: "claude-sonnet-4-6" },
@@ -489,12 +491,12 @@ describe("multi-campaign Web server", () => {
     )).status).toBe(200);
     expect(usedModels).toContain("anthropic/claude-sonnet-4-6");
 
-    const addLegacy = await responseJson(base, "/api/llm/models", "POST", {
+    const addRetired = await responseJson(base, "/api/llm/models", "POST", {
       provider: "anthropic",
-      model: "claude-new-model",
+      model: "claude-sonnet-4-6",
     });
-    expect(addLegacy.status).toBe(400);
-    expect(await addLegacy.json()).toMatchObject({ error: expect.stringContaining("legacy use only") });
+    expect(addRetired.status).toBe(400);
+    expect(await addRetired.json()).toMatchObject({ error: expect.stringContaining("legacy use only") });
   });
 
   it("keeps multiple accepted drafts and snapshots each language, world, and model", async () => {
@@ -1051,6 +1053,48 @@ describe("multi-campaign Web server", () => {
     const cleared = await json(base, "/api/llm/keys", "PUT", { provider: "openai", key: "" });
     expect(cleared.llm.providers.find((provider: any) => provider.id === "openai"))
       .toMatchObject({ keyPresent: false, keySource: "missing", keyConnectionStatus: "unknown" });
+  });
+
+  it("checks one provider on demand and persists the result across restarts unless the key changes", async () => {
+    const root = await fixtureRoot();
+    const calls: Array<{ provider: string; apiKey: string }> = [];
+    const tester = (status: "connected" | "unauthorized") =>
+      async (provider: LlmProviderId, apiKey: string) => {
+        calls.push({ provider, apiKey });
+        return { provider, status };
+      };
+
+    const first = await start(root, {
+      environment: { GEMINI_API_KEY: "gemini-secret", OPENAI_API_KEY: "openai-secret" },
+      connectionTester: tester("connected"),
+    });
+    const checked = await json(first.base, "/api/llm/connections/test", "POST", { provider: "gemini" });
+    expect(checked.results).toEqual([{ provider: "gemini", status: "connected" }]);
+    expect(calls).toEqual([{ provider: "gemini", apiKey: "gemini-secret" }]);
+    expect(checked.llm.providers.find((provider: any) => provider.id === "gemini"))
+      .toMatchObject({ keyConnectionStatus: "connected" });
+    expect(checked.llm.providers.find((provider: any) => provider.id === "openai"))
+      .toMatchObject({ keyConnectionStatus: "unknown" });
+    const persisted = await readFile(path.join(root, "config", "provider-connections.json"), "utf8");
+    expect(persisted).not.toContain("gemini-secret");
+
+    // Restart with the same key: the persisted "connected" result is restored without re-testing.
+    const restart = await start(root, {
+      environment: { GEMINI_API_KEY: "gemini-secret" },
+      connectionTester: tester("connected"),
+    });
+    const afterRestart = await json(restart.base, "/api/llm");
+    expect(afterRestart.llm.providers.find((provider: any) => provider.id === "gemini"))
+      .toMatchObject({ keyConnectionStatus: "connected" });
+
+    // Restart with a changed key: the fingerprint no longer matches, so status falls back to unknown.
+    const changed = await start(root, {
+      environment: { GEMINI_API_KEY: "rotated-secret" },
+      connectionTester: tester("connected"),
+    });
+    const afterChange = await json(changed.base, "/api/llm");
+    expect(afterChange.llm.providers.find((provider: any) => provider.id === "gemini"))
+      .toMatchObject({ keyConnectionStatus: "unknown" });
   });
 
   it("checks configured provider connections without persisting credentials or model evidence", async () => {

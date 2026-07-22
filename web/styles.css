@@ -232,6 +232,42 @@ body.inspection-open #open-inspection { display: none; }
 .llm-key-status.success, .model-status.success { border-color: #49613a; color: var(--accent); }
 .llm-key-status.warning { border-color: #695936; color: var(--amber); }
 .llm-key-status.error { border-color: #793e3e; color: var(--danger); }
+/* Fast custom tooltip: near-instant vs. the browser's native `title` delay. */
+[data-tooltip] { position: relative; }
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  width: max-content;
+  max-width: 240px;
+  padding: .3rem .5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: .68rem;
+  line-height: 1.3;
+  text-align: center;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 2px);
+  transition: opacity .06s ease, transform .06s ease;
+}
+[data-tooltip]:hover::after, [data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: .04s;
+}
+@media (prefers-reduced-motion: reduce) { [data-tooltip]::after { transition: none; } }
+button.llm-key-status { cursor: pointer; background: transparent; font-family: inherit; }
+button.llm-key-status:hover:not(:disabled), button.llm-key-status:focus-visible { border-color: currentColor; }
+button.llm-key-status:disabled { cursor: default; }
+button.llm-key-status[aria-busy="true"] { cursor: progress; }
+button.llm-key-status[aria-busy="true"]::after { content: ""; width: .66rem; height: .66rem; margin-left: .3rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: llm-action-spin .65s linear infinite; }
+@media (prefers-reduced-motion: reduce) { button.llm-key-status[aria-busy="true"]::after { animation-duration: 1.8s; } }
 .llm-provider-tools { position: relative; z-index: 8; height: 0; }
 .llm-provider-tools[open] { z-index: 20; }
 .llm-provider-tools-trigger { position: absolute; right: .6rem; top: -45px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; color: var(--muted); cursor: pointer; list-style: none; }

@@ -380,7 +380,7 @@ export function createSetupSettingsController(dependencies) {
 
   function createModelSignal(kind, className, label, language) {
     const signal = createElement("span", `model-signal ${className}`);
-    signal.title = label;
+    signal.dataset.tooltip = label;
     signal.setAttribute("aria-label", label);
     signal.append(createModelSignalIcon(kind));
     if (language) signal.append(createElement("span", "model-signal-language", language.toUpperCase()));
@@ -425,7 +425,9 @@ export function createSetupSettingsController(dependencies) {
     if (!model.known) row.classList.add("is-custom");
     const copy = createElement("div", "llm-model-copy");
     const heading = createElement("div", "llm-model-heading");
-    heading.title = model.model;
+    heading.dataset.tooltip = model.reasoningDescription
+      ? `${model.model} · ${model.reasoningDescription}`
+      : model.model;
     heading.append(createElement("strong", "", model.label || model.model));
     if (model.label && model.label !== model.model) heading.append(createElement("code", "", model.model));
     if (model.recommended) heading.append(createElement("span", "model-recommended", t("recommended")));
@@ -447,7 +449,7 @@ export function createSetupSettingsController(dependencies) {
         ? createElement("button", `model-signal model-status model-protocol-retest signal-${protocolTone}`)
         : createModelSignal("protocol", `model-status signal-${protocolTone}`, protocolLabel);
     if (isTesting) {
-      statusBadge.title = protocolLabel;
+      statusBadge.dataset.tooltip = protocolLabel;
       statusBadge.setAttribute("aria-label", `${protocolLabel}: ${provider.label}, ${model.label || model.model}`);
       statusBadge.setAttribute("aria-live", "polite");
       statusBadge.append(createElement("span", "model-protocol-spinner"));
@@ -457,14 +459,14 @@ export function createSetupSettingsController(dependencies) {
       statusBadge.dataset.provider = provider.id;
       statusBadge.dataset.model = model.model;
       statusBadge.disabled = !provider.keyPresent || isTesting;
-      statusBadge.title = `${protocolLabel} · ${t("retestModel")}`;
+      statusBadge.dataset.tooltip = `${protocolLabel} · ${t("retestModel")}`;
       statusBadge.setAttribute(
         "aria-label",
         `${protocolLabel}: ${t("retestModel")} ${provider.label}, ${model.label || model.model}`,
       );
       statusBadge.append(createModelSignalIcon("protocol"));
     } else if (model.error) {
-      statusBadge.title = model.error;
+      statusBadge.dataset.tooltip = model.error;
     }
     metadata.append(statusBadge);
     const primaryLanguage = "en";
@@ -589,7 +591,12 @@ export function createSetupSettingsController(dependencies) {
       const keyTone = provider.keyConnectionStatus === "connected"
         ? "success"
         : provider.keyConnectionStatus === "failed" ? "error" : "warning";
-      const keyBadge = createElement("span", `llm-key-status ${keyTone}`, keyCopy);
+      const keyBadge = createElement("button", `llm-key-status ${keyTone}`, keyCopy);
+      keyBadge.type = "button";
+      keyBadge.dataset.connectionCheck = provider.id;
+      keyBadge.disabled = !provider.keyPresent;
+      keyBadge.title = provider.keyPresent ? t("checkConnectionHint") : t("keyMissing");
+      keyBadge.setAttribute("aria-label", `${t("checkConnection")}: ${provider.label || provider.id}`);
       header.append(heading, keyBadge);
       const tools = createElement("details", "llm-provider-tools");
       const toolsTrigger = createElement("summary", "llm-provider-tools-trigger");
@@ -768,30 +775,22 @@ export function createSetupSettingsController(dependencies) {
     saveSessionKey(form, "");
   }
 
-  async function reloadProjectEnv() {
-    const button = $("#reload-project-env");
+  async function handleConnectionCheck(event) {
+    const button = event.target.closest("[data-connection-check]");
+    if (!button || button.disabled) return;
+    const provider = button.dataset.connectionCheck;
     await withIconButtonBusy(button, async () => {
-      await api("/api/llm/environment/reload", { method: "POST", body: JSON.stringify({}) });
+      const result = await api("/api/llm/connections/test", { method: "POST", body: JSON.stringify({ provider }) });
       await refreshStatus({ ensureFresh: true });
       renderLlmConfiguration();
-      showToast(t("envReloaded"), "success");
-    }).catch((error) => showToast(error.message, "error"));
-  }
-
-  async function testProviderConnections() {
-    const button = $("#test-provider-connections");
-    await withIconButtonBusy(button, async () => {
-      const result = await api("/api/llm/connections/test", { method: "POST", body: JSON.stringify({}) });
-      await refreshStatus({ ensureFresh: true });
-      renderLlmConfiguration();
-      const connected = result.results.filter((entry) => entry.status === "connected").map((entry) => entry.provider);
-      const failed = result.results.filter((entry) => entry.status !== "connected")
-        .map((entry) => `${entry.provider} (${t(entry.status === "unauthorized" ? "connectionUnauthorized" : "connectionUnavailable")})`);
+      const entry = Array.isArray(result.results)
+        ? result.results.find((candidate) => candidate.provider === provider)
+        : undefined;
+      const connected = entry?.status === "connected";
+      const reason = entry?.status === "unauthorized" ? "connectionUnauthorized" : "connectionUnavailable";
       showToast(
-        failed.length
-          ? formatTemplate(t("connectionsPartial"), { connected: connected.join(", ") || "—", failed: failed.join(", ") })
-          : formatTemplate(t("connectionsPassed"), { providers: connected.join(", ") }),
-        failed.length ? "error" : "success",
+        connected ? t("connectionOk") : `${t("connectionFailed")} — ${t(reason)}`,
+        connected ? "success" : "error",
       );
     }).catch((error) => showToast(error.message, "error"));
   }
@@ -873,10 +872,9 @@ export function createSetupSettingsController(dependencies) {
     });
     $("#llm-providers").addEventListener("click", handleLlmAction);
     $("#llm-providers").addEventListener("click", handleProviderKeyClear);
+    $("#llm-providers").addEventListener("click", handleConnectionCheck);
     $("#llm-providers").addEventListener("submit", handleCustomModel);
     $("#llm-providers").addEventListener("submit", handleProviderKeySubmit);
-    $("#reload-project-env").addEventListener("click", reloadProjectEnv);
-    $("#test-provider-connections").addEventListener("click", testProviderConnections);
     $(".settings-navigation").addEventListener("click", (event) => {
       const button = event.target.closest("[data-settings-section]");
       if (button) selectSettingsSection(button.dataset.settingsSection);

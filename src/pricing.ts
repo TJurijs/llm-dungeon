@@ -55,6 +55,7 @@ const OPENROUTER_TOKEN_PRICES: Readonly<Record<string, TokenPrice>> = {
   "openai/gpt-5-mini": { inputPerMillion: 0.25, outputPerMillion: 2 },
   "openai/gpt-4.1": { inputPerMillion: 2, outputPerMillion: 8 },
   "anthropic/claude-sonnet-4.6": { inputPerMillion: 3, outputPerMillion: 15 },
+  "anthropic/claude-sonnet-5": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-haiku-4.5": { inputPerMillion: 1, outputPerMillion: 5 },
   "anthropic/claude-opus-4.8": { inputPerMillion: 5, outputPerMillion: 25 },
   "deepseek/deepseek-v4-flash": { inputPerMillion: 0.098, outputPerMillion: 0.196 },

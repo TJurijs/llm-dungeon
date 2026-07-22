@@ -75,6 +75,7 @@ export function llmModelEntries(llm, {
         speedEstimate: model.speedEstimate,
         cost: model.cost,
         recommended: Boolean(model.recommended),
+        reasoningDescription: model.reasoningDescription,
         evidence: model.evidence,
         keyAccess: model.keyAccess,
         hidden: Boolean(model.hidden),

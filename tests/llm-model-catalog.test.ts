@@ -75,6 +75,7 @@ describe("LLM provider definitions", () => {
       "openrouter",
       "xai",
       "openai",
+      "anthropic",
       "deepseek",
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.filter((provider) => provider.recommended).map((provider) => provider.id))
@@ -93,7 +94,9 @@ describe("LLM provider definitions", () => {
       .toEqual(["grok-4.5"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
       .toEqual(["gpt-5.4"]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")).toBeUndefined();
+    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels).toEqual([
+      "claude-sonnet-5",
+    ]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels).toEqual([
       "deepseek-v4-flash",
       "deepseek-v4-pro",
@@ -115,10 +118,12 @@ describe("LLM model catalog persistence", () => {
       enabled: true,
     });
     await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en")).resolves.toBeDefined();
-    expect(snapshot.providers.find((provider) => provider.id === "anthropic")).toMatchObject({
-      public: false,
-      recommended: false,
-      models: [],
+    const anthropicProvider = snapshot.providers.find((provider) => provider.id === "anthropic");
+    expect(anthropicProvider).toMatchObject({ public: true, recommended: false });
+    expect(anthropicProvider?.models.find((candidate) => candidate.model === "claude-sonnet-5")).toMatchObject({
+      candidate: true,
+      state: "compatible",
+      enabled: true,
     });
     const grok45 = { provider: "xai", model: "grok-4.5" } as const;
     expect(model(snapshot, grok45)).toMatchObject({

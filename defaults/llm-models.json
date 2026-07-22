@@ -35,6 +35,13 @@
       ]
     },
     {
+      "id": "anthropic",
+      "recommended": false,
+      "candidateModels": [
+        "claude-sonnet-5"
+      ]
+    },
+    {
       "id": "deepseek",
       "recommended": false,
       "candidateModels": [
@@ -107,18 +114,6 @@
     {
       "provider": "anthropic",
       "model": "claude-sonnet-4-6"
-    },
-    {
-      "provider": "anthropic",
-      "model": "claude-sonnet-5"
-    },
-    {
-      "provider": "anthropic",
-      "model": "claude-haiku-4-5"
-    },
-    {
-      "provider": "anthropic",
-      "model": "claude-opus-4-8"
     }
   ],
   "shippedTests": [
@@ -169,13 +164,14 @@
     {
       "provider": "anthropic",
       "model": "claude-sonnet-5",
-      "testedAt": "2026-07-19T01:19:13.976Z",
+      "testedAt": "2026-07-22T05:45:42.148Z",
       "protocolVersion": 1,
-      "testFingerprint": "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
+      "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
       "testedLanguages": [
-        "en"
+        "en",
+        "ru"
       ],
-      "note": "Strict direct-provider setup and Gameplay V1 probe passed after applying the model required temperature omission. The interrupted acceptance run is presentation evidence only and does not change compatibility."
+      "note": "certification-v1 passed clean in both languages (playable_with_recovery, quality high) after freezing an execution profile with repair/decision timeout headroom for slow turns."
     },
     {
       "provider": "deepseek",

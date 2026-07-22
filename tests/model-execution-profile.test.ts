@@ -32,6 +32,7 @@ describe("model execution profiles", () => {
       "openai/gpt-5.6-terra/direct",
       "deepseek/deepseek-v4-flash/direct",
       "deepseek/deepseek-v4-pro/direct",
+      "anthropic/claude-haiku-4-5/direct",
     ]);
     expect(() => ModelExecutionProfileDraftSchema.parse({
       ...DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0],

@@ -341,7 +341,10 @@ export class DungeonWebController {
     }
 
     if (url.pathname === "/api/llm/connections/test" && method === "POST") {
-      const results = await this.settings.testConnections();
+      const body = z.object({ provider: LlmProviderIdSchema.optional() }).parse(await readJsonBody(request));
+      const results = body.provider === undefined
+        ? await this.settings.testConnections()
+        : [await this.settings.testProviderConnection(body.provider)];
       sendJson(response, 200, { results, llm: await this.settings.llmPresentation() });
       return true;
     }

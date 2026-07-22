@@ -74,4 +74,15 @@ describe("model price estimates", () => {
     expect(modelCostRating({ estimated50TurnsUsd: 6.01 })).toBe("very-expensive");
     expect(modelCostRating(undefined)).toBeUndefined();
   });
+
+  it("pins Sonnet 5 to the top cost tier regardless of its price-only estimate", () => {
+    // Sonnet 5's real token usage exceeds the shared 50-turn basis, so the
+    // hand-pinned override wins over the formula (which would rate it lower).
+    const sonnet5 = estimateModelPrice("anthropic", "claude-sonnet-5");
+    expect(modelCostRating(sonnet5)).toBe("expensive");
+    expect(modelCostRating(sonnet5, "anthropic", "claude-sonnet-5")).toBe("very-expensive");
+    // A non-overridden model still resolves through the price formula.
+    expect(modelCostRating(estimateModelPrice("xai", "grok-4.5"), "xai", "grok-4.5"))
+      .toBe("moderate");
+  });
 });

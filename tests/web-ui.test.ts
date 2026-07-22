@@ -303,7 +303,7 @@ describe("web UI copy", () => {
     expect(setup).toContain('const primaryLanguage = "en"');
     expect(setup).toContain('createElement("details", "model-language-details")');
     expect(setup).toContain('statusBadge.dataset.llmAction = "test"');
-    expect(setup).toContain('statusBadge.title = `${protocolLabel} · ${t("retestModel")}`');
+    expect(setup).toContain('statusBadge.dataset.tooltip = `${protocolLabel} · ${t("retestModel")}`');
     expect(setup).not.toContain('["calibration", "legendCalibration"]');
     expect(styles).toContain(".model-protocol-retest");
     expect(setup).toContain('const summary = createElement("summary", "model-language-summary");');

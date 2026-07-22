@@ -19,8 +19,7 @@ const MODEL_SPEED: Readonly<Record<string, ModelSpeedRating>> = {
   "google/gemini-3.1-flash-lite": "fast",
   "openai/gpt-5.4": "fast",
   "anthropic/claude-sonnet-4.6": "slow",
-  "anthropic/claude-haiku-4.5": "average",
-  "anthropic/claude-opus-4.8": "slow",
+  "anthropic/claude-sonnet-5": "slow",
   "deepseek/deepseek-v4-flash": "average",
   // Pro's parallel EN/RU certification averaged about 16.5 seconds per
   // player-visible turn. This is a loaded estimate, not canonical latency.

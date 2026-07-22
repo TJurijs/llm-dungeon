@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../connection-probe.js";
 import { loadProjectEnv, reloadProjectEnv } from "../env.js";
 import { LANGUAGES, type LanguageCode } from "../language.js";
@@ -8,12 +10,15 @@ import {
   RECOMMENDED_MODEL_SELECTION,
   SUPPORTED_LLM_PROVIDER_DEFINITIONS,
   LlmModelCatalog,
+  LlmProviderIdSchema,
   ModelSelectionSchema,
   isRetiredCuratedModel,
   type LlmModelCatalogSnapshot,
   type LlmProviderId,
   type ModelSelection,
 } from "../llm-model-catalog.js";
+import { atomicWriteJson } from "../persistence/files.js";
+import { withSerializedFileLock } from "../persistence/lock.js";
 import type { ModelLanguageQualityRatings } from "../model-quality.js";
 import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
 import { ModelExecutionProfileStore } from "../model-execution-profile-store.js";
@@ -53,6 +58,40 @@ export type BrowserModelSelection = Pick<ProviderConfig, "provider" | "model">;
 export type ProviderConnectionTester = (provider: LlmProviderId, apiKey: string) => Promise<ProviderConnectionResult>;
 export type ProviderConnectionStatus = "unknown" | "connected" | "failed";
 
+/**
+ * Persisted connection-check cache. It records only a one-way SHA-256
+ * fingerprint of the tested key (never the key itself) so a passing or failing
+ * result survives a restart while the key is unchanged; a changed or missing
+ * key no longer matches its fingerprint and falls back to "unknown".
+ */
+const PersistedConnectionsSchema = z.object({
+  version: z.literal(1),
+  connections: z.array(z.object({
+    provider: LlmProviderIdSchema,
+    keyFingerprint: z.string().trim().min(1).max(200),
+    status: z.enum(["connected", "failed"]),
+  }).strict()),
+}).strict();
+
+/** Human-readable summary of the reasoning/thinking policy an active execution profile uses. */
+function describeReasoningPolicy(reasoning: FrozenModelExecutionProfile["reasoning"]): string {
+  switch (reasoning.policy) {
+    case "omitted":
+      return "No thinking/reasoning parameter sent";
+    case "chat_reasoning_effort":
+    case "openrouter_reasoning_effort":
+      return reasoning.value === "none" ? "Reasoning effort: none" : "Reasoning effort: low";
+    case "openrouter_reasoning_disabled":
+      return "Reasoning disabled";
+    case "deepseek_thinking_disabled":
+      return "Thinking disabled";
+    case "deepseek_thinking_for_repairs":
+      return "Thinking: repairs only";
+    case "gemini_thinking_low":
+      return "Thinking level: low";
+  }
+}
+
 export interface ModelSettingsOptions {
   environment?: NodeJS.ProcessEnv;
   providerFactory?: ProviderFactory;
@@ -85,9 +124,13 @@ export class ModelSettingsService {
   } | undefined;
   private readonly sessionKeys = new Map<LlmProviderId, string>();
   private readonly connectionStatuses = new Map<LlmProviderId, { keyFingerprint: string; status: Exclude<ProviderConnectionStatus, "unknown"> }>();
+  readonly connectionsPath: string;
+  private readonly connectionsLockPath: string;
 
   constructor(private readonly root: string, options: ModelSettingsOptions = {}) {
     this.providerConfigPath = path.join(root, "config", "provider.json");
+    this.connectionsPath = path.join(root, "config", "provider-connections.json");
+    this.connectionsLockPath = path.join(root, "config", ".provider-connections.lock");
     this.environment = options.environment ?? process.env;
     this.projectEnvKeys = loadProjectEnv(root, this.environment);
     this.providerFactory = options.providerFactory ?? ((config, environment, executionProfile) => createProvider(
@@ -109,6 +152,51 @@ export class ModelSettingsService {
       ? undefined
       : options.openAiModelsFetcher ?? (options.environment === undefined ? fetchOpenAiModels : undefined);
     this.connectionTester = options.connectionTester ?? checkProviderConnection;
+    this.loadConnectionStatuses();
+  }
+
+  /** Restore the persisted connection cache; a missing or malformed file starts empty. */
+  private loadConnectionStatuses(): void {
+    try {
+      const parsed = PersistedConnectionsSchema.parse(JSON.parse(readFileSync(this.connectionsPath, "utf8")));
+      for (const entry of parsed.connections) {
+        this.connectionStatuses.set(entry.provider, {
+          keyFingerprint: entry.keyFingerprint,
+          status: entry.status,
+        });
+      }
+    } catch {
+      // The cache is non-authoritative; a fresh test rewrites it.
+    }
+  }
+
+  private async persistConnectionStatuses(): Promise<void> {
+    const connections = [...this.connectionStatuses.entries()].map(([provider, value]) => ({
+      provider,
+      keyFingerprint: value.keyFingerprint,
+      status: value.status,
+    }));
+    await withSerializedFileLock(this.connectionsLockPath, "provider connections", () =>
+      atomicWriteJson(this.connectionsPath, { version: 1, connections }));
+  }
+
+  /**
+   * Fetch the latest `.env`, test a single provider's key for real, and persist
+   * the result keyed by its fingerprint so it survives a restart.
+   */
+  async testProviderConnection(providerId: LlmProviderId): Promise<ProviderConnectionResult> {
+    this.reloadEnvironment();
+    const definition = SUPPORTED_LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === providerId);
+    if (!definition) throw new WebApiError(404, `Unknown provider ${providerId}`);
+    const apiKey = this.effectiveEnvironment()[definition.envKey]?.trim();
+    if (!apiKey) throw new WebApiError(409, `Configure ${definition.envKey} in Settings, or add it to .env`);
+    const result = await this.connectionTester(providerId, apiKey);
+    this.connectionStatuses.set(providerId, {
+      keyFingerprint: this.keyFingerprint(apiKey),
+      status: result.status === "connected" ? "connected" : "failed",
+    });
+    await this.persistConnectionStatuses();
+    return result;
   }
 
   /** Build a provider without an execution profile, e.g. for compatibility probes. */
@@ -152,6 +240,7 @@ export class ModelSettingsService {
         status: result.status === "connected" ? "connected" : "failed",
       });
     }
+    await this.persistConnectionStatuses();
     return results;
   }
 
@@ -260,6 +349,7 @@ export class ModelSettingsService {
     evidence: ModelEvidenceReference[];
     certificationCurrent: Partial<Record<LanguageCode, boolean>>;
     profileFingerprint?: string;
+    reasoningDescription?: string;
   }> {
     const languages = Object.keys(LANGUAGES) as LanguageCode[];
     const route = selection.provider === "openrouter" ? "openrouter" : "direct";
@@ -272,6 +362,12 @@ export class ModelSettingsService {
       }, language),
     })));
     const first = assessments[0]?.assessment;
+    const activeProfile = first?.profileFingerprint === undefined
+      ? undefined
+      : await this.executionProfiles.get({ provider: selection.provider, model: selection.model, route });
+    const reasoningDescription = activeProfile !== undefined && activeProfile.fingerprint === first?.profileFingerprint
+      ? describeReasoningPolicy(activeProfile.reasoning)
+      : undefined;
     const eligible = assessments.length > 0
       && assessments.every(({ assessment }) => assessment.recommendation.eligible);
     const reasons = [...new Set(assessments.flatMap(({ assessment }) => assessment.recommendation.reasons))];
@@ -307,6 +403,7 @@ export class ModelSettingsService {
         assessment.certificationCurrent,
       ])),
       ...(first?.profileFingerprint === undefined ? {} : { profileFingerprint: first.profileFingerprint }),
+      ...(reasoningDescription === undefined ? {} : { reasoningDescription }),
     };
   }
 
@@ -361,6 +458,7 @@ export class ModelSettingsService {
         cost?: ModelCostRating;
         recommended: boolean;
         recommendationEligibility: ModelRecommendationEligibility;
+        reasoningDescription?: string;
         evidence: {
           compatibility: {
             testedAt: string;
@@ -399,7 +497,7 @@ export class ModelSettingsService {
           const pricing = this.modelPricing.estimate(provider.id, model.model);
           const speed = modelSpeedRating(provider.id, model.model);
           const speedEstimate = modelSpeedEstimate(provider.id, model.model);
-          const cost = modelCostRating(pricing);
+          const cost = modelCostRating(pricing, provider.id, model.model);
           const assessment = await this.presentedAssessment(model);
           return {
             id: model.model,
@@ -417,6 +515,9 @@ export class ModelSettingsService {
             recommended: provider.id === RECOMMENDED_MODEL_SELECTION.provider
               && model.model === RECOMMENDED_MODEL_SELECTION.model,
             recommendationEligibility: assessment.recommendationEligibility,
+            ...(assessment.reasoningDescription === undefined
+              ? {}
+              : { reasoningDescription: assessment.reasoningDescription }),
             evidence: {
               compatibility: model.test === undefined ? null : {
                 testedAt: model.test.testedAt,
