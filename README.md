@@ -36,7 +36,7 @@ while you play and press `Ctrl+C` to stop the app.
 ### Connect a model
 
 On first launch, open **Settings → LLM providers** and enter a provider API key.
-For the easiest start, use Google Gemini. `gemini-3.5-flash` is the recommended
+For the easiest start, use Google Gemini. `gemini-3.6-flash` is the recommended
 default model.
 
 A key entered in Settings remains only in server memory and is cleared when the
@@ -151,7 +151,7 @@ The curated models are:
 
 | Provider | Models |
 | --- | --- |
-| Google Gemini | `gemini-3.5-flash` (recommended), `gemini-3.1-flash-lite` |
+| Google Gemini | `gemini-3.6-flash` (recommended), `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
 | OpenRouter | `qwen/qwen3.7-plus` |
 | xAI | `grok-4.5` |
 | OpenAI | `gpt-5.4` |

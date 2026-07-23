@@ -26,6 +26,8 @@ describe("model execution profiles", () => {
       `${profile.key.provider}/${profile.key.model}/${profile.key.route}`)).toEqual([
       "gemini/gemini-3.5-flash/direct",
       "gemini/gemini-3.1-flash-lite/direct",
+      "gemini/gemini-3.6-flash/direct",
+      "gemini/gemini-3.5-flash-lite/direct",
       "openrouter/qwen/qwen3.7-plus/openrouter",
       "xai/grok-4.5/direct",
       "openai/gpt-5.4/direct",

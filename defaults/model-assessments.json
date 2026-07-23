@@ -224,6 +224,62 @@
           "recordedAt": "2026-07-19T22:46:47.355Z"
         }
       ]
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.6-flash",
+      "route": "direct",
+      "profileFingerprint": "7236eec0db8dc08b79907bd94f5c9c1f9eeb9df06879317d7beb27228502e521",
+      "calibrationReference": "playtests/calibration/2026-07-23T13-08-03-881Z-9719563c-5e5e-45db-ac0d-aac6227476c1",
+      "calibratedAt": "2026-07-23T13:08:27.843Z",
+      "certifications": [
+        {
+          "language": "en",
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
+          "reference": "playtests/runs/2026-07-23T13-12-20-414Z-c33d3661-e888-4dfd-a79d-4acf588ad3c3/jobs/job-001",
+          "recordedAt": "2026-07-23T13:17:25.453Z"
+        },
+        {
+          "language": "ru",
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
+          "reference": "playtests/runs/2026-07-23T13-12-20-414Z-c33d3661-e888-4dfd-a79d-4acf588ad3c3/jobs/job-002",
+          "recordedAt": "2026-07-23T13:17:45.632Z"
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "route": "direct",
+      "profileFingerprint": "a48c91c1bf7e47cdccf7f2efff14c14df075aa3edfbe36a58ff8d462360362c4",
+      "calibrationReference": "playtests/calibration/2026-07-23T13-10-16-915Z-695442f6-e0d0-43de-8339-dade16f61889",
+      "calibratedAt": "2026-07-23T13:10:29.133Z",
+      "certifications": [
+        {
+          "language": "en",
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
+          "reference": "playtests/runs/2026-07-23T13-18-39-108Z-067fd084-d2b3-4e85-aa78-6f6594369c03/jobs/job-001",
+          "recordedAt": "2026-07-23T13:20:25.790Z"
+        },
+        {
+          "language": "ru",
+          "technicalStatus": "unstable",
+          "recoveryCount": 1,
+          "qualityStatus": "awaiting_judgment",
+          "candidateMetricsHash": "a446d5e2077b2bb3e60457becd3ede37a64ad2cdf59011916ef1502d9eece06a",
+          "reference": "playtests/runs/2026-07-23T13-18-39-108Z-067fd084-d2b3-4e85-aa78-6f6594369c03/jobs/job-002",
+          "recordedAt": "2026-07-23T13:20:06.582Z"
+        }
+      ]
     }
   ]
 }

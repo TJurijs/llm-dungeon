@@ -15,6 +15,7 @@ export interface ModelSpeedEstimate {
 
 /** Rough responsiveness tiers measured during focused release evaluation runs. */
 const MODEL_SPEED: Readonly<Record<string, ModelSpeedRating>> = {
+  "google/gemini-3.6-flash": "fast",
   "google/gemini-3.5-flash": "fast",
   "google/gemini-3.1-flash-lite": "fast",
   "openai/gpt-5.4": "fast",
@@ -66,6 +67,21 @@ const MODEL_SPEED_ESTIMATES: Readonly<Record<string, ModelSpeedEstimate>> = {
       "2026-07-19T01-05-07-589Z-52f412a6-909f-43a4-a573-435ab72ef187",
       "2026-07-19T01:05:07.589Z",
     ),
+  },
+  "google/gemini-3.6-flash": {
+    ordinaryTurnSeconds: 12,
+    checkedTurnSeconds: 18,
+    sampleTurns: 20,
+    measuredAt: "2026-07-23",
+    latencyBasis: "canonical",
+    concurrency: 1,
+    evidence: {
+      source: "certification",
+      reference: "playtests/runs/2026-07-23T13-12-20-414Z-c33d3661-e888-4dfd-a79d-4acf588ad3c3",
+      packageId: "certification-v1",
+      packageVersion: "3",
+      recordedAt: "2026-07-23T13:12:20.414Z",
+    },
   },
   "google/gemini-3.5-flash": {
     ordinaryTurnSeconds: 12,

@@ -2,15 +2,17 @@
   "version": 1,
   "recommended": {
     "provider": "gemini",
-    "model": "gemini-3.5-flash"
+    "model": "gemini-3.6-flash"
   },
   "providers": [
     {
       "id": "gemini",
       "recommended": true,
       "candidateModels": [
+        "gemini-3.6-flash",
         "gemini-3.5-flash",
-        "gemini-3.1-flash-lite"
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite"
       ]
     },
     {
@@ -227,6 +229,29 @@
         "en",
         "ru"
       ]
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.6-flash",
+      "testedAt": "2026-07-23T13:11:28.407Z",
+      "protocolVersion": 1,
+      "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+      "testedLanguages": [
+        "en",
+        "ru"
+      ],
+      "note": "certification-v1 passed clean in both EN and RU (quality high, zero repairs)."
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "testedAt": "2026-07-23T13:11:27.761Z",
+      "protocolVersion": 1,
+      "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+      "testedLanguages": [
+        "en"
+      ],
+      "note": "Protocol-compatible in EN and RU, but shipped English-only: EN certification-v1 passed clean/high while RU was unstable (model-owned domain failures). Russian is withheld until it certifies stable."
     }
   ]
 }

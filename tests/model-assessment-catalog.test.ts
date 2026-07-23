@@ -139,11 +139,11 @@ describe("model assessment catalog", () => {
     })).rejects.toThrow("Only certification-v1");
   });
 
-  it("keeps Gemini 3.5 Flash product-recommended with shipped certification evidence", async () => {
+  it("keeps Gemini 3.6 Flash product-recommended with shipped certification evidence", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-gemini-"));
     const catalog = new ModelAssessmentCatalog(root);
     const effective = await catalog.effective(
-      { provider: "gemini", model: "gemini-3.5-flash", route: "direct" },
+      { provider: "gemini", model: "gemini-3.6-flash", route: "direct" },
       "ru",
     );
     expect(effective.recommendation).toMatchObject({

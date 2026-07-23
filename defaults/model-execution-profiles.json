@@ -68,6 +68,20 @@
         "lockedResolutionMs": 120000,
         "repairMs": 240000
       }
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.6-flash",
+      "route": "direct",
+      "calibratedAt": "2026-07-23T13:08:27.843Z",
+      "evidenceRef": "playtests/calibration/2026-07-23T13-08-03-881Z-9719563c-5e5e-45db-ac0d-aac6227476c1"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "route": "direct",
+      "calibratedAt": "2026-07-23T13:10:29.133Z",
+      "evidenceRef": "playtests/calibration/2026-07-23T13-10-16-915Z-695442f6-e0d0-43de-8339-dade16f61889"
     }
   ]
 }

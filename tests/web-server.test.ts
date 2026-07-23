@@ -341,7 +341,7 @@ describe("multi-campaign Web server", () => {
     expect(status.llm.providers.find((provider: any) => provider.id === "anthropic").models
       .map((model: any) => model.id)).toEqual(["claude-sonnet-5"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .map((model: any) => model.id)).toEqual(["gemini-3.5-flash", "gemini-3.1-flash-lite"]);
+      .map((model: any) => model.id)).toEqual(["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "openrouter").models
       .map((model: any) => model.id)).toEqual([
         "qwen/qwen3.7-plus",
@@ -363,7 +363,7 @@ describe("multi-campaign Web server", () => {
     const { base } = await start(root, { environment: {} });
     const status = await json(base, "/api/status");
     const gemini = status.llm.providers.find((provider: any) => provider.id === "gemini");
-    const recommended = gemini.models.find((model: any) => model.id === "gemini-3.5-flash");
+    const recommended = gemini.models.find((model: any) => model.id === "gemini-3.6-flash");
 
     expect(gemini).toMatchObject({ recommended: true, keyPresent: false, keySource: "missing" });
     expect(recommended).toMatchObject({
@@ -375,7 +375,7 @@ describe("multi-campaign Web server", () => {
       available: false,
       testedLanguages: ["en", "ru"],
       adapterStatus: "calibrated",
-      technicalStatus: { en: "clean", ru: "playable_with_recovery" },
+      technicalStatus: { en: "clean", ru: "clean" },
       quality: { en: "high", ru: "high" },
       recommendationEligibility: {
         eligible: true,
@@ -387,7 +387,7 @@ describe("multi-campaign Web server", () => {
         certificationCurrent: { en: true, ru: true },
       },
     });
-    expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.5-flash" });
+    expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
   });
 
   it("projects calibrated certification evidence without letting the browser rewrite it", async () => {

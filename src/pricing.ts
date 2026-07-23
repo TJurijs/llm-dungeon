@@ -44,7 +44,9 @@ const OPENROUTER_PRICE_TIMEOUT_MS = 5_000;
 
 /** Standard per-token rates returned by OpenRouter's public model catalog. */
 const OPENROUTER_TOKEN_PRICES: Readonly<Record<string, TokenPrice>> = {
+  "google/gemini-3.6-flash": { inputPerMillion: 1.5, outputPerMillion: 7.5 },
   "google/gemini-3.5-flash": { inputPerMillion: 1.5, outputPerMillion: 9 },
+  "google/gemini-3.5-flash-lite": { inputPerMillion: 0.3, outputPerMillion: 2.5 },
   "google/gemini-3.1-flash-lite": { inputPerMillion: 0.25, outputPerMillion: 1.5 },
   "openai/gpt-5.6-sol": { inputPerMillion: 5, outputPerMillion: 30 },
   "openai/gpt-5.6-luna": { inputPerMillion: 1, outputPerMillion: 6 },

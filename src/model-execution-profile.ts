@@ -152,7 +152,7 @@ function draft(
 
 /** Uncalibrated starting variants only; these are not certification evidence. */
 export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProfileDraft[] = [
-  ...["gemini-3.5-flash", "gemini-3.1-flash-lite"].map((model) => draft(
+  ...["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash-lite"].map((model) => draft(
     { provider: "gemini", model, route: "direct" },
     { mode: "projected_strict_json_schema", projection: "gemini_compatible_v1" },
     { policy: "fixed", value: 0.8 },

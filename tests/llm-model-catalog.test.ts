@@ -89,7 +89,7 @@ describe("LLM provider definitions", () => {
       "qwen/qwen3.7-plus",
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels)
-      .toEqual(["gemini-3.5-flash", "gemini-3.1-flash-lite"]);
+      .toEqual(["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "xai")?.candidateModels)
       .toEqual(["grok-4.5"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
@@ -101,12 +101,12 @@ describe("LLM provider definitions", () => {
       "deepseek-v4-flash",
       "deepseek-v4-pro",
     ]);
-    expect(RECOMMENDED_MODEL_SELECTION).toEqual({ provider: "gemini", model: "gemini-3.5-flash" });
+    expect(RECOMMENDED_MODEL_SELECTION).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
   });
 });
 
 describe("LLM model catalog persistence", () => {
-  it("ships evaluated models as current while keeping Gemini 3.5 Flash as default", async () => {
+  it("ships evaluated models as current while keeping the recommended Gemini flash as default", async () => {
     const root = await temporaryProject();
     const registry = catalog(root, { fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT, protocolVersion: 1 });
 
