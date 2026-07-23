@@ -13,6 +13,11 @@ sessions.
 The app supports multiple independent campaigns and gameplay in English and
 Russian.
 
+**New here?** You don't have to invent anything to start. Pick a **pre-shipped
+campaign seed** — a ready-made world, scenario, and character — and you're
+playing in about a minute. A hand-crafted **Dark Sun — Sealed Oasis** seed ships
+with the app; see [Create a campaign](#create-a-campaign).
+
 ## Quick start
 
 You need [Node.js 22 or newer](https://nodejs.org/), npm, and an API key from at
@@ -64,12 +69,27 @@ actual billing, free tiers, and limits are controlled by each provider.
 
 ### Create a campaign
 
+**The fastest way to play** — start from a pre-shipped seed:
+
 1. Select **New campaign**.
-2. Enter a premise, character concept, and gameplay language.
+2. Under **Campaign seed**, pick a ready-made scenario. The shipped **Dark Sun —
+   Sealed Oasis** drops you into a walled desert oasis whose only well is turning
+   to ash and whose panicked rulers have just sealed the gates with you inside.
+   Picking it fills in the world, opening, and character for you.
+3. Select **Generate preview**, then **Accept and begin**.
+4. Describe your character's action and select **Send**.
+
+That's it — you're playing. Seeds are only a starting point: every field stays
+editable, and a seed plays in whatever gameplay language you choose.
+
+**Prefer your own story?** Skip the seed and write your own instead:
+
+1. Select **New campaign**.
+2. Enter a premise and character concept — or leave them blank for a classic
+   opening — and choose a gameplay language.
 3. Optionally choose a model or customize **World and DM style**.
-4. Select **Generate preview**.
-5. Accept, edit, or regenerate the preview.
-6. Describe your character's action and select **Send**.
+4. Select **Generate preview**, then accept, edit, or regenerate it.
+5. Describe your character's action and select **Send**.
 
 Use `Ctrl+Enter` or `Cmd+Enter` to send from the keyboard. Campaigns appear in
 the sidebar and resume from the same state after restarting the app.
