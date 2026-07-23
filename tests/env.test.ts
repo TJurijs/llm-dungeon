@@ -54,4 +54,20 @@ describe("project .env loading", () => {
     });
     expect(environment.DEEPSEEK_API_KEY).toBeUndefined();
   });
+
+  it("picks up a .env key on reload even when a launcher shadowed it at startup", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-env-shadow-"));
+    // The launcher exported the variable (empty) into the process, so the
+    // boot-time load never sourced it from .env.
+    const environment: NodeJS.ProcessEnv = { XAI_API_KEY: "" };
+    await writeFile(path.join(root, ".env"), "XAI_API_KEY=\n", "utf8");
+    const previous = loadProjectEnv(root, environment);
+    expect(previous).toEqual([]);
+    expect(environment.XAI_API_KEY).toBe("");
+
+    // The user adds the real key on disk and reloads without restarting.
+    await writeFile(path.join(root, ".env"), "XAI_API_KEY=real-key\n", "utf8");
+    expect(reloadProjectEnv(root, environment, previous)).toEqual(["XAI_API_KEY"]);
+    expect(environment.XAI_API_KEY).toBe("real-key");
+  });
 });

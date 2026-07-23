@@ -110,7 +110,7 @@
               <ul class="provider-onboarding-guide">
                 <li data-i18n="providerOnboardingRecommendation">Recommended: Google Gemini with gemini-3.6-flash.</li>
                 <li data-i18n="providerOnboardingSupported">Available for new selection: Google Gemini, OpenRouter, xAI, OpenAI, and DeepSeek.</li>
-                <li data-i18n="providerOnboardingEnv">Save a key in ./.env at the repository root, then restart the app.</li>
+                <li data-i18n="providerOnboardingEnv">Save a key in ./.env at the repository root, then reload it in Settings.</li>
                 <li data-i18n="providerOnboardingSession">Or use the provider's ••• menu in Settings to enter a temporary session key. It stays only in server memory until restart.</li>
               </ul>
             </div>
@@ -282,6 +282,12 @@
               <header class="llm-settings-header">
                 <h2 id="llm-settings-title" tabindex="-1" data-i18n="llmProviders">LLM providers</h2>
                 <div class="llm-header-actions">
+                  <button id="reload-env" class="icon-button llm-header-action" type="button" data-i18n-title="reloadEnvHint" data-i18n-aria-label="reloadEnvHint">
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M4 10a6 6 0 0 1 10.2-4.24M16 10a6 6 0 0 1-10.2 4.24"></path>
+                      <path d="M14.6 3.2v3.1h-3.1M5.4 16.8v-3.1h3.1"></path>
+                    </svg>
+                  </button>
                   <div id="llm-status-legend" class="model-status-legend" aria-label="Model status legend"></div>
                 </div>
               </header>

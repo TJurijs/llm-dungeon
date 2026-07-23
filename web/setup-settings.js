@@ -834,6 +834,16 @@ export function createSetupSettingsController(dependencies) {
     }).catch((error) => showToast(error.message, "error"));
   }
 
+  async function handleReloadEnvironment() {
+    const button = $("#reload-env");
+    await withIconButtonBusy(button, async () => {
+      await api("/api/llm/environment/reload", { method: "POST", body: "{}" });
+      await refreshStatus({ ensureFresh: true });
+      renderLlmConfiguration(true);
+      showToast(t("environmentReloaded"), "success");
+    }).catch((error) => showToast(error.message, "error"));
+  }
+
   async function withIconButtonBusy(button, operation) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
@@ -917,6 +927,7 @@ export function createSetupSettingsController(dependencies) {
       $("#campaign-setup-form").hidden = false;
       $("#premise").focus();
     });
+    $("#reload-env").addEventListener("click", handleReloadEnvironment);
     $("#llm-providers").addEventListener("click", handleLlmAction);
     $("#llm-providers").addEventListener("click", handleProviderKeyClear);
     $("#llm-providers").addEventListener("click", handleConnectionCheck);
