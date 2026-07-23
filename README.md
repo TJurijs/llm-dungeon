@@ -20,8 +20,15 @@ with the app; see [Create a campaign](#create-a-campaign).
 
 ## Quick start
 
-You need [Node.js 22 or newer](https://nodejs.org/), npm, and an API key from at
-least one supported LLM provider.
+Before you start, make sure you have:
+
+- **[Node.js 22 or newer](https://nodejs.org/)** — npm is bundled with it, so
+  this is the only download needed for that part.
+- **[Git](https://git-scm.com/downloads)** — to download this project.
+- **An API key from an LLM provider.** For the easiest start, get a free key
+  from **[Google AI Studio](https://aistudio.google.com/apikey)** (sign in,
+  select "Create API key", then copy it — you'll paste it into the app in a
+  moment). Any other [supported provider](#change-models) works too.
 
 ```bash
 git clone https://github.com/TJurijs/llm-dungeon.git

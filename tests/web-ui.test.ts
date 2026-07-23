@@ -105,8 +105,8 @@ describe("web UI copy", () => {
     expect(copy).toContain('providerOnboardingTitle: "Welcome to llm-dungeon"');
     expect(UI_COPY.en.providerOnboardingSupported).toContain("xAI");
     expect(UI_COPY.ru.providerOnboardingSupported).toContain("xAI");
-    expect(UI_COPY.en.providerOnboardingSupported).not.toContain("Anthropic");
-    expect(UI_COPY.ru.providerOnboardingSupported).not.toContain("Anthropic");
+    expect(UI_COPY.en.providerOnboardingSupported).toContain("Anthropic");
+    expect(UI_COPY.ru.providerOnboardingSupported).toContain("Anthropic");
     expect(UI_COPY.en.openSettings).toBe("Open Settings");
   });
 

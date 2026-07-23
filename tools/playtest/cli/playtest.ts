@@ -444,8 +444,8 @@ export class PlaytestCli {
     const playerProvider = ProviderConfigSchema.shape.provider.parse(options.playerProvider ?? "gemini");
     const playerModel = options.playerModel
       ?? (playerProvider === "gemini"
-        ? "gemini-3.1-flash-lite"
-        : playerProvider === "openrouter" ? "google/gemini-3.1-flash-lite" : undefined);
+        ? "gemini-3.5-flash-lite"
+        : playerProvider === "openrouter" ? "google/gemini-3.5-flash-lite" : undefined);
     if (!playerModel) throw new Error("--player-model is required for the selected player provider");
     await this.run("campaign-autoplay-v1", {
       repetitions: options.sessions ?? 1,

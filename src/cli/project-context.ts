@@ -69,7 +69,7 @@ export class CliProjectContext {
     const model = takePrompt(
       await p.text({
         message: "Model ID",
-        placeholder: "google/gemini-3.5-flash (recommended)",
+        placeholder: "google/gemini-3.6-flash (recommended)",
         validate: (value) => (value.trim() ? undefined : "A model ID is required"),
       }),
     );
@@ -83,10 +83,10 @@ export class CliProjectContext {
       maxOutputTokens: 4000,
     });
     await this.assertTerminalModelAvailable(config);
-    if (providerModel === "gemini-3.5-flash" || providerModel === "google/gemini-3.5-flash") {
-      p.log.success("gemini-3.5-flash is the playtested, recommended DM model.");
-    } else if (providerModel === "gemini-3.1-flash-lite" || providerModel === "google/gemini-3.1-flash-lite") {
-      p.log.info("gemini-3.1-flash-lite is playtested as the simulated player; the DM baseline uses gemini-3.5-flash.");
+    if (providerModel === "gemini-3.6-flash" || providerModel === "google/gemini-3.6-flash") {
+      p.log.success("gemini-3.6-flash is the playtested, recommended DM model.");
+    } else if (providerModel === "gemini-3.5-flash-lite" || providerModel === "google/gemini-3.5-flash-lite") {
+      p.log.info("gemini-3.5-flash-lite is playtested and certified bilingual; a fast, low-cost alternative to the DM baseline.");
     } else {
       p.log.warn("This model is unverified. It may reject the enforced schemas or behave differently in play.");
     }
