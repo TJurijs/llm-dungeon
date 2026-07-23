@@ -34,6 +34,7 @@ export const ProfileIdSchema = z.enum([
   "rule-challenger",
   "long-term-planner",
   "chaotic",
+  "in-character",
 ]);
 
 export const PLAYER_PROFILES = [
@@ -46,6 +47,7 @@ export const PLAYER_PROFILES = [
   { id: "rule-challenger", instruction: "Occasionally attempt impossible actions or claim an unowned item to test whether the world resists unsupported assertions." },
   { id: "long-term-planner", instruction: "Form a durable goal, track promises, and revisit people or places affected by earlier choices." },
   { id: "chaotic", instruction: "Act adversarially and sometimes incoherently: test unsupported possessions, contradictions, malformed input, impossible actions, and recovery after a valid action." },
+  { id: "in-character", instruction: "Play strictly as the character your own traits, competencies, temperament, and durable facts establish; let goals and tactics grow from who this character is rather than from any external playstyle archetype." },
 ] as const satisfies ReadonlyArray<{ id: z.infer<typeof ProfileIdSchema>; instruction: string }>;
 
 export type ProfileId = z.infer<typeof ProfileIdSchema>;
@@ -465,6 +467,7 @@ export const PlaytestRunConfigSchema = z.object({
   ),
   turns: z.number().int().positive().optional(),
   seed: z.string().trim().min(1).optional(),
+  scenarioSeed: z.string().trim().regex(/^[a-z][a-z0-9-]*$/, "scenario seed id must be lowercase kebab-case").optional(),
   tuningVariable: z.string().trim().max(500)
     .regex(/^(model|adapter|prompt):\s*\S.*$/u, "must declare model:, adapter:, or prompt: followed by one variable")
     .optional(),

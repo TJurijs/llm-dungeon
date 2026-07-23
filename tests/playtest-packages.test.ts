@@ -57,8 +57,8 @@ describe("versioned playtest packages", () => {
     expect(() => getPlaytestPackage("missing-v1")).toThrow("Unknown playtest package");
   });
 
-  it("preserves all nine behavior profiles for autoplay and stress use", () => {
-    expect(ProfileIdSchema.options).toHaveLength(9);
+  it("preserves all ten behavior profiles for autoplay and stress use", () => {
+    expect(ProfileIdSchema.options).toHaveLength(10);
     expect(PLAYER_PROFILES.map((profile) => profile.id)).toEqual([
       "curious-explorer",
       "social-manipulator",
@@ -69,6 +69,7 @@ describe("versioned playtest packages", () => {
       "rule-challenger",
       "long-term-planner",
       "chaotic",
+      "in-character",
     ]);
     expect(CAMPAIGN_AUTOPLAY_PACKAGE.playerProfiles).toEqual(PLAYER_PROFILES.map((profile) => profile.id));
     expect(PERSISTENCE_SOAK_PACKAGE.playerProfiles).toEqual(["long-term-planner"]);

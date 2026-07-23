@@ -95,6 +95,8 @@ export function createSetupSettingsController(dependencies) {
   let setupBusy = false;
   let llmRenderSignature = "";
   const testingModels = new Set();
+  let scenarioSeeds = [];
+  let selectedScenarioSeedId = null;
 
   function modelTestKey(provider, model, language) {
     return `${provider}\u0000${model}\u0000${language || ""}`;
@@ -220,8 +222,44 @@ export function createSetupSettingsController(dependencies) {
     const requestId = ++setupWorldSequence;
     const body = await api(`/api/config/world?language=${encodeURIComponent(language)}`);
     if (requestId === setupWorldSequence && $("#setup-language").value === language) {
-      $("#setup-world").value = body.markdown;
+      $("#setup-world").placeholder = body.markdown;
     }
+  }
+
+  function renderScenarioSeedList() {
+    const picker = $("#scenario-seed-picker");
+    const list = $("#scenario-seed-list");
+    picker.hidden = scenarioSeeds.length === 0;
+    list.replaceChildren(...scenarioSeeds.map((seed) => {
+      const button = createElement("button", "scenario-seed-button", seed.title);
+      button.type = "button";
+      button.dataset.seedId = seed.id;
+      button.setAttribute("aria-pressed", String(seed.id === selectedScenarioSeedId));
+      return button;
+    }));
+  }
+
+  async function loadScenarioSeeds() {
+    selectedScenarioSeedId = null;
+    try {
+      const body = await api("/api/scenario-seeds");
+      scenarioSeeds = Array.isArray(body.seeds) ? body.seeds : [];
+    } catch {
+      scenarioSeeds = [];
+    }
+    renderScenarioSeedList();
+  }
+
+  async function applyScenarioSeed(id) {
+    const language = $("#setup-language").value;
+    const seed = await api(`/api/scenario-seeds/${encodeURIComponent(id)}?language=${encodeURIComponent(language)}`).then((body) => body.seed);
+    $("#premise").value = seed.premise;
+    $("#character").value = seed.character;
+    $("#setup-world").value = seed.worldRules;
+    selectedScenarioSeedId = seed.id;
+    renderScenarioSeedList();
+    $("#campaign-preview").hidden = true;
+    invalidateDraft();
   }
 
   async function initializeSetup() {
@@ -230,6 +268,7 @@ export function createSetupSettingsController(dependencies) {
     refreshSetupPlaceholders();
     syncSetupModelControls({ resetToDefault: true });
     await loadSetupWorld($("#setup-language").value);
+    await loadScenarioSeeds();
   }
 
   function begin() {
@@ -238,8 +277,8 @@ export function createSetupSettingsController(dependencies) {
     $("#campaign-preview").hidden = true;
     $("#premise").value = "";
     $("#character").value = "";
+    $("#setup-world").value = "";
     $("#setup-model-settings").open = false;
-    $("#setup-world-settings").open = false;
     applyLocale(getStatus().language || "en");
     if (setupBusy) return;
     runSetupOperation($("#generate-campaign"), t("working"), initializeSetup)
@@ -847,6 +886,11 @@ export function createSetupSettingsController(dependencies) {
     $("#campaign-setup-form").addEventListener("submit", (event) => { event.preventDefault(); generate(); });
     $("#campaign-setup-form").addEventListener("input", invalidateDraft);
     $("#campaign-setup-form").addEventListener("change", invalidateDraft);
+    $("#scenario-seed-list").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-seed-id]");
+      if (!button) return;
+      applyScenarioSeed(button.dataset.seedId).catch((error) => showToast(error.message, "error"));
+    });
     $("#setup-provider").addEventListener("change", () => {
       syncSetupModels($("#setup-provider").value);
       updateSetupModelWarning();
@@ -857,6 +901,9 @@ export function createSetupSettingsController(dependencies) {
       refreshSetupPlaceholders();
       syncSetupModelControls();
       loadSetupWorld($("#setup-language").value).catch((error) => showToast(error.message, "error"));
+      if (selectedScenarioSeedId !== null) {
+        applyScenarioSeed(selectedScenarioSeedId).catch((error) => showToast(error.message, "error"));
+      }
     });
     $("#accept-campaign").addEventListener("click", accept);
     $("#regenerate-campaign").addEventListener("click", () => {

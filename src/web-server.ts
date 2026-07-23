@@ -12,6 +12,7 @@ import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
 import { LlmProviderIdSchema, ModelSelectionSchema } from "./llm-model-catalog.js";
 import type { OpenAiModelsFetcher } from "./openai-model-access.js";
 import { parseQuestionCommand } from "./question.js";
+import { listScenarioSeeds, loadScenarioSeed } from "./scenario-seeds.js";
 import {
   ProviderConfigSchema,
   SafeIdSchema,
@@ -413,6 +414,20 @@ export class DungeonWebController {
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       await saveWorldProfile(this.root, language, body.markdown);
       sendJson(response, 200, { saved: true, language, source: "localized_override" });
+      return true;
+    }
+
+    if (url.pathname === "/api/scenario-seeds" && method === "GET") {
+      sendJson(response, 200, { seeds: await listScenarioSeeds(this.root) });
+      return true;
+    }
+
+    if (url.pathname.startsWith("/api/scenario-seeds/") && method === "GET") {
+      const id = decodeURIComponent(url.pathname.slice("/api/scenario-seeds/".length));
+      const configured = (await loadAppConfig(this.root)).language;
+      const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
+      const seed = await loadScenarioSeed(this.root, id, language);
+      sendJson(response, 200, { seed });
       return true;
     }
     return false;

@@ -133,6 +133,7 @@ export interface PlaytestRunOptions {
   maxCost?: number | undefined;
   maxDurationMinutes?: number | undefined;
   seed?: string | undefined;
+  scenarioSeed?: string | undefined;
   player?: string | undefined;
   playerProfile?: ProfileId | undefined;
   judge?: string | undefined;
@@ -499,6 +500,7 @@ export class PlaytestCli {
       languages,
       ...(options.turns ? { turns: options.turns } : {}),
       ...(options.seed ? { seed: options.seed } : {}),
+      ...(options.scenarioSeed ? { scenarioSeed: options.scenarioSeed } : {}),
       ...(options.tuningVariable ? { tuningVariable: options.tuningVariable } : {}),
       repetitions: options.repetitions ?? 1,
       globalWorkerLimit: workers,

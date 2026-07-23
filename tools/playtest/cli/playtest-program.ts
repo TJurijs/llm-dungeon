@@ -49,6 +49,7 @@ function addPlaytestRunOptions(command: Command, matrix = false): Command {
     .requiredOption("--max-cost <usd>", "hard aggregate cost ceiling", positiveNumber)
     .option("--max-duration-minutes <minutes>", "active execution time ceiling", positiveNumber)
     .option("--seed <seed>", "deterministic roll seed for seeded packages")
+    .option("--scenario-seed <id>", "shipped scenario-seed id to start a generated package from (defaults/scenario-seeds/<id>)")
     .option("--player <target>", "fixed player-driver provider:model[@route]")
     .option("--player-profile <profile>", "fixed simulated-player profile")
     .option("--judge <target>", "separate judge provider:model[@route]; defaults to Gemini 3.5 Flash")

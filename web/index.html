@@ -172,11 +172,21 @@
         </header>
         <div class="form-scroll">
           <form id="campaign-setup-form" class="settings-card setup-card">
+            <div id="scenario-seed-picker" class="scenario-seed-picker" hidden>
+              <span class="field-label" data-i18n="scenarioSeed">Campaign seed</span>
+              <div id="scenario-seed-list" class="scenario-seed-list" role="group"></div>
+              <p class="field-hint" data-i18n="scenarioSeedHint">Prefills premise, character, and world below. You can still edit them.</p>
+            </div>
+
             <label for="premise" data-i18n="premise">Premise or scenario</label>
             <textarea id="premise" rows="5" maxlength="100000"></textarea>
 
             <label for="character" data-i18n="characterConcept">Character concept</label>
             <textarea id="character" rows="5" maxlength="100000"></textarea>
+
+            <label for="setup-world" data-i18n="worldStyle">World and DM style</label>
+            <textarea id="setup-world" rows="10" maxlength="500000" spellcheck="false"></textarea>
+            <p class="field-hint" data-i18n="worldSetupHint">Leave blank to use the greyed default. Anything you type applies only to this campaign.</p>
 
             <label for="setup-language" data-i18n="language">Language</label>
             <select id="setup-language"></select>
@@ -194,15 +204,6 @@
                 </div>
               </div>
               <p class="field-hint" data-i18n="modelSetupHint">Prefilled from the global default. This model generates the opening and can be changed later.</p>
-            </details>
-
-            <details id="setup-world-settings" class="advanced-settings">
-              <summary data-i18n="worldStyle">World and DM style</summary>
-              <div class="advanced-content">
-                <label class="sr-only" for="setup-world" data-i18n="worldStyle">World and DM style</label>
-                <textarea id="setup-world" rows="14" maxlength="500000" spellcheck="false"></textarea>
-                <p class="field-hint" data-i18n="worldSetupHint">Prefilled from global defaults. Changes apply only to this campaign.</p>
-              </div>
             </details>
 
             <p id="setup-key-warning" class="inline-notice warning" hidden></p>

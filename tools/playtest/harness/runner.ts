@@ -21,6 +21,7 @@ import { playtestPlayerPrompt, playtestPlayerSystemPrompt } from "../prompts/pla
 import { inferTokenPrice } from "../../../src/pricing.js";
 import { StateStore } from "../../../src/store.js";
 import type { LlmProvider, TurnResult } from "../../../src/types.js";
+import { loadScenarioSeed } from "../../../src/scenario-seeds.js";
 import { resolveWorldProfile } from "../../../src/world-profile.js";
 import {
   CandidateTechnicalSnapshotSchema,
@@ -426,6 +427,9 @@ export class PlaytestRunner {
     }
     if (config.player && !playtestPackage.playerProfiles.includes(config.player.profile)) {
       throw new Error(`Player profile ${config.player.profile} is not available in ${playtestPackage.id}`);
+    }
+    if (config.scenarioSeed && playtestPackage.startingState.kind !== "generated") {
+      throw new Error(`--scenario-seed requires a package with a generated starting state; ${playtestPackage.id} uses a canonical one`);
     }
     if (playtestPackage.purpose === "certification" && config.judge.policy !== "final") {
       throw new Error("certification-v1 requires one separate final judge call");
@@ -890,9 +894,12 @@ export class PlaytestRunner {
           await atomicWriteJson(continuationStatePath, TerminalContinuationStateSchema.parse(continuationState));
         }
       } else if (!(await engine.hasCurrentGame())) {
+        const seed = manifest.config.scenarioSeed
+          ? await loadScenarioSeed(this.projectRoot, manifest.config.scenarioSeed, job.language)
+          : undefined;
         const worldRules = playtestPackage.startingState.kind === "canonical"
           ? playtestPackage.startingState.worldRules[job.language]
-          : await this.worldRules(job.language);
+          : (seed?.worldRules ?? await this.worldRules(job.language));
         if (!worldRules) throw new Error(`Playtest package has no ${job.language} world rules`);
         if (playtestPackage.startingState.kind === "canonical") {
           const setup = playtestPackage.startingState.setups[job.language];
@@ -900,8 +907,8 @@ export class PlaytestRunner {
           opening = setup.openingNarration;
           await engine.createGame({ setup, worldRules, language: job.language });
         } else {
-          const premise = playtestPackage.startingState.premise[job.language];
-          const baseCharacter = playtestPackage.startingState.character[job.language];
+          const premise = seed?.premise ?? playtestPackage.startingState.premise[job.language];
+          const baseCharacter = seed?.character ?? playtestPackage.startingState.character[job.language];
           if (!premise || !baseCharacter) throw new Error(`Generated package has no ${job.language} setup text`);
           const selectedProfile = job.player?.profile
             ? PLAYER_PROFILES.find((item) => item.id === job.player?.profile)

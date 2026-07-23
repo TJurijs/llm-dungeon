@@ -47,7 +47,8 @@ describe("web UI copy", () => {
     expect(html).toContain('id="chat-log" class="chat-log" role="log"');
     expect(html).toContain('id="campaign-setup-form"');
     expect(html).not.toContain('id="setup-advanced"');
-    expect(html).toContain('id="setup-world-settings" class="advanced-settings"');
+    expect(html).not.toContain('id="setup-world-settings"');
+    expect(html).toContain('<label for="setup-world" data-i18n="worldStyle">');
     expect(html).toContain('id="setup-world"');
     expect(html).not.toContain('id="setup-temperature"');
     expect(html).not.toContain('id="setup-max-tokens"');

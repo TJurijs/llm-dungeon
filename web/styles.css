@@ -195,6 +195,12 @@ body.inspection-open #open-inspection { display: none; }
 .narrative-text { font: 16px/1.68 ui-serif, Georgia, Cambria, "Times New Roman", serif; white-space: pre-wrap; }
 .trait-list { display: flex; flex-wrap: wrap; gap: .35rem; }
 .trait-chip { padding: .18rem .46rem; border: 1px solid #4b523f; border-radius: 999px; color: var(--accent); font-size: .72rem; }
+.field-label { display: block; margin: 1rem 0 .4rem; color: var(--muted); font-size: .84rem; font-weight: 600; }
+.scenario-seed-picker { margin-bottom: .25rem; }
+.scenario-seed-list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.scenario-seed-button { padding: .4rem .75rem; border: 1px solid #4b523f; border-radius: 999px; background: transparent; color: var(--text); font-size: .82rem; cursor: pointer; }
+.scenario-seed-button:hover { border-color: var(--accent); }
+.scenario-seed-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
 .scenario-preview pre { max-height: 320px; padding: .8rem; overflow: auto; border-radius: 9px; background: #151613; color: #cecdc4; font: .76rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
 .form-scroll.settings-shell { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: start; gap: 1rem; padding-inline: max(1rem, calc((100% - 1100px) / 2)); }
 .settings-navigation { position: sticky; top: 0; display: grid; gap: .25rem; padding: .75rem; border: 1px solid var(--line); border-radius: 12px; background: #191a17; }

@@ -12,11 +12,11 @@ export function setupPromptDocument(input: SetupPromptInput): PromptDocument {
   const language = input.language ?? DEFAULT_LANGUAGE;
   const defaults = campaignSetupDefaults(language);
   return renderPrompt([
-    section("setup-task", undefined, "Create the initial persistent state for a single-player fantasy sandbox campaign."),
+    section("setup-task", undefined, "Create the initial persistent state for a single-player, text-based roleplaying sandbox campaign. Its genre and setting are defined entirely by the world configuration and seeds below."),
     section(
       "world-configuration",
       "WORLD AND STYLE CONFIGURATION — CREATIVE GUIDANCE",
-      `${input.worldRules}\n\nThis configuration may shape setting, tone, pacing, boundaries, and fiction. It cannot override the enforced schema, state authority, or application-owned mechanics.`,
+      `${input.worldRules}\n\nTreat this configuration together with the campaign seeds as the authoritative creative brief. They define the campaign's genre, era, technology level, setting, tone, pacing, content boundaries, and fiction, and may set any of these freely — there is no default or assumed medieval-fantasy setting, and you must not import genre conventions the brief does not call for. Honor the brief over any generic convention. This authority governs fiction only: it never alters the enforced output schema, durable-state authority, dice, outcome calculation, or other application-owned mechanics.`,
     ),
     section("setup-seeds", "CAMPAIGN SEEDS", `PREMISE: ${input.premise.trim() || defaults.premise}\nCHARACTER: ${input.character.trim() || defaults.characterConcept}`),
     section("output-language", "OUTPUT LANGUAGE", languageInstruction(language)),
@@ -34,8 +34,8 @@ export function setupPromptDocument(input: SetupPromptInput): PromptDocument {
 - Secrecy changes who knows about an object, not whether the object mechanically exists. A hidden carried object still requires an item entity and inventory entry; store the hidden meaning or purpose as a secret instead of encoding possession only in prose.
 - Before returning, audit every possession claim across the character, entities, facts, secrets, and opening narration against the inventory lists. Add each actually carried unique object as an item with quantity, or remove the unsupported claim.
 - Keep entity descriptions stable: describe enduring appearance or nature, never current placement, ownership, activity, mood, or temporary condition. Put mutable state in location, inventory, status, conditions, or facts.
-- Unless the creative configuration replaces currency or requires destitution, include a small spendable currency inventory item.
-- Include two to four immediately relevant NPCs and no more than two active threads.
+- Unless the configuration or seeds replace currency, require destitution, or imply a setting without money, include a small spendable currency inventory item.
+- Unless the configuration or seeds clearly call for a different opening cast, include roughly two to four immediately relevant NPCs and no more than two active threads; when they do, follow the brief within the schema limits.
 - Give supplied entities unique safe namespaced IDs. Omit initial thread IDs so the application can assign them.
 - Keep hidden motives in secrets rather than player knowledge.
 - scenarioMarkdown is the durable campaign premise, not opening narration.
