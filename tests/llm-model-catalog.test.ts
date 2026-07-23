@@ -89,7 +89,7 @@ describe("LLM provider definitions", () => {
       "qwen/qwen3.7-plus",
     ]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels)
-      .toEqual(["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]);
+      .toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "xai")?.candidateModels)
       .toEqual(["grok-4.5"]);
     expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
@@ -198,7 +198,7 @@ describe("LLM model catalog persistence", () => {
 
     await registry.addModel(custom);
     expect(model(await registry.removeModel(custom), custom)).toBeUndefined();
-    await expect(registry.removeModel({ provider: "gemini", model: "gemini-3.5-flash" }))
+    await expect(registry.removeModel({ provider: "gemini", model: "gemini-3.5-flash-lite" }))
       .rejects.toThrow("Known model");
 
     await registry.addModel(custom);

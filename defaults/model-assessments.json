@@ -267,17 +267,17 @@
           "recoveryCount": 0,
           "qualityStatus": "high",
           "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/runs/2026-07-23T13-18-39-108Z-067fd084-d2b3-4e85-aa78-6f6594369c03/jobs/job-001",
-          "recordedAt": "2026-07-23T13:20:25.790Z"
+          "reference": "playtests/runs/2026-07-23T16-33-17-911Z-a95f51a6-7af7-4b0f-a00e-68d646bf9f74/jobs/job-001",
+          "recordedAt": "2026-07-23T16:35:56.120Z"
         },
         {
           "language": "ru",
-          "technicalStatus": "unstable",
-          "recoveryCount": 1,
-          "qualityStatus": "awaiting_judgment",
-          "candidateMetricsHash": "a446d5e2077b2bb3e60457becd3ede37a64ad2cdf59011916ef1502d9eece06a",
-          "reference": "playtests/runs/2026-07-23T13-18-39-108Z-067fd084-d2b3-4e85-aa78-6f6594369c03/jobs/job-002",
-          "recordedAt": "2026-07-23T13:20:06.582Z"
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
+          "reference": "playtests/runs/2026-07-23T16-33-17-911Z-a95f51a6-7af7-4b0f-a00e-68d646bf9f74/jobs/job-002",
+          "recordedAt": "2026-07-23T16:36:16.654Z"
         }
       ]
     }

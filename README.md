@@ -151,7 +151,7 @@ The curated models are:
 
 | Provider | Models |
 | --- | --- |
-| Google Gemini | `gemini-3.6-flash` (recommended), `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
+| Google Gemini | `gemini-3.6-flash` (recommended), `gemini-3.5-flash-lite` |
 | OpenRouter | `qwen/qwen3.7-plus` |
 | xAI | `grok-4.5` |
 | OpenAI | `gpt-5.4` |

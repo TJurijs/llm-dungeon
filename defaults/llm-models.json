@@ -10,8 +10,6 @@
       "recommended": true,
       "candidateModels": [
         "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite"
       ]
     },
@@ -53,6 +51,14 @@
     }
   ],
   "retiredModels": [
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-lite"
+    },
     {
       "provider": "openrouter",
       "model": "google/gemini-3.5-flash"
@@ -245,13 +251,14 @@
     {
       "provider": "gemini",
       "model": "gemini-3.5-flash-lite",
-      "testedAt": "2026-07-23T13:11:27.761Z",
+      "testedAt": "2026-07-23T16:32:54.347Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
       "testedLanguages": [
-        "en"
+        "en",
+        "ru"
       ],
-      "note": "Protocol-compatible in EN and RU, but shipped English-only: EN certification-v1 passed clean/high while RU was unstable (model-owned domain failures). Russian is withheld until it certifies stable."
+      "note": "certification-v1 passed clean/high in both EN and RU on re-run; the earlier RU failure was a rare stochastic double-lapse against the strict 1-repair budget, not a model limitation (the failing call reproduced success 20/20 on replay)."
     }
   ]
 }

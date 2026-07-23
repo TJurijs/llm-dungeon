@@ -341,7 +341,7 @@ describe("multi-campaign Web server", () => {
     expect(status.llm.providers.find((provider: any) => provider.id === "anthropic").models
       .map((model: any) => model.id)).toEqual(["claude-sonnet-5"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models
-      .map((model: any) => model.id)).toEqual(["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]);
+      .map((model: any) => model.id)).toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
     expect(status.llm.providers.find((provider: any) => provider.id === "openrouter").models
       .map((model: any) => model.id)).toEqual([
         "qwen/qwen3.7-plus",
@@ -1017,7 +1017,7 @@ describe("multi-campaign Web server", () => {
 
     const knownRemoval = await responseJson(base, "/api/llm/models", "DELETE", {
       provider: "gemini",
-      model: "gemini-3.5-flash",
+      model: "gemini-3.5-flash-lite",
     });
     expect(knownRemoval.status).toBe(400);
     expect(await knownRemoval.json()).toEqual({ error: "Known models cannot be removed" });
