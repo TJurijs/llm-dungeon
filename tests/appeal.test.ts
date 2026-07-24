@@ -66,29 +66,39 @@ describe("administrative appeal flow", () => {
     });
     const targetPath = path.join(store.currentDir, "turns", "000001.md");
     const targetBefore = await readFile(targetPath, "utf8");
-    const provider = new AppealProvider([{
-      narration: "The appeal is upheld. The narrated brass key is added to your inventory.",
-      turnSummary: "Appeal upheld; the missing brass key was recorded.",
-      operations: [
-        {
-          type: "create_entity",
-          entity: {
-            id: "item:brass-key",
-            kind: "item",
-            name: "Brass Key",
-            status: "intact",
-            tags: ["key"],
-            description: "A small brass key given by Mara.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
+    const provider = new AppealProvider([
+      {
+        narration: "The appeal is upheld. The narrated brass key is added to your inventory.",
+        turnSummary: "Appeal upheld; the missing brass key was recorded.",
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:brass-key",
+              kind: "item",
+              name: "Brass Key",
+              status: "intact",
+              tags: ["key"],
+              description: "A small brass key given by Mara.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
           },
-        },
-        { type: "change_inventory", ownerId: "player:hero", itemId: "item:brass-key", quantityDelta: 1 },
-      ],
-    }]);
+          {
+            type: "change_inventory",
+            ownerId: "player:hero",
+            itemId: "item:brass-key",
+            quantityDelta: 1,
+          },
+        ],
+      },
+    ]);
     let rolls = 0;
-    const result = await new DungeonEngine(store, provider, () => { rolls += 1; return 1; }).appeal({
+    const result = await new DungeonEngine(store, provider, () => {
+      rolls += 1;
+      return 1;
+    }).appeal({
       targetTurn: 1,
       claim: "The key was narrated but never entered in my inventory.",
     });
@@ -105,7 +115,10 @@ describe("administrative appeal flow", () => {
     expect(await readFile(targetPath, "utf8")).toBe(targetBefore);
     const loaded = await store.load();
     const key = [...loaded.entities.values()].find((entity) => entity.name === "Brass Key");
-    expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({ entityId: key?.id, quantity: 1 });
+    expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: key?.id,
+      quantity: 1,
+    });
     const appealLog = await readFile(path.join(store.currentDir, "turns", "000002.md"), "utf8");
     expect(parsePlayerVisibleTurn(appealLog)).toMatchObject({
       kind: "appeal",
@@ -150,14 +163,21 @@ describe("administrative appeal flow", () => {
               playerKnowledge: [],
             },
           },
-          { type: "change_inventory", ownerId: "player:hero", itemId: "item:silver-shillings", quantityDelta: 5 },
+          {
+            type: "change_inventory",
+            ownerId: "player:hero",
+            itemId: "item:silver-shillings",
+            quantityDelta: 5,
+          },
         ],
       },
       provider: "fake",
       model: "fake-model",
     });
     const afterPayment = await store.load();
-    const silver = [...afterPayment.entities.values()].find((entity) => entity.name === "Silver Shillings")!;
+    const silver = [...afterPayment.entities.values()].find(
+      (entity) => entity.name === "Silver Shillings",
+    )!;
 
     await store.commitTurn({
       kind: "appeal",
@@ -173,22 +193,32 @@ describe("administrative appeal flow", () => {
     expect(context).toContain(`\"itemId\": \"${silver.id}\"`);
     expect(context).toContain('"quantityDelta": 5');
 
-    await expect(store.commitTurn({
-      action: "I pocket those same five shillings.",
-      resolved: {
-        narration: "You pocket the already-recorded payment.",
-        turnSummary: "The existing payment was handled.",
-        operations: [
-          { type: "change_inventory", ownerId: "player:hero", itemId: silver.id, quantityDelta: 5 },
-        ],
-      },
-      provider: "fake",
-      model: "fake-model",
-    })).rejects.toThrow(/Repeated abstract inventory credit/);
+    await expect(
+      store.commitTurn({
+        action: "I pocket those same five shillings.",
+        resolved: {
+          narration: "You pocket the already-recorded payment.",
+          turnSummary: "The existing payment was handled.",
+          operations: [
+            {
+              type: "change_inventory",
+              ownerId: "player:hero",
+              itemId: silver.id,
+              quantityDelta: 5,
+            },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/Repeated abstract inventory credit/);
 
     const loaded = await store.load();
     expect(loaded.manifest.turn).toBe(2);
-    expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({ entityId: silver.id, quantity: 5 });
+    expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: silver.id,
+      quantity: 5,
+    });
   });
 
   it("keeps an interrupted appeal recoverable with its target and never routes it through adjudication", async () => {
@@ -202,7 +232,9 @@ describe("administrative appeal flow", () => {
     const provider = new AppealProvider([new Error("provider stopped"), denied]);
     const engine = new DungeonEngine(store, provider);
 
-    await expect(engine.appeal({ targetTurn: 1, claim: "Please review that turn." })).rejects.toThrow("provider stopped");
+    await expect(
+      engine.appeal({ targetTurn: 1, claim: "Please review that turn." }),
+    ).rejects.toThrow("provider stopped");
     expect(await store.getPending()).toMatchObject({
       kind: "appeal",
       phase: "requested",
@@ -239,12 +271,20 @@ describe("administrative appeal flow", () => {
       },
       denied,
     ]);
-    const result = await new DungeonEngine(store, provider).appeal({ targetTurn: 1, claim: "Bring Mara back." });
+    const result = await new DungeonEngine(store, provider).appeal({
+      targetTurn: 1,
+      claim: "Bring Mara back.",
+    });
 
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
       "appeal_resolution_v1",
       "domain_repair_appeal_resolution_v1",
     ]);
+    expect(provider.requests[1]).toMatchObject({
+      generationPhase: "repair",
+      repairOfPhase: "locked_resolution",
+      attemptKind: "domain_repair",
+    });
     expect(result.operations).toEqual([]);
     expect(result.state.timeLabel).toBe("Day 1, 20:00");
     expect((await store.load()).entities.get("npc:mara-venn")?.status).toBe("dead");
@@ -265,70 +305,84 @@ describe("administrative appeal flow", () => {
       });
     }
     const provider = new AppealProvider([denied]);
-    await new DungeonEngine(store, provider).appeal({ targetTurn: 1, claim: "Review the first turn." });
+    await new DungeonEngine(store, provider).appeal({
+      targetTurn: 1,
+      claim: "Review the first turn.",
+    });
     expect(provider.requests[0]?.prompt).toContain("UNIQUE OLD TARGET NARRATION");
     expect(provider.requests[0]?.prompt).toContain("TARGET TURN 1");
   });
 
   it("rejects non-item creation atomically at the store boundary", async () => {
     const store = await createTestStore();
-    await expect(store.commitTurn({
-      kind: "appeal",
-      action: ":appeal Invent an NPC.",
-      resolved: {
-        narration: "An unsupported NPC is created.",
-        turnSummary: "Unsafe appeal.",
-        operations: [{
-          type: "create_entity",
-          entity: {
-            id: "npc:invented",
-            kind: "person",
-            name: "Invented NPC",
-            status: "alive",
-            tags: [],
-            description: "Unsupported.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
-          },
-        }],
-      },
-      provider: "fake",
-      model: "fake-model",
-    })).rejects.toThrow(/may create only a missing item/);
+    await expect(
+      store.commitTurn({
+        kind: "appeal",
+        action: ":appeal Invent an NPC.",
+        resolved: {
+          narration: "An unsupported NPC is created.",
+          turnSummary: "Unsafe appeal.",
+          operations: [
+            {
+              type: "create_entity",
+              entity: {
+                id: "npc:invented",
+                kind: "person",
+                name: "Invented NPC",
+                status: "alive",
+                tags: [],
+                description: "Unsupported.",
+                establishedFacts: [],
+                secrets: [],
+                playerKnowledge: [],
+              },
+            },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/may create only a missing item/);
     expect((await store.load()).manifest.turn).toBe(0);
   });
 
   it("rejects appeal item renames that bypass canonical duplicate-name checks", async () => {
     const createdItemStore = await createTestStore();
-    await expect(createdItemStore.commitTurn({
-      kind: "appeal",
-      action: ":appeal Add a second travel sword under a temporary name.",
-      resolved: {
-        narration: "The unsafe duplicate is proposed.",
-        turnSummary: "Unsafe duplicate item rename.",
-        operations: [
-          {
-            type: "create_entity",
-            entity: {
-              id: "item:temporary",
-              kind: "item",
-              name: "Temporary Blade",
-              status: "intact",
-              tags: [],
-              description: "A temporary item name.",
-              establishedFacts: [],
-              secrets: [],
-              playerKnowledge: [],
+    await expect(
+      createdItemStore.commitTurn({
+        kind: "appeal",
+        action: ":appeal Add a second travel sword under a temporary name.",
+        resolved: {
+          narration: "The unsafe duplicate is proposed.",
+          turnSummary: "Unsafe duplicate item rename.",
+          operations: [
+            {
+              type: "create_entity",
+              entity: {
+                id: "item:temporary",
+                kind: "item",
+                name: "Temporary Blade",
+                status: "intact",
+                tags: [],
+                description: "A temporary item name.",
+                establishedFacts: [],
+                secrets: [],
+                playerKnowledge: [],
+              },
             },
-          },
-          { type: "change_inventory", ownerId: "player:hero", itemId: "item:temporary", quantityDelta: 1 },
-          { type: "set_entity_state", targetId: "item:temporary", name: "The Travel Sword" },
-        ],
-      },
-      provider: "fake",
-      model: "fake-model",
-    })).rejects.toThrow(/rename .* duplicates an existing item/);
+            {
+              type: "change_inventory",
+              ownerId: "player:hero",
+              itemId: "item:temporary",
+              quantityDelta: 1,
+            },
+            { type: "set_entity_state", targetId: "item:temporary", name: "The Travel Sword" },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/rename .* duplicates an existing item/);
     expect((await createdItemStore.load()).manifest.turn).toBe(0);
 
     const existingItemStore = await createTestStore();
@@ -337,39 +391,45 @@ describe("administrative appeal flow", () => {
       resolved: {
         narration: "A lantern rests on the tavern bar.",
         turnSummary: "A lantern was established.",
-        operations: [{
-          type: "create_entity",
-          entity: {
-            id: "item:lantern",
-            kind: "item",
-            name: "Lantern",
-            status: "intact",
-            location: "location:crooked-crown",
-            tags: [],
-            description: "A plain lantern.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
-          },
-        }],
-      },
-      provider: "fake",
-      model: "fake-model",
-    });
-    await expect(existingItemStore.commitTurn({
-      kind: "appeal",
-      action: ":appeal Rename my sword to match the lantern.",
-      resolved: {
-        narration: "The unsafe rename is proposed.",
-        turnSummary: "Unsafe existing item rename.",
         operations: [
-          { type: "set_entity_state", targetId: "item:travel-sword", name: "A Lantern" },
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:lantern",
+              kind: "item",
+              name: "Lantern",
+              status: "intact",
+              location: "location:crooked-crown",
+              tags: [],
+              description: "A plain lantern.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
         ],
       },
       provider: "fake",
       model: "fake-model",
-    })).rejects.toThrow(/rename .* duplicates an existing item/);
+    });
+    await expect(
+      existingItemStore.commitTurn({
+        kind: "appeal",
+        action: ":appeal Rename my sword to match the lantern.",
+        resolved: {
+          narration: "The unsafe rename is proposed.",
+          turnSummary: "Unsafe existing item rename.",
+          operations: [
+            { type: "set_entity_state", targetId: "item:travel-sword", name: "A Lantern" },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/rename .* duplicates an existing item/);
     expect((await existingItemStore.load()).manifest.turn).toBe(1);
-    expect((await existingItemStore.load()).entities.get("item:travel-sword")?.name).toBe("Travel Sword");
+    expect((await existingItemStore.load()).entities.get("item:travel-sword")?.name).toBe(
+      "Travel Sword",
+    );
   });
 });

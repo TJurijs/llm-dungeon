@@ -22,8 +22,16 @@ export interface ProviderSchemaProjection {
  * local validation. Gameplay Contract V1 has no optional wire fields, so its
  * schema and decoded value pass through unchanged.
  */
-export function projectOpenAiStrictSchema(schema: Record<string, unknown>): ProviderSchemaProjection {
-  const unsupportedAnnotations = new Set(["$schema", "default", "examples", "minLength", "maxLength"]);
+export function projectOpenAiStrictSchema(
+  schema: Record<string, unknown>,
+): ProviderSchemaProjection {
+  const unsupportedAnnotations = new Set([
+    "$schema",
+    "default",
+    "examples",
+    "minLength",
+    "maxLength",
+  ]);
 
   function project(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(project);
@@ -48,7 +56,11 @@ export function projectOpenAiStrictSchema(schema: Record<string, unknown>): Prov
     }
 
     if (isRecord(value.properties)) {
-      const required = new Set(Array.isArray(value.required) ? value.required.filter((item): item is string => typeof item === "string") : []);
+      const required = new Set(
+        Array.isArray(value.required)
+          ? value.required.filter((item): item is string => typeof item === "string")
+          : [],
+      );
       const properties = output.properties as Record<string, unknown>;
       for (const name of Object.keys(value.properties)) {
         if (!required.has(name)) {
@@ -68,9 +80,11 @@ export function projectOpenAiStrictSchema(schema: Record<string, unknown>): Prov
     }
     if (!isRecord(value) || !isRecord(sourceSchema.properties)) return value;
 
-    const required = new Set(Array.isArray(sourceSchema.required)
-      ? sourceSchema.required.filter((item): item is string => typeof item === "string")
-      : []);
+    const required = new Set(
+      Array.isArray(sourceSchema.required)
+        ? sourceSchema.required.filter((item): item is string => typeof item === "string")
+        : [],
+    );
     const restored: Record<string, unknown> = { ...value };
     for (const [name, propertySchema] of Object.entries(sourceSchema.properties)) {
       if (!required.has(name) && restored[name] === null) {
@@ -127,7 +141,11 @@ export function sanitizeAnthropicSchema(value: unknown): unknown {
   const output: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
     if (ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS.has(key)) continue;
-    if (key === "format" && (typeof item !== "string" || !ANTHROPIC_SUPPORTED_STRING_FORMATS.has(item))) continue;
+    if (
+      key === "format" &&
+      (typeof item !== "string" || !ANTHROPIC_SUPPORTED_STRING_FORMATS.has(item))
+    )
+      continue;
     if (key === "minItems" && item !== 0 && item !== 1) continue;
     if ((key === "properties" || key === "$defs") && isRecord(item)) {
       output[key] = Object.fromEntries(
@@ -187,9 +205,17 @@ export function sanitizeGeminiSchema(value: unknown): unknown {
     if (!GEMINI_SCHEMA_KEYWORDS.has(key)) continue;
 
     // Keys inside these maps are user-defined names, not schema keywords.
-    if ((key === "properties" || key === "$defs") && item && typeof item === "object" && !Array.isArray(item)) {
+    if (
+      (key === "properties" || key === "$defs") &&
+      item &&
+      typeof item === "object" &&
+      !Array.isArray(item)
+    ) {
       output[key] = Object.fromEntries(
-        Object.entries(item as Record<string, unknown>).map(([name, schema]) => [name, sanitizeGeminiSchema(schema)]),
+        Object.entries(item as Record<string, unknown>).map(([name, schema]) => [
+          name,
+          sanitizeGeminiSchema(schema),
+        ]),
       );
       continue;
     }
@@ -218,26 +244,31 @@ export function projectSchemaById(
   return { schema };
 }
 
-
 export function jsonExampleForSchema(schema: unknown): unknown {
   if (!isRecord(schema)) return null;
   if ("const" in schema) return schema.const;
   if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
   if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-    const preferred = schema.anyOf.find((entry) => !isRecord(entry) || entry.type !== "null") ?? schema.anyOf[0];
+    const preferred =
+      schema.anyOf.find((entry) => !isRecord(entry) || entry.type !== "null") ?? schema.anyOf[0];
     return jsonExampleForSchema(preferred);
   }
   if (schema.type === "object" || isRecord(schema.properties)) {
     const properties = isRecord(schema.properties) ? schema.properties : {};
-    const required = new Set(Array.isArray(schema.required)
-      ? schema.required.filter((name): name is string => typeof name === "string")
-      : Object.keys(properties));
-    return Object.fromEntries(Object.entries(properties)
-      .filter(([name]) => required.has(name))
-      .map(([name, propertySchema]) => [name, jsonExampleForSchema(propertySchema)]));
+    const required = new Set(
+      Array.isArray(schema.required)
+        ? schema.required.filter((name): name is string => typeof name === "string")
+        : Object.keys(properties),
+    );
+    return Object.fromEntries(
+      Object.entries(properties)
+        .filter(([name]) => required.has(name))
+        .map(([name, propertySchema]) => [name, jsonExampleForSchema(propertySchema)]),
+    );
   }
   if (schema.type === "array") {
-    const count = typeof schema.minItems === "number" && schema.minItems > 0 ? Math.ceil(schema.minItems) : 0;
+    const count =
+      typeof schema.minItems === "number" && schema.minItems > 0 ? Math.ceil(schema.minItems) : 0;
     return Array.from({ length: count }, () => jsonExampleForSchema(schema.items));
   }
   if (schema.type === "integer" || schema.type === "number") {
@@ -245,7 +276,10 @@ export function jsonExampleForSchema(schema: unknown): unknown {
   }
   if (schema.type === "boolean") return false;
   if (schema.type === "string") {
-    const length = typeof schema.minLength === "number" && schema.minLength > 0 ? Math.ceil(schema.minLength) : 0;
+    const length =
+      typeof schema.minLength === "number" && schema.minLength > 0
+        ? Math.ceil(schema.minLength)
+        : 0;
     return "x".repeat(length);
   }
   return null;
@@ -283,7 +317,7 @@ export function requiredObjectFieldGuide(schema: unknown): string {
     }
   }
 
-  visit(schema, "$" );
+  visit(schema, "$");
   return lines.join("\n");
 }
 

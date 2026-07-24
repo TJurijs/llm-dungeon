@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  TransactionValidationError,
-  applyTransaction,
-} from "../src/domain/transaction.js";
+import { TransactionValidationError, applyTransaction } from "../src/domain/transaction.js";
 import type { Entity, StateOperation } from "../src/schemas.js";
 import { createTestStore } from "./helpers.js";
 
@@ -14,21 +11,23 @@ describe("transaction boundary", () => {
       resolved: {
         narration: "Mara places a brass key in your hand.",
         turnSummary: "The hero received a brass key.",
-        operations: [{
-          type: "create_entity",
-          entity: {
-            id: "item:brass-key",
-            kind: "item",
-            name: "Brass Key",
-            status: "intact",
-            location: "hero",
-            tags: ["key"],
-            description: "A small brass key.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:brass-key",
+              kind: "item",
+              name: "Brass Key",
+              status: "intact",
+              location: "hero",
+              tags: ["key"],
+              description: "A small brass key.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
           },
-        }],
+        ],
       },
       provider: "fake",
       model: "fake-model",
@@ -52,21 +51,19 @@ describe("transaction boundary", () => {
 
   it("wraps domain violations but lets parsing and programming failures escape", async () => {
     const loaded = await (await createTestStore()).load();
-    const apply = (operations: StateOperation[], entities = loaded.entities) => applyTransaction(
-      operations,
-      1,
-      loaded.manifest,
-      entities,
-      loaded.threads,
-      loaded.chronicle,
-    );
+    const apply = (operations: StateOperation[], entities = loaded.entities) =>
+      applyTransaction(operations, 1, loaded.manifest, entities, loaded.threads, loaded.chronicle);
 
-    expect(() => apply([{
-      type: "change_inventory",
-      ownerId: "player:hero",
-      itemId: "item:missing",
-      quantityDelta: -1,
-    }])).toThrow(TransactionValidationError);
+    expect(() =>
+      apply([
+        {
+          type: "change_inventory",
+          ownerId: "player:hero",
+          itemId: "item:missing",
+          quantityDelta: -1,
+        },
+      ]),
+    ).toThrow(TransactionValidationError);
 
     const malformed = [{ type: "unknown_operation" }] as unknown as StateOperation[];
     expect(() => apply(malformed)).toThrow(expect.objectContaining({ name: "ZodError" }));

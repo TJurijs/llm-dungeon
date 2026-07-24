@@ -50,39 +50,53 @@ export interface PromoteModelEvidenceResult {
   filesWritten: string[];
 }
 
-const ExecutionProfilesFileSchema = z.object({
-  version: z.literal(1),
-  profiles: z.array(z.object({
-    provider: ProviderConfigSchema.shape.provider,
-    model: z.string(),
-    route: z.string(),
-    calibratedAt: z.string(),
-    evidenceRef: z.string(),
-    outputBudgets: PhaseBudgetsSchema.optional(),
-    timeout: TimeoutPolicySchema.optional(),
-  }).strict()),
-}).strict();
+const ExecutionProfilesFileSchema = z
+  .object({
+    version: z.literal(1),
+    profiles: z.array(
+      z
+        .object({
+          provider: ProviderConfigSchema.shape.provider,
+          model: z.string(),
+          route: z.string(),
+          calibratedAt: z.string(),
+          evidenceRef: z.string(),
+          outputBudgets: PhaseBudgetsSchema.optional(),
+          timeout: TimeoutPolicySchema.optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
 
-const AssessmentsFileSchema = z.object({
-  version: z.literal(1),
-  models: z.array(ShippedModelAssessmentSchema),
-}).strict();
+const AssessmentsFileSchema = z
+  .object({
+    version: z.literal(1),
+    models: z.array(ShippedModelAssessmentSchema),
+  })
+  .strict();
 
-const LlmModelsFileSchema = z.object({
-  version: z.number(),
-  recommended: ModelSelectionSchema,
-  providers: z.array(z.unknown()),
-  retiredModels: z.array(z.unknown()),
-  shippedTests: z.array(z.object({
-    provider: ProviderConfigSchema.shape.provider,
-    model: z.string(),
-    testedAt: z.string(),
-    protocolVersion: z.number(),
-    testFingerprint: z.string(),
-    testedLanguages: z.array(z.string()),
-    note: z.string().optional(),
-  }).strict()),
-}).passthrough();
+const LlmModelsFileSchema = z
+  .object({
+    version: z.number(),
+    recommended: ModelSelectionSchema,
+    providers: z.array(z.unknown()),
+    retiredModels: z.array(z.unknown()),
+    shippedTests: z.array(
+      z
+        .object({
+          provider: ProviderConfigSchema.shape.provider,
+          model: z.string(),
+          testedAt: z.string(),
+          protocolVersion: z.number(),
+          testFingerprint: z.string(),
+          testedLanguages: z.array(z.string()),
+          note: z.string().optional(),
+        })
+        .strict(),
+    ),
+  })
+  .passthrough();
 
 async function readJson<T>(target: string, schema: z.ZodType<T>): Promise<T> {
   return schema.parse(JSON.parse(await readFile(target, "utf8")));
@@ -123,10 +137,14 @@ export async function promoteModelEvidence(
   const assessments = new ModelAssessmentCatalog(projectRoot);
   const assessment = await assessments.get(target);
   if (!assessment?.adapter) {
-    throw new Error(`No calibration adapter record for ${target.provider}/${target.model}; run playtest calibrate first`);
+    throw new Error(
+      `No calibration adapter record for ${target.provider}/${target.model}; run playtest calibrate first`,
+    );
   }
   if (assessment.adapter.status !== "calibrated") {
-    throw new Error(`Adapter status is "${assessment.adapter.status}", not calibrated; nothing to promote`);
+    throw new Error(
+      `Adapter status is "${assessment.adapter.status}", not calibrated; nothing to promote`,
+    );
   }
   if (assessment.adapter.adapterRevision !== MODEL_EXECUTION_ADAPTER_REVISION) {
     throw new Error(
@@ -142,22 +160,29 @@ export async function promoteModelEvidence(
     throw new Error("Calibration record has no evidence reference; recalibrate before promoting");
   }
 
-  const currentCertifications = assessment.certifications.filter((certification) =>
-    certification.packageVersion === String(CERTIFICATION_PACKAGE_VERSION)
-    && certification.profileFingerprint === profile.fingerprint);
+  const currentCertifications = assessment.certifications.filter(
+    (certification) =>
+      certification.packageVersion === String(CERTIFICATION_PACKAGE_VERSION) &&
+      certification.profileFingerprint === profile.fingerprint,
+  );
   const skippedLanguages = assessment.certifications
     .filter((certification) => !currentCertifications.includes(certification))
     .map((certification) => ({
       language: certification.language,
-      reason: certification.packageVersion !== String(CERTIFICATION_PACKAGE_VERSION)
-        ? `stale certification package version ${certification.packageVersion}`
-        : "certification profile fingerprint does not match the current frozen profile",
+      reason:
+        certification.packageVersion !== String(CERTIFICATION_PACKAGE_VERSION)
+          ? `stale certification package version ${certification.packageVersion}`
+          : "certification profile fingerprint does not match the current frozen profile",
     }));
   if (currentCertifications.length === 0) {
-    throw new Error(`No current certification for ${target.provider}/${target.model}; run playtest certify first`);
+    throw new Error(
+      `No current certification for ${target.provider}/${target.model}; run playtest certify first`,
+    );
   }
 
-  const catalog = new LlmModelCatalog(projectRoot, { testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT });
+  const catalog = new LlmModelCatalog(projectRoot, {
+    testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+  });
   const snapshot = await catalog.snapshot();
   const catalogModel = snapshot.providers
     .find((provider) => provider.id === target.provider)
@@ -173,13 +198,18 @@ export async function promoteModelEvidence(
     );
   }
 
-  const baseline = defaultDraftFor({ provider: target.provider, model: target.model } as ProviderConfig, target.route);
-  const outputBudgetsOverride = JSON.stringify(profile.outputBudgets) !== JSON.stringify(baseline.outputBudgets)
-    ? profile.outputBudgets
-    : undefined;
-  const timeoutOverride = JSON.stringify(profile.timeout) !== JSON.stringify(baseline.timeout)
-    ? profile.timeout
-    : undefined;
+  const baseline = defaultDraftFor(
+    { provider: target.provider, model: target.model } as ProviderConfig,
+    target.route,
+  );
+  const outputBudgetsOverride =
+    JSON.stringify(profile.outputBudgets) !== JSON.stringify(baseline.outputBudgets)
+      ? profile.outputBudgets
+      : undefined;
+  const timeoutOverride =
+    JSON.stringify(profile.timeout) !== JSON.stringify(baseline.timeout)
+      ? profile.timeout
+      : undefined;
 
   const profileEntry: ShippedProfileEvidence = {
     provider: target.provider,
@@ -221,20 +251,32 @@ export async function promoteModelEvidence(
 
   const filesWritten: string[] = [];
 
-  await withSerializedFileLock(`${EXECUTION_PROFILES_PATH}.lock`, "shipped execution profiles", async () => {
-    const file = await readJson(EXECUTION_PROFILES_PATH, ExecutionProfilesFileSchema);
-    const index = file.profiles.findIndex((entry) =>
-      entry.provider === target.provider && entry.model === target.model && entry.route === target.route);
-    if (index >= 0) file.profiles[index] = profileEntry;
-    else file.profiles.push(profileEntry);
-    await atomicWriteJson(EXECUTION_PROFILES_PATH, file);
-  });
+  await withSerializedFileLock(
+    `${EXECUTION_PROFILES_PATH}.lock`,
+    "shipped execution profiles",
+    async () => {
+      const file = await readJson(EXECUTION_PROFILES_PATH, ExecutionProfilesFileSchema);
+      const index = file.profiles.findIndex(
+        (entry) =>
+          entry.provider === target.provider &&
+          entry.model === target.model &&
+          entry.route === target.route,
+      );
+      if (index >= 0) file.profiles[index] = profileEntry;
+      else file.profiles.push(profileEntry);
+      await atomicWriteJson(EXECUTION_PROFILES_PATH, file);
+    },
+  );
   filesWritten.push(path.relative(projectRoot, EXECUTION_PROFILES_PATH));
 
   await withSerializedFileLock(`${ASSESSMENTS_PATH}.lock`, "shipped assessments", async () => {
     const file = await readJson(ASSESSMENTS_PATH, AssessmentsFileSchema);
-    const index = file.models.findIndex((entry) =>
-      entry.provider === target.provider && entry.model === target.model && entry.route === target.route);
+    const index = file.models.findIndex(
+      (entry) =>
+        entry.provider === target.provider &&
+        entry.model === target.model &&
+        entry.route === target.route,
+    );
     if (index >= 0) file.models[index] = assessmentEntry;
     else file.models.push(assessmentEntry);
     await atomicWriteJson(ASSESSMENTS_PATH, file);
@@ -243,8 +285,9 @@ export async function promoteModelEvidence(
 
   await withSerializedFileLock(`${LLM_MODELS_PATH}.lock`, "curated model data", async () => {
     const file = await readJson(LLM_MODELS_PATH, LlmModelsFileSchema);
-    const index = file.shippedTests.findIndex((entry) =>
-      entry.provider === target.provider && entry.model === target.model);
+    const index = file.shippedTests.findIndex(
+      (entry) => entry.provider === target.provider && entry.model === target.model,
+    );
     if (index >= 0) file.shippedTests[index] = testEntry;
     else file.shippedTests.push(testEntry);
     await atomicWriteJson(LLM_MODELS_PATH, file);

@@ -1,5 +1,8 @@
 import path from "node:path";
-import { PROVIDER_COMPATIBILITY_FINGERPRINT, probeProviderConnection } from "../../../src/connection-probe.js";
+import {
+  PROVIDER_COMPATIBILITY_FINGERPRINT,
+  probeProviderConnection,
+} from "../../../src/connection-probe.js";
 import { loadProjectEnv } from "../../../src/env.js";
 import { LlmModelCatalog } from "../../../src/llm-model-catalog.js";
 import type { LanguageCode } from "../../../src/language.js";
@@ -86,14 +89,28 @@ export class PlaytestProjectContext extends CliProjectContext {
     config: ProviderConfig,
     languages: readonly LanguageCode[],
     maxCostUsd: number,
-  ): Promise<{ passed: LanguageCode[]; failed: Array<{ language: LanguageCode; error: string }>; costUsd: number }> {
+  ): Promise<{
+    passed: LanguageCode[];
+    failed: Array<{ language: LanguageCode; error: string }>;
+    costUsd: number;
+  }> {
     const route = config.provider === "openrouter" ? "openrouter" : "direct";
-    const profile = await this.executionProfiles().require({ provider: config.provider, model: config.model, route });
+    const profile = await this.executionProfiles().require({
+      provider: config.provider,
+      model: config.model,
+      route,
+    });
     const price = inferTokenPrice(config.provider, config.model);
     if (!price) throw new Error(`No built-in token price for ${config.provider}/${config.model}`);
     const cost = new PlaytestCostManager(maxCostUsd);
-    const provider = new CompatibilityCostProvider(this.createProvider(config, profile), cost, price);
-    const catalog = new LlmModelCatalog(this.paths.root, { testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT });
+    const provider = new CompatibilityCostProvider(
+      this.createProvider(config, profile),
+      cost,
+      price,
+    );
+    const catalog = new LlmModelCatalog(this.paths.root, {
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+    });
     const passed: LanguageCode[] = [];
     const failed: Array<{ language: LanguageCode; error: string }> = [];
     for (const language of languages) {
@@ -105,12 +122,20 @@ export class PlaytestProjectContext extends CliProjectContext {
         );
         passed.push(language);
       } catch (error) {
-        const summary = (error instanceof Error ? error.message : "Provider compatibility test failed")
-          .replace(/[\r\n\t]+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 500);
-        await catalog.recordTestFailure({ provider: config.provider, model: config.model }, {
-          failedLanguages: [language],
-          failureSummary: summary || "Provider compatibility test failed",
-        });
+        const summary = (
+          error instanceof Error ? error.message : "Provider compatibility test failed"
+        )
+          .replace(/[\r\n\t]+/gu, " ")
+          .replace(/\s+/gu, " ")
+          .trim()
+          .slice(0, 500);
+        await catalog.recordTestFailure(
+          { provider: config.provider, model: config.model },
+          {
+            failedLanguages: [language],
+            failureSummary: summary || "Provider compatibility test failed",
+          },
+        );
         failed.push({ language, error: summary || "Provider compatibility test failed" });
       }
     }

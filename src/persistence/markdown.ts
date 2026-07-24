@@ -26,7 +26,8 @@ const SECTION_HEADINGS: Record<Fact["section"], string> = {
 
 const CONTENT_CODEC = "escaped-markdown";
 const EMPTY_DESCRIPTION = "_No description recorded._";
-const INACTIVE_FACT_MARKER = /^  <!-- inactive-section: (established|secrets|knowledge|beliefs|intentions|history) -->$/;
+const INACTIVE_FACT_MARKER =
+  /^  <!-- inactive-section: (established|secrets|knowledge|beliefs|intentions|history) -->$/;
 const PRIVATE_FACT_SECTIONS = new Set<Fact["section"]>(["secrets", "beliefs", "intentions"]);
 
 interface TaggedEntry {
@@ -71,7 +72,11 @@ function stripTrailingLineBreak(value: string): string {
  * those framing breaks are removed so leading/trailing breaks in the actual
  * value remain reversible.
  */
-function extractSection(body: string, heading: string, occurrence: "first" | "last" = "first"): string {
+function extractSection(
+  body: string,
+  heading: string,
+  occurrence: "first" | "last" = "first",
+): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = [...body.matchAll(new RegExp(`(?:^|\\n)## ${escaped}\\r?\\n`, "g"))];
   const match = occurrence === "last" ? matches.at(-1) : matches[0];
@@ -90,22 +95,36 @@ function hasSection(body: string, heading: string): boolean {
 }
 
 function encodeSectionText(value: string, escapeEmptyDescription = false): string {
-  return value.split("\n").map((line) => {
-    if (line.startsWith("\\") || line.startsWith("## ") || (escapeEmptyDescription && line === EMPTY_DESCRIPTION)) {
-      return `\\${line}`;
-    }
-    return line;
-  }).join("\n");
+  return value
+    .split("\n")
+    .map((line) => {
+      if (
+        line.startsWith("\\") ||
+        line.startsWith("## ") ||
+        (escapeEmptyDescription && line === EMPTY_DESCRIPTION)
+      ) {
+        return `\\${line}`;
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 function decodeSectionText(value: string, encoded: boolean): string {
   if (!encoded) return value;
-  return value.split("\n").map((line) => {
-    if (line.startsWith("\\\\") || line.startsWith("\\## ") || line === `\\${EMPTY_DESCRIPTION}`) {
-      return line.slice(1);
-    }
-    return line;
-  }).join("\n");
+  return value
+    .split("\n")
+    .map((line) => {
+      if (
+        line.startsWith("\\\\") ||
+        line.startsWith("\\## ") ||
+        line === `\\${EMPTY_DESCRIPTION}`
+      ) {
+        return line.slice(1);
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 function storedSectionText(body: string, heading: string, encoded: boolean): string {
@@ -115,11 +134,17 @@ function storedSectionText(body: string, heading: string, encoded: boolean): str
 
 function renderTaggedEntry(entry: TaggedEntry): string {
   if (entry.inactiveSection) {
-    const body = entry.text.split("\n").map((line) => `  >${line ? ` ${line}` : ""}`).join("\n");
+    const body = entry.text
+      .split("\n")
+      .map((line) => `  >${line ? ` ${line}` : ""}`)
+      .join("\n");
     return `- [${entry.id}]\n  <!-- inactive-section: ${entry.inactiveSection} -->\n${body}`;
   }
   if (!entry.text.includes("\n")) return `- [${entry.id}] ${entry.text}`;
-  const body = entry.text.split("\n").map((line) => `  >${line ? ` ${line}` : ""}`).join("\n");
+  const body = entry.text
+    .split("\n")
+    .map((line) => `  >${line ? ` ${line}` : ""}`)
+    .join("\n");
   return `- [${entry.id}]\n${body}`;
 }
 
@@ -138,8 +163,8 @@ function parseTaggedLines(value: string, allowInactiveMetadata = false): TaggedE
   };
 
   for (const line of value.split("\n")) {
-    const tagged = line.match(/^-\s+\[([^\]]+)](?:\s(.*))?$/)
-      ?? line.match(/^\s+-\s+\[([^\]]+)](?:\s(.*))?$/);
+    const tagged =
+      line.match(/^-\s+\[([^\]]+)](?:\s(.*))?$/) ?? line.match(/^\s+-\s+\[([^\]]+)](?:\s(.*))?$/);
     if (tagged?.[1]) {
       flush();
       current = { id: tagged[1], lines: tagged[2] === undefined ? [] : [tagged[2]] };
@@ -147,7 +172,7 @@ function parseTaggedLines(value: string, allowInactiveMetadata = false): TaggedE
     }
     if (!current) continue;
     const inactive = allowInactiveMetadata
-      ? line.match(INACTIVE_FACT_MARKER)?.[1] as Fact["section"] | undefined
+      ? (line.match(INACTIVE_FACT_MARKER)?.[1] as Fact["section"] | undefined)
       : undefined;
     if (inactive) {
       current.inactiveSection = inactive;
@@ -187,16 +212,22 @@ export function renderEntity(entity: Entity, includePrivate = true): string {
       const active = entity.facts
         .filter((fact) => fact.section === section && fact.active)
         .map((fact) => renderTaggedEntry({ id: fact.id, text: fact.text }));
-      const inactive = section === "history"
-        ? entity.facts
-            .filter((fact) => !fact.active && (includePrivate || !PRIVATE_FACT_SECTIONS.has(fact.section)))
-            .map((fact) => renderTaggedEntry({ id: fact.id, text: fact.text, inactiveSection: fact.section }))
-        : [];
+      const inactive =
+        section === "history"
+          ? entity.facts
+              .filter(
+                (fact) =>
+                  !fact.active && (includePrivate || !PRIVATE_FACT_SECTIONS.has(fact.section)),
+              )
+              .map((fact) =>
+                renderTaggedEntry({ id: fact.id, text: fact.text, inactiveSection: fact.section }),
+              )
+          : [];
       const lines = [...active, ...inactive];
       return `## ${heading}\n\n${lines.join("\n") || "_None._"}`;
     });
-  const relationships = entity.relationships.map(
-    (relationship) => renderTaggedEntry({ id: relationship.targetId, text: relationship.summary }),
+  const relationships = entity.relationships.map((relationship) =>
+    renderTaggedEntry({ id: relationship.targetId, text: relationship.summary }),
   );
   const body = [
     `# ${encodeSectionText(entity.name)}`,
@@ -230,45 +261,44 @@ export function parseEntity(content: string, requireStructuredMetadata = false):
         throw new Error(`Entity document is missing structured ${key} metadata`);
       }
     }
-    for (const heading of [
-      "Description",
-      ...Object.values(SECTION_HEADINGS),
-      "Relationships",
-    ]) {
+    for (const heading of ["Description", ...Object.values(SECTION_HEADINGS), "Relationships"]) {
       if (!hasSection(parsed.content, heading)) {
         throw new Error(`Entity document is missing generated ${heading} section`);
       }
     }
   }
   const facts: Fact[] = [];
-  for (const [section, heading] of Object.entries(SECTION_HEADINGS) as Array<[Fact["section"], string]>) {
+  for (const [section, heading] of Object.entries(SECTION_HEADINGS) as Array<
+    [Fact["section"], string]
+  >) {
     const sectionText = extractSection(parsed.content, heading);
-    facts.push(...parseTaggedLines(encoded ? sectionText : sectionText.trim(), encoded).map((fact) => ({
-      id: fact.id,
-      text: fact.text,
-      section: fact.inactiveSection ?? section,
-      active: fact.inactiveSection === undefined,
-    })));
+    facts.push(
+      ...parseTaggedLines(encoded ? sectionText : sectionText.trim(), encoded).map((fact) => ({
+        id: fact.id,
+        text: fact.text,
+        section: fact.inactiveSection ?? section,
+        active: fact.inactiveSection === undefined,
+      })),
+    );
   }
   const relationshipsText = extractSection(parsed.content, "Relationships");
-  const relationships = parseTaggedLines(encoded ? relationshipsText : relationshipsText.trim()).map(
-    (relationship) => ({ targetId: relationship.id, summary: relationship.text }),
-  );
+  const relationships = parseTaggedLines(
+    encoded ? relationshipsText : relationshipsText.trim(),
+  ).map((relationship) => ({ targetId: relationship.id, summary: relationship.text }));
   const encodedDescription = encoded
     ? extractSection(parsed.content, "Description")
     : extractSection(parsed.content, "Description").trim();
-  const description = encodedDescription === EMPTY_DESCRIPTION
-    ? ""
-    : decodeSectionText(encodedDescription, encoded);
+  const description =
+    encodedDescription === EMPTY_DESCRIPTION ? "" : decodeSectionText(encodedDescription, encoded);
   return EntitySchema.parse({
     ...parsed.data,
     description,
     facts,
     relationships,
-    traits: requireStructuredMetadata ? parsed.data.traits : parsed.data.traits ?? [],
-    conditions: requireStructuredMetadata ? parsed.data.conditions : parsed.data.conditions ?? [],
-    inventory: requireStructuredMetadata ? parsed.data.inventory : parsed.data.inventory ?? [],
-    tags: requireStructuredMetadata ? parsed.data.tags : parsed.data.tags ?? [],
+    traits: requireStructuredMetadata ? parsed.data.traits : (parsed.data.traits ?? []),
+    conditions: requireStructuredMetadata ? parsed.data.conditions : (parsed.data.conditions ?? []),
+    inventory: requireStructuredMetadata ? parsed.data.inventory : (parsed.data.inventory ?? []),
+    tags: requireStructuredMetadata ? parsed.data.tags : (parsed.data.tags ?? []),
   });
 }
 
@@ -289,29 +319,38 @@ export function parseThreads(content: string, requireStructuredMetadata = false)
     throw new Error("Threads document is missing structured thread metadata");
   }
   return ThreadSchema.array().parse(
-    requireStructuredMetadata ? document.data.threads : document.data.threads ?? [],
+    requireStructuredMetadata ? document.data.threads : (document.data.threads ?? []),
   );
 }
 
 export function renderChronicle(events: ChronicleEvent[]): string {
-  const lines = events.map((event) => `- **Turn ${event.turn}:** ${event.text} <!-- ${event.id} -->`);
-  return matter.stringify(`# Chronicle\n\n${lines.join("\n") || "_No major events yet._"}\n`, { events });
+  const lines = events.map(
+    (event) => `- **Turn ${event.turn}:** ${event.text} <!-- ${event.id} -->`,
+  );
+  return matter.stringify(`# Chronicle\n\n${lines.join("\n") || "_No major events yet._"}\n`, {
+    events,
+  });
 }
 
-export function parseChronicle(content: string, requireStructuredMetadata = false): ChronicleEvent[] {
+export function parseChronicle(
+  content: string,
+  requireStructuredMetadata = false,
+): ChronicleEvent[] {
   const document = matter(content);
   const hasStructuredMetadata = Object.prototype.hasOwnProperty.call(document.data, "events");
   if (requireStructuredMetadata && !hasStructuredMetadata) {
     throw new Error("Chronicle document is missing structured event metadata");
   }
   return ChronicleEventSchema.array().parse(
-    requireStructuredMetadata ? document.data.events : document.data.events ?? [],
+    requireStructuredMetadata ? document.data.events : (document.data.events ?? []),
   );
 }
 
 export function renderThreadsForContext(threads: Thread[]): string {
   return threads.length
-    ? threads.map((thread) => `- [${thread.id}] (${thread.status}) ${thread.title}: ${thread.summary}`).join("\n")
+    ? threads
+        .map((thread) => `- [${thread.id}] (${thread.status}) ${thread.title}: ${thread.summary}`)
+        .join("\n")
     : "_None._";
 }
 
@@ -322,31 +361,33 @@ export function renderChronicleForContext(events: ChronicleEvent[]): string {
 }
 
 export function compactTurnHistory(logs: string[], fullNarrationCount = 1): string {
-  return logs.map((log, index) => {
-    const parsed = matter(log);
-    const turn = typeof parsed.data.turn === "number" ? parsed.data.turn : "?";
-    const kind = turnKind(parsed.data.turn, parsed.data.turnKind);
-    const encoded = parsed.data.contentCodec === CONTENT_CODEC;
-    const action = storedSectionText(parsed.content, "Player Action", encoded);
-    const summary = storedSectionText(parsed.content, "Summary", encoded);
-    const narration = storedSectionText(parsed.content, "Narration", encoded);
-    const includeNarration = index >= logs.length - fullNarrationCount;
-    if (kind === "appeal") {
+  return logs
+    .map((log, index) => {
+      const parsed = matter(log);
+      const turn = typeof parsed.data.turn === "number" ? parsed.data.turn : "?";
+      const kind = turnKind(parsed.data.turn, parsed.data.turnKind);
+      const encoded = parsed.data.contentCodec === CONTENT_CODEC;
+      const action = storedSectionText(parsed.content, "Player Action", encoded);
+      const summary = storedSectionText(parsed.content, "Summary", encoded);
+      const narration = storedSectionText(parsed.content, "Narration", encoded);
+      const includeNarration = index >= logs.length - fullNarrationCount;
+      if (kind === "appeal") {
+        return [
+          `### Administrative Appeal ${turn}`,
+          `Appeal request: ${action}`,
+          ...(includeNarration ? [`Decision explanation:\n${narration}`] : []),
+          `Administrative decision summary: ${summary || narration}`,
+          "This append-only correction does not advance in-world time and is not a new fictional event.",
+        ].join("\n\n");
+      }
       return [
-        `### Administrative Appeal ${turn}`,
-        `Appeal request: ${action}`,
-        ...(includeNarration ? [`Decision explanation:\n${narration}`] : []),
-        `Administrative decision summary: ${summary || narration}`,
-        "This append-only correction does not advance in-world time and is not a new fictional event.",
+        `### Turn ${turn}`,
+        `Action: ${action}`,
+        ...(includeNarration ? [`Immediate narration:\n${narration}`] : []),
+        `Durable outcome summary: ${summary || narration}`,
       ].join("\n\n");
-    }
-    return [
-      `### Turn ${turn}`,
-      `Action: ${action}`,
-      ...(includeNarration ? [`Immediate narration:\n${narration}`] : []),
-      `Durable outcome summary: ${summary || narration}`,
-    ].join("\n\n");
-  }).join("\n\n---\n\n");
+    })
+    .join("\n\n---\n\n");
 }
 
 function turnKind(turn: unknown, value: unknown): TurnKind {
@@ -382,12 +423,12 @@ export function parseTurnGenerationMetadata(log: string): TurnGenerationMetadata
   if (!Number.isInteger(parsed.data.turn) || parsed.data.turn < 0) {
     throw new Error("Turn log is missing a valid turn number");
   }
-  const provider = typeof parsed.data.provider === "string" && parsed.data.provider
-    ? parsed.data.provider
-    : "unknown";
-  const model = typeof parsed.data.model === "string" && parsed.data.model
-    ? parsed.data.model
-    : "unknown";
+  const provider =
+    typeof parsed.data.provider === "string" && parsed.data.provider
+      ? parsed.data.provider
+      : "unknown";
+  const model =
+    typeof parsed.data.model === "string" && parsed.data.model ? parsed.data.model : "unknown";
   const parsedUsage = UsageSchema.safeParse(parsed.data.usage);
   const usage = parsedUsage.success ? parsedUsage.data : undefined;
   return {
@@ -428,11 +469,13 @@ export function validatePreparedTurnLog(log: string): TurnOperationLedger {
     throw new Error("Only turn zero may be an opening turn");
   }
   const appealTargetTurn = parsed.data.appealTargetTurn;
-  if (appealTargetTurn !== undefined
-    && (!Number.isInteger(appealTargetTurn)
-      || appealTargetTurn < 1
-      || appealTargetTurn >= turn
-      || kind !== "appeal")) {
+  if (
+    appealTargetTurn !== undefined &&
+    (!Number.isInteger(appealTargetTurn) ||
+      appealTargetTurn < 1 ||
+      appealTargetTurn >= turn ||
+      kind !== "appeal")
+  ) {
     throw new Error("Prepared turn log has invalid appeal target metadata");
   }
 
@@ -454,7 +497,10 @@ export function validatePreparedTurnLog(log: string): TurnOperationLedger {
 }
 
 /** Decode only player-visible turn history, excluding provider metadata and state operations. */
-export function parsePlayerVisibleTurn(log: string, language: LanguageCode = DEFAULT_LANGUAGE): PlayerVisibleTurn {
+export function parsePlayerVisibleTurn(
+  log: string,
+  language: LanguageCode = DEFAULT_LANGUAGE,
+): PlayerVisibleTurn {
   const parsed = matter(log);
   const encoded = parsed.data.contentCodec === CONTENT_CODEC;
   if (!Number.isInteger(parsed.data.turn) || parsed.data.turn < 0) {
@@ -463,8 +509,10 @@ export function parsePlayerVisibleTurn(log: string, language: LanguageCode = DEF
   const turn = parsed.data.turn as number;
   const kind = turnKind(turn, parsed.data.turnKind);
   const appealTargetTurn = parsed.data.appealTargetTurn;
-  if (appealTargetTurn !== undefined
-    && (!Number.isInteger(appealTargetTurn) || appealTargetTurn < 1 || kind !== "appeal")) {
+  if (
+    appealTargetTurn !== undefined &&
+    (!Number.isInteger(appealTargetTurn) || appealTargetTurn < 1 || kind !== "appeal")
+  ) {
     throw new Error("Turn log has invalid appeal target metadata");
   }
   const action = storedSectionText(parsed.content, "Player Action", encoded);
@@ -491,7 +539,11 @@ export function parsePlayerVisibleTurn(log: string, language: LanguageCode = DEF
   };
 }
 
-export function renderContextEntities(entities: Entity[], mandatoryIds: Set<string>, budget: number): string {
+export function renderContextEntities(
+  entities: Entity[],
+  mandatoryIds: Set<string>,
+  budget: number,
+): string {
   const included: string[] = [];
   const omitted: string[] = [];
   let used = 0;
@@ -505,7 +557,9 @@ export function renderContextEntities(entities: Entity[], mandatoryIds: Set<stri
     }
   }
   if (omitted.length) {
-    included.push(`CONTEXT BUDGET NOTE\n${omitted.length} lower-priority linked entities were omitted from this prompt view: ${omitted.join(", ")}. Their Markdown state remains intact.`);
+    included.push(
+      `CONTEXT BUDGET NOTE\n${omitted.length} lower-priority linked entities were omitted from this prompt view: ${omitted.join(", ")}. Their Markdown state remains intact.`,
+    );
   }
   return included.join("\n\n---\n\n");
 }
@@ -514,10 +568,12 @@ export function renderTurnLog(turn: number, committed: CommittedTurn): string {
   const kind = committed.kind ?? (turn === 0 ? "opening" : "gameplay");
   if (kind === "opening" && turn !== 0) throw new Error("Only turn zero may be an opening turn");
   if (kind === "appeal" && committed.check) throw new Error("An appeal cannot contain a check");
-  if (committed.appealTargetTurn !== undefined
-    && (!Number.isInteger(committed.appealTargetTurn)
-      || committed.appealTargetTurn < 1
-      || committed.appealTargetTurn >= turn)) {
+  if (
+    committed.appealTargetTurn !== undefined &&
+    (!Number.isInteger(committed.appealTargetTurn) ||
+      committed.appealTargetTurn < 1 ||
+      committed.appealTargetTurn >= turn)
+  ) {
     throw new Error("An appeal target must reference an earlier committed turn");
   }
   if (kind !== "appeal" && committed.appealTargetTurn !== undefined) {
@@ -530,10 +586,14 @@ export function renderTurnLog(turn: number, committed: CommittedTurn): string {
     contentCodec: CONTENT_CODEC,
     turn,
     turnKind: kind,
-    ...(committed.appealTargetTurn === undefined ? {} : { appealTargetTurn: committed.appealTargetTurn }),
+    ...(committed.appealTargetTurn === undefined
+      ? {}
+      : { appealTargetTurn: committed.appealTargetTurn }),
     provider: committed.provider,
     model: committed.model,
-    ...(committed.protocolVersion === undefined ? {} : { protocolVersion: committed.protocolVersion }),
+    ...(committed.protocolVersion === undefined
+      ? {}
+      : { protocolVersion: committed.protocolVersion }),
     ...(committed.usage ? { usage: committed.usage } : {}),
   };
   return matter.stringify(

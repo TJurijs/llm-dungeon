@@ -8,3 +8,4 @@ evaluations/
 work/
 package-lock.json
 docs/images/
+.claude/

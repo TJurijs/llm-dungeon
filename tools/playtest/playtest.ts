@@ -112,39 +112,49 @@ export function createUnifiedPlaytestRunner(
     const value = environment[key];
     return value ? [value] : [];
   });
-  return new PlaytestRunner(projectRoot, playtestsRoot, {
-    profileFor: (target) => profiles.require({
-      provider: target.config.provider,
-      model: target.config.model,
-      route: target.route,
-    }),
-    preflightTarget: async (target, language) => {
-      const effective = await assessments.effective({
-        provider: target.config.provider,
-        model: target.config.model,
-        route: target.route,
-      }, language);
-      if (effective.adapterStatus !== "calibrated"
-        || effective.profileFingerprint !== target.executionProfileFingerprint) {
-        throw new Error(
-          `Model ${target.config.provider}/${target.config.model} via ${target.route} is not currently calibrated with the selected execution profile`,
+  return new PlaytestRunner(
+    projectRoot,
+    playtestsRoot,
+    {
+      profileFor: (target) =>
+        profiles.require({
+          provider: target.config.provider,
+          model: target.config.model,
+          route: target.route,
+        }),
+      preflightTarget: async (target, language) => {
+        const effective = await assessments.effective(
+          {
+            provider: target.config.provider,
+            model: target.config.model,
+            route: target.route,
+          },
+          language,
         );
-      }
-      await modelCatalog.assertAvailable({
-        provider: target.config.provider,
-        model: target.config.model,
-      }, language);
+        if (
+          effective.adapterStatus !== "calibrated" ||
+          effective.profileFingerprint !== target.executionProfileFingerprint
+        ) {
+          throw new Error(
+            `Model ${target.config.provider}/${target.config.model} via ${target.route} is not currently calibrated with the selected execution profile`,
+          );
+        }
+        await modelCatalog.assertAvailable(
+          {
+            provider: target.config.provider,
+            model: target.config.model,
+          },
+          language,
+        );
+      },
+      providerFor: (target, profile) =>
+        createProvider(target.config, environment, fetch, { executionProfile: profile }),
+      assessmentCatalog: assessments,
+      secrets,
+      ...(options.now ? { now: options.now } : {}),
     },
-    providerFor: (target, profile) => createProvider(
-      target.config,
-      environment,
-      fetch,
-      { executionProfile: profile },
-    ),
-    assessmentCatalog: assessments,
-    secrets,
-    ...(options.now ? { now: options.now } : {}),
-  }, options.onProgress);
+    options.onProgress,
+  );
 }
 
 function safeCalibrationEvidenceId(now: Date): string {
@@ -207,10 +217,13 @@ class CalibrationCostProvider implements LlmProvider {
       request.generationPhase ?? "decision",
       request.repairOfPhase,
     );
-    const reservationEstimate = estimatePlaytestReservation({
-      ...request,
-      maxOutputTokens,
-    } as StructuredRequest<unknown>, this.price);
+    const reservationEstimate = estimatePlaytestReservation(
+      {
+        ...request,
+        maxOutputTokens,
+      } as StructuredRequest<unknown>,
+      this.price,
+    );
     const reservation = await this.cost.acquire(reservationEstimate);
     try {
       const result = await this.base.generateStructured(request);
@@ -221,10 +234,7 @@ class CalibrationCostProvider implements LlmProvider {
       return result;
     } catch (error) {
       const usage = structuredFailureDetails(error)?.usage;
-      this.cost.commit(
-        reservation,
-        estimatePlaytestCost(usage, this.price, reservationEstimate),
-      );
+      this.cost.commit(reservation, estimatePlaytestCost(usage, this.price, reservationEstimate));
       throw error;
     }
   }
@@ -252,7 +262,8 @@ export async function calibrateModel(
     );
   }
   for (const [label, value] of Object.entries(price)) {
-    if (!Number.isFinite(value) || value < 0) throw new Error(`${label} must be a nonnegative finite USD-per-million rate`);
+    if (!Number.isFinite(value) || value < 0)
+      throw new Error(`${label} must be a nonnegative finite USD-per-million rate`);
   }
   const route = options.route ?? defaultPlaytestRoute(config.provider);
   const baseline = defaultDraftFor(config, route);
@@ -265,10 +276,14 @@ export async function calibrateModel(
     );
   }
   for (const variant of variants) {
-    if (variant.key.provider !== config.provider
-      || variant.key.model !== config.model
-      || variant.key.route !== route) {
-      throw new Error("Every calibration variant must target the selected provider, model, and route");
+    if (
+      variant.key.provider !== config.provider ||
+      variant.key.model !== config.model ||
+      variant.key.route !== route
+    ) {
+      throw new Error(
+        "Every calibration variant must target the selected provider, model, and route",
+      );
     }
     if (variant.adapterRevision !== MODEL_EXECUTION_ADAPTER_REVISION) {
       throw new Error(
@@ -279,20 +294,24 @@ export async function calibrateModel(
   const evidenceId = calibrationEvidenceId(options.evidenceId ?? safeCalibrationEvidenceId(now()));
   const evidenceStore = new CalibrationEvidenceStore(path.join(playtestsRoot, "calibration"));
   const cost = new PlaytestCostManager(options.maxCostUsd);
-  const attempts = await runCalibrationVariants(variants, (variant) => {
-    const provisional = freezeModelExecutionProfile({
-      ...variant,
-      calibratedAt: now().toISOString(),
-      evidenceRef: `playtests/calibration/${evidenceId}`,
-    });
-    const provider = createProvider(
-      { ...config, provider: variant.key.provider, model: variant.key.model },
-      environment,
-      fetch,
-      { executionProfile: provisional },
-    );
-    return new CalibrationCostProvider(provider, provisional, cost, price);
-  }, { evidenceId, evidenceStore, now });
+  const attempts = await runCalibrationVariants(
+    variants,
+    (variant) => {
+      const provisional = freezeModelExecutionProfile({
+        ...variant,
+        calibratedAt: now().toISOString(),
+        evidenceRef: `playtests/calibration/${evidenceId}`,
+      });
+      const provider = createProvider(
+        { ...config, provider: variant.key.provider, model: variant.key.model },
+        environment,
+        fetch,
+        { executionProfile: provisional },
+      );
+      return new CalibrationCostProvider(provider, provisional, cost, price);
+    },
+    { evidenceId, evidenceStore, now },
+  );
   const selectedAttempt = selectCalibrationProfile(attempts);
   const profiles = new ModelExecutionProfileStore(projectRoot);
   const assessments = new ModelAssessmentCatalog(projectRoot, now);

@@ -6,7 +6,9 @@ function element(tag, className, text) {
 }
 
 function stringValues(value) {
-  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()) : [];
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim())
+    : [];
 }
 
 function appendList(parent, heading, values, t) {
@@ -24,16 +26,24 @@ function appendList(parent, heading, values, t) {
 }
 
 function appendFacts(parent, facts, t) {
-  appendList(parent, t("knownDetails"), [
-    ...stringValues(facts?.established),
-    ...stringValues(facts?.knowledge),
-    ...stringValues(facts?.history),
-  ], t);
+  appendList(
+    parent,
+    t("knownDetails"),
+    [
+      ...stringValues(facts?.established),
+      ...stringValues(facts?.knowledge),
+      ...stringValues(facts?.history),
+    ],
+    t,
+  );
 }
 
 function header(inspection) {
   const value = element("header", "inspection-card-header");
-  value.append(element("h3", "", inspection.name), element("span", "inspection-status", inspection.status));
+  value.append(
+    element("h3", "", inspection.name),
+    element("span", "inspection-status", inspection.status),
+  );
   return value;
 }
 
@@ -64,7 +74,9 @@ function character(inspection, t) {
     card,
     t("relationships"),
     Array.isArray(inspection.relationships)
-      ? inspection.relationships.map((relationship) => `${relationship.name} — ${relationship.summary}`)
+      ? inspection.relationships.map(
+          (relationship) => `${relationship.name} — ${relationship.summary}`,
+        )
       : [],
     t,
   );

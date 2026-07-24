@@ -25,7 +25,11 @@ export class BrowserChatHistory {
   entries(campaignId) {
     if (!this.histories.has(campaignId)) {
       let parsed = { entries: [], migrated: false };
-      try { parsed = parseTerminalHistory(this.storage?.getItem(terminalStorageKey(campaignId))); } catch { /* Storage can be unavailable. */ }
+      try {
+        parsed = parseTerminalHistory(this.storage?.getItem(terminalStorageKey(campaignId)));
+      } catch {
+        /* Storage can be unavailable. */
+      }
       this.histories.set(campaignId, parsed.entries);
       if (parsed.migrated) this.persist(campaignId);
     }
@@ -51,13 +55,21 @@ export class BrowserChatHistory {
 
   remove(campaignId) {
     this.histories.delete(campaignId);
-    try { this.storage?.removeItem(terminalStorageKey(campaignId)); } catch { /* Storage can be unavailable. */ }
+    try {
+      this.storage?.removeItem(terminalStorageKey(campaignId));
+    } catch {
+      /* Storage can be unavailable. */
+    }
   }
 
   persist(campaignId) {
     const { entries, serialized } = serializeTerminalHistory(this.histories.get(campaignId) ?? []);
     this.histories.set(campaignId, entries);
-    try { this.storage?.setItem(terminalStorageKey(campaignId), serialized); } catch { /* Storage can be unavailable or full. */ }
+    try {
+      this.storage?.setItem(terminalStorageKey(campaignId), serialized);
+    } catch {
+      /* Storage can be unavailable or full. */
+    }
   }
 }
 
@@ -66,7 +78,8 @@ export function chatEntryPresentation(entry) {
   if (["YOU", "ВЫ"].includes(title)) return { type: "user", icon: "player" };
   if (title.includes("D100") || title.includes("ПРОВЕРКА")) return { type: "check", icon: "◆" };
   if (entry.mode === "error") return { type: "error", icon: "!" };
-  if (entry.kind === "appeal" || title.includes("APPEAL") || title.includes("АПЕЛЛЯЦ")) return { type: "appeal", icon: "!" };
+  if (entry.kind === "appeal" || title.includes("APPEAL") || title.includes("АПЕЛЛЯЦ"))
+    return { type: "appeal", icon: "!" };
   if (title.includes("ANSWER") || title.includes("ОТВЕТ")) return { type: "question", icon: "?" };
   if (!entry.kind && entry.mode === "success") return { type: "question", icon: "?" };
   return { type: entry.kind === "opening" ? "opening" : "assistant", icon: "◆" };
@@ -122,7 +135,8 @@ export function createChatEntry(entry, playerName, labels) {
   icon.className = "chat-entry-icon";
   icon.setAttribute("aria-hidden", "true");
   const tooltip = generationTooltip(entry.generation);
-  if (tooltip && ["opening", "assistant", "appeal", "question"].includes(presentation.type)) icon.title = tooltip;
+  if (tooltip && ["opening", "assistant", "appeal", "question"].includes(presentation.type))
+    icon.title = tooltip;
   if (presentation.icon === "player") icon.append(playerIcon());
   else icon.textContent = presentation.icon;
   const label = document.createElement("span");

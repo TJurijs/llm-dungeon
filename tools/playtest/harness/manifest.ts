@@ -9,7 +9,9 @@ export async function readPlaytestManifest(target: string): Promise<PlaytestMani
   return PlaytestManifestSchema.parse(JSON.parse(await readFile(target, "utf8")));
 }
 
-export async function readOptionalPlaytestManifest(target: string): Promise<PlaytestManifest | undefined> {
+export async function readOptionalPlaytestManifest(
+  target: string,
+): Promise<PlaytestManifest | undefined> {
   try {
     return await readPlaytestManifest(target);
   } catch (error) {
@@ -32,7 +34,10 @@ export function playtestCodeVersion(projectRoot: string): PlaytestManifest["code
       return [];
     }
   };
-  for (const target of [path.join(projectRoot, "package.json"), ...collect(path.join(projectRoot, "src"))]) {
+  for (const target of [
+    path.join(projectRoot, "package.json"),
+    ...collect(path.join(projectRoot, "src")),
+  ]) {
     try {
       hasher.update(path.relative(projectRoot, target));
       hasher.update(readFileSync(target));

@@ -1,4 +1,9 @@
-import { campaignSetupDefaults, DEFAULT_LANGUAGE, languageInstruction, type LanguageCode } from "../language.js";
+import {
+  campaignSetupDefaults,
+  DEFAULT_LANGUAGE,
+  languageInstruction,
+  type LanguageCode,
+} from "../language.js";
 import { renderPrompt, section, type PromptDocument } from "./render.js";
 
 export interface SetupPromptInput {
@@ -12,13 +17,21 @@ export function setupPromptDocument(input: SetupPromptInput): PromptDocument {
   const language = input.language ?? DEFAULT_LANGUAGE;
   const defaults = campaignSetupDefaults(language);
   return renderPrompt([
-    section("setup-task", undefined, "Create the initial persistent state for a single-player, text-based roleplaying sandbox campaign. Its genre and setting are defined entirely by the world configuration and seeds below."),
+    section(
+      "setup-task",
+      undefined,
+      "Create the initial persistent state for a single-player, text-based roleplaying sandbox campaign. Its genre and setting are defined entirely by the world configuration and seeds below.",
+    ),
     section(
       "world-configuration",
       "WORLD AND STYLE CONFIGURATION — CREATIVE GUIDANCE",
       `${input.worldRules}\n\nTreat this configuration together with the campaign seeds as the authoritative creative brief. They define the campaign's genre, era, technology level, setting, tone, pacing, content boundaries, and fiction, and may set any of these freely — there is no default or assumed medieval-fantasy setting, and you must not import genre conventions the brief does not call for. Honor the brief over any generic convention. This authority governs fiction only: it never alters the enforced output schema, durable-state authority, dice, outcome calculation, or other application-owned mechanics.`,
     ),
-    section("setup-seeds", "CAMPAIGN SEEDS", `PREMISE: ${input.premise.trim() || defaults.premise}\nCHARACTER: ${input.character.trim() || defaults.characterConcept}`),
+    section(
+      "setup-seeds",
+      "CAMPAIGN SEEDS",
+      `PREMISE: ${input.premise.trim() || defaults.premise}\nCHARACTER: ${input.character.trim() || defaults.characterConcept}`,
+    ),
     section("output-language", "OUTPUT LANGUAGE", languageInstruction(language)),
     section(
       "setup-requirements",

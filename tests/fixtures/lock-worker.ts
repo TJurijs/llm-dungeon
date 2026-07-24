@@ -1,7 +1,8 @@
 import { acquireFileLock } from "../../src/persistence/lock.js";
 
 const target = process.argv[2];
-if (!target || !process.send) throw new Error("Lock worker requires an IPC channel and target path");
+if (!target || !process.send)
+  throw new Error("Lock worker requires an IPC channel and target path");
 
 async function releaseOnCommand(release: () => Promise<void>, nextMessage: unknown): Promise<void> {
   if (nextMessage !== "release") return;
@@ -20,13 +21,20 @@ async function acquireOnCommand(message: unknown): Promise<void> {
   try {
     const release = await acquireFileLock(target!, "Worker lock");
     process.send?.({ type: "acquired" });
-    process.once("message", (nextMessage) => { void releaseOnCommand(release, nextMessage); });
+    process.once("message", (nextMessage) => {
+      void releaseOnCommand(release, nextMessage);
+    });
   } catch (error) {
     const message = String((error as Error).message);
-    process.send?.({ type: /locked by another running process/i.test(message) ? "locked" : "error", error: message });
+    process.send?.({
+      type: /locked by another running process/i.test(message) ? "locked" : "error",
+      error: message,
+    });
     process.disconnect();
   }
 }
 
 process.send({ type: "ready" });
-process.once("message", (message) => { void acquireOnCommand(message); });
+process.once("message", (message) => {
+  void acquireOnCommand(message);
+});

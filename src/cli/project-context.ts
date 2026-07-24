@@ -5,7 +5,11 @@ import { DungeonEngine } from "../engine.js";
 import { loadProjectEnv } from "../env.js";
 import { loadAppConfig, saveAppConfig, type LanguageCode } from "../language.js";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../connection-probe.js";
-import { LlmModelCatalog, ModelUnavailableError } from "../llm-model-catalog.js";
+import {
+  LlmModelCatalog,
+  ModelUnavailableError,
+  PUBLIC_LLM_PROVIDER_DEFINITIONS,
+} from "../llm-model-catalog.js";
 import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
 import { ModelExecutionProfileStore } from "../model-execution-profile-store.js";
 import type { FrozenModelExecutionProfile } from "../model-execution-profile.js";
@@ -14,7 +18,11 @@ import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
 import { StateStore } from "../store.js";
 import { atomicWriteJson } from "../persistence/files.js";
 import type { GameEngine, LlmProvider, NewGameInput } from "../types.js";
-import { resolveWorldProfile, saveWorldProfile, type ResolvedWorldProfile } from "../world-profile.js";
+import {
+  resolveWorldProfile,
+  saveWorldProfile,
+  type ResolvedWorldProfile,
+} from "../world-profile.js";
 import { takePrompt } from "./prompt.js";
 
 export interface CliProjectPaths {
@@ -57,13 +65,17 @@ export class CliProjectContext {
     const provider = takePrompt(
       await p.select({
         message: "Choose a provider",
-        options: [
-          { value: "gemini", label: "Google Gemini", hint: "recommended · GEMINI_API_KEY" },
-          { value: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY" },
-          { value: "xai", label: "xAI", hint: "XAI_API_KEY" },
-          { value: "openai", label: "OpenAI", hint: "OPENAI_API_KEY" },
-          { value: "deepseek", label: "DeepSeek", hint: "DEEPSEEK_API_KEY · strict-schema test required" },
-        ],
+        options: PUBLIC_LLM_PROVIDER_DEFINITIONS.map((definition) => ({
+          value: definition.id,
+          label: definition.label,
+          hint: [
+            definition.recommended ? "recommended" : undefined,
+            definition.envKey,
+            definition.id === "deepseek" ? "strict-schema test required" : undefined,
+          ]
+            .filter((value) => value !== undefined)
+            .join(" · "),
+        })),
       }),
     ) as ProviderConfig["provider"];
     const model = takePrompt(
@@ -73,9 +85,10 @@ export class CliProjectContext {
         validate: (value) => (value.trim() ? undefined : "A model ID is required"),
       }),
     );
-    const providerModel = provider === "gemini" && model.startsWith("google/gemini-")
-      ? model.slice("google/".length)
-      : model;
+    const providerModel =
+      provider === "gemini" && model.startsWith("google/gemini-")
+        ? model.slice("google/".length)
+        : model;
     const config = ProviderConfigSchema.parse({
       provider,
       model: providerModel,
@@ -85,10 +98,17 @@ export class CliProjectContext {
     await this.assertTerminalModelAvailable(config);
     if (providerModel === "gemini-3.6-flash" || providerModel === "google/gemini-3.6-flash") {
       p.log.success("gemini-3.6-flash is the playtested, recommended DM model.");
-    } else if (providerModel === "gemini-3.5-flash-lite" || providerModel === "google/gemini-3.5-flash-lite") {
-      p.log.info("gemini-3.5-flash-lite is playtested and certified bilingual; a fast, low-cost alternative to the DM baseline.");
+    } else if (
+      providerModel === "gemini-3.5-flash-lite" ||
+      providerModel === "google/gemini-3.5-flash-lite"
+    ) {
+      p.log.info(
+        "gemini-3.5-flash-lite is playtested and certified bilingual; a fast, low-cost alternative to the DM baseline.",
+      );
     } else {
-      p.log.warn("This model is unverified. It may reject the enforced schemas or behave differently in play.");
+      p.log.warn(
+        "This model is unverified. It may reject the enforced schemas or behave differently in play.",
+      );
     }
     await atomicWriteJson(this.paths.providerConfig, config);
     const keyName: Record<ProviderConfig["provider"], string> = {
@@ -152,22 +172,26 @@ export class CliProjectContext {
       route,
     });
     if (!profile) return undefined;
-    const assessment = await this.modelAssessments().effective({
-      provider: config.provider,
-      model: config.model,
-      route,
-    }, language);
-    return assessment.adapterStatus === "calibrated"
-      && assessment.profileFingerprint === profile.fingerprint
+    const assessment = await this.modelAssessments().effective(
+      {
+        provider: config.provider,
+        model: config.model,
+        route,
+      },
+      language,
+    );
+    return assessment.adapterStatus === "calibrated" &&
+      assessment.profileFingerprint === profile.fingerprint
       ? profile
       : undefined;
   }
 
   private async campaignCatalog(defaultProviderConfig?: ProviderConfig): Promise<CampaignCatalog> {
-    const config = defaultProviderConfig ?? await this.savedProviderConfig();
-    return new CampaignCatalog(this.paths.dataRoot, config === undefined
-      ? {}
-      : { defaultProviderConfig: config });
+    const config = defaultProviderConfig ?? (await this.savedProviderConfig());
+    return new CampaignCatalog(
+      this.paths.dataRoot,
+      config === undefined ? {} : { defaultProviderConfig: config },
+    );
   }
 
   async campaigns(): Promise<CampaignCatalogSummary[]> {
@@ -189,11 +213,16 @@ export class CliProjectContext {
     );
   }
 
-  async createCampaignSession(input: NewGameInput, config?: ProviderConfig): Promise<CliCampaignSession> {
-    const selectedConfig = ProviderConfigSchema.parse(config ?? await this.providerConfig());
-    const campaignLanguage = input.language ?? await this.language();
+  async createCampaignSession(
+    input: NewGameInput,
+    config?: ProviderConfig,
+  ): Promise<CliCampaignSession> {
+    const selectedConfig = ProviderConfigSchema.parse(config ?? (await this.providerConfig()));
+    const campaignLanguage = input.language ?? (await this.language());
     await this.assertTerminalModelAvailable(selectedConfig, campaignLanguage);
-    const created = await (await this.campaignCatalog(selectedConfig)).createCampaign(input, {
+    const created = await (
+      await this.campaignCatalog(selectedConfig)
+    ).createCampaign(input, {
       providerConfig: selectedConfig,
     });
     return {
@@ -232,11 +261,11 @@ export class CliProjectContext {
   }
 
   async worldProfile(language?: LanguageCode): Promise<ResolvedWorldProfile> {
-    return resolveWorldProfile(this.paths.root, language ?? await this.language());
+    return resolveWorldProfile(this.paths.root, language ?? (await this.language()));
   }
 
   async saveWorldProfile(markdown: string, language?: LanguageCode): Promise<string> {
-    return saveWorldProfile(this.paths.root, language ?? await this.language(), markdown);
+    return saveWorldProfile(this.paths.root, language ?? (await this.language()), markdown);
   }
 
   private async assertTerminalModelAvailable(
@@ -244,7 +273,7 @@ export class CliProjectContext {
     language?: LanguageCode,
   ): Promise<void> {
     const selection = { provider: config.provider, model: config.model };
-    const requiredLanguage = language ?? await this.language();
+    const requiredLanguage = language ?? (await this.language());
     const catalog = new LlmModelCatalog(this.paths.root, {
       testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
       legacySelection: selection,
@@ -254,8 +283,8 @@ export class CliProjectContext {
     } catch (error) {
       if (!(error instanceof ModelUnavailableError)) throw error;
       throw new Error(
-        `Model ${config.provider}/${config.model} is not available for terminal use. `
-        + `Open the browser Settings page, test it for ${requiredLanguage}, and enable it before selecting it in the terminal.`,
+        `Model ${config.provider}/${config.model} is not available for terminal use. ` +
+          `Open the browser Settings page, test it for ${requiredLanguage}, and enable it before selecting it in the terminal.`,
         { cause: error },
       );
     }

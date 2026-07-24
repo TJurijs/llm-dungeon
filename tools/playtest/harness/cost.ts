@@ -25,7 +25,10 @@ export class PlaytestCostManager {
   private readonly reservations = new Map<symbol, number>();
   private readonly waiters: BudgetWaiter[] = [];
 
-  constructor(readonly ceilingUsd: number, spentUsd = 0) {
+  constructor(
+    readonly ceilingUsd: number,
+    spentUsd = 0,
+  ) {
     if (!Number.isFinite(ceilingUsd) || ceilingUsd <= 0) {
       throw new Error("Playtest cost ceiling must be positive");
     }
@@ -41,7 +44,8 @@ export class PlaytestCostManager {
   }
 
   addHistorical(costUsd: number): void {
-    if (!Number.isFinite(costUsd) || costUsd < 0) throw new Error("Historical cost must be nonnegative");
+    if (!Number.isFinite(costUsd) || costUsd < 0)
+      throw new Error("Historical cost must be nonnegative");
     this.committed = roundUsd(this.committed + costUsd);
     this.drain();
   }
@@ -105,9 +109,9 @@ export function estimatePlaytestReservation(
 ): number {
   const inputUpperBound = Buffer.byteLength(`${request.system}\n${request.prompt}`, "utf8") + 512;
   return roundUsd(
-    (inputUpperBound * cost.inputPerMillion
-      + (request.maxOutputTokens ?? 4_000) * cost.outputPerMillion)
-      / 1_000_000,
+    (inputUpperBound * cost.inputPerMillion +
+      (request.maxOutputTokens ?? 4_000) * cost.outputPerMillion) /
+      1_000_000,
   );
 }
 

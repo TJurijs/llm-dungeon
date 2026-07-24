@@ -6,8 +6,10 @@ import { StateStore } from "../src/store.js";
 
 export const setupFixture: SetupResult = {
   campaignTitle: "The Crooked Crown",
-  scenarioMarkdown: "The northern road has gone quiet, and rumors gather in the Crooked Crown tavern.",
-  openingNarration: "Rain needles the tavern windows as a hooded traveler sets a sealed letter beside your cup.",
+  scenarioMarkdown:
+    "The northern road has gone quiet, and rumors gather in the Crooked Crown tavern.",
+  openingNarration:
+    "Rain needles the tavern windows as a hooded traveler sets a sealed letter beside your cup.",
   timeLabel: "Day 1, 20:00",
   player: {
     id: "player:hero",

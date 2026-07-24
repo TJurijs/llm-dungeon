@@ -25,7 +25,10 @@ export {
   OpenRouterProvider,
   XaiProvider,
 } from "./providers/adapters.js";
-export { providerSupportsTemperature, type ProviderExecutionOptions } from "./providers/transport.js";
+export {
+  providerSupportsTemperature,
+  type ProviderExecutionOptions,
+} from "./providers/transport.js";
 
 /** Increment when provider transport or schema projection changes compatibility. */
 export const PROVIDER_ADAPTER_COMPATIBILITY_REVISION = MODEL_EXECUTION_ADAPTER_REVISION;
@@ -116,4 +119,3 @@ export function createProvider(
     }
   }
 }
-

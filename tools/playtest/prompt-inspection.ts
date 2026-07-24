@@ -66,32 +66,34 @@ const PROMPT_SOURCE_FILES: Record<PromptPhase, readonly string[]> = {
   appeal: ["src/prompts/appeal.ts"],
   "schema-repair": ["src/prompts/recovery.ts"],
   "domain-correction": ["src/prompts/recovery.ts"],
-  "simulated-player": ["src/prompts/playtest-player.ts"],
-  judge: ["src/playtest/judge.ts"],
+  "simulated-player": ["tools/playtest/prompts/playtest-player.ts"],
+  judge: ["tools/playtest/harness/judge.ts"],
   "connection-probe": ["src/prompts/connection.ts"],
 };
 
-const CONTEXT_PLACEHOLDER = "<AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime; hidden state is never exposed by this inspector>";
+const CONTEXT_PLACEHOLDER =
+  "<AUTHORITATIVE CAMPAIGN CONTEXT — supplied at runtime; hidden state is never exposed by this inspector>";
 const ACTION_PLACEHOLDER = "<PLAYER ACTION>";
-const WORLD_PROFILE_PLACEHOLDER = "<WORLD AND DM-STYLE PROFILE — selected language profile supplied at runtime>";
+const WORLD_PROFILE_PLACEHOLDER =
+  "<WORLD AND DM-STYLE PROFILE — selected language profile supplied at runtime>";
 
 function previewCheck() {
-  return resolveCheck({
-    name: "Example uncertain action",
-    difficulty: 50,
-    modifiers: [{ label: "Example meaningful advantage", value: 10 }],
-    exceptionalSuccessStakes: "The attempt succeeds with an additional established advantage.",
-    successStakes: "The attempt succeeds.",
-    failureStakes: "The attempt fails with a proportionate setback.",
-    severeFailureStakes: "The attempt fails and materially worsens the situation.",
-    failureCampaignStatus: "none",
-  }, 55);
+  return resolveCheck(
+    {
+      name: "Example uncertain action",
+      difficulty: 50,
+      modifiers: [{ label: "Example meaningful advantage", value: 10 }],
+      exceptionalSuccessStakes: "The attempt succeeds with an additional established advantage.",
+      successStakes: "The attempt succeeds.",
+      failureStakes: "The attempt fails with a proportionate setback.",
+      severeFailureStakes: "The attempt fails and materially worsens the situation.",
+      failureCampaignStatus: "none",
+    },
+    55,
+  );
 }
 
-export function inspectPrompt(
-  phase: PromptPhase,
-  language: LanguageCode,
-): PromptInspection {
+export function inspectPrompt(phase: PromptPhase, language: LanguageCode): PromptInspection {
   let system = DM_SYSTEM_PROMPT;
   let prompt = "";
   let sections: readonly string[] = [];
@@ -102,7 +104,12 @@ export function inspectPrompt(
       sections = DM_SYSTEM_SECTIONS.map((item) => item.id);
       break;
     case "setup": {
-      const document = setupPromptDocument({ worldRules: WORLD_PROFILE_PLACEHOLDER, premise: "", character: "", language });
+      const document = setupPromptDocument({
+        worldRules: WORLD_PROFILE_PLACEHOLDER,
+        premise: "",
+        character: "",
+        language,
+      });
       prompt = document.text;
       sections = document.sections.map((item) => item.id);
       break;
@@ -119,7 +126,11 @@ export function inspectPrompt(
       sections = [CHECK_DIFFICULTY_POLICY.id];
       break;
     case "resolution": {
-      const document = resolutionPromptDocument(CONTEXT_PLACEHOLDER, ACTION_PLACEHOLDER, previewCheck());
+      const document = resolutionPromptDocument(
+        CONTEXT_PLACEHOLDER,
+        ACTION_PLACEHOLDER,
+        previewCheck(),
+      );
       prompt = document.text;
       sections = document.sections.map((item) => item.id);
       break;
@@ -145,7 +156,11 @@ export function inspectPrompt(
       break;
     }
     case "schema-repair":
-      prompt = structuredRepairPrompt("<ORIGINAL TASK PROMPT>", "<INVALID MODEL RESPONSE>", new Error("<PROTOCOL VALIDATION ERROR>"));
+      prompt = structuredRepairPrompt(
+        "<ORIGINAL TASK PROMPT>",
+        "<INVALID MODEL RESPONSE>",
+        new Error("<PROTOCOL VALIDATION ERROR>"),
+      );
       sections = ["original-task", "structured-repair"];
       break;
     case "domain-correction":
@@ -157,7 +172,13 @@ export function inspectPrompt(
       sections = ["original-task", "domain-correction"];
       break;
     case "simulated-player":
-      system = playtestPlayerSystemPrompt({ id: "curious-explorer", instruction: "Explore unfamiliar places and follow discoveries." }, language);
+      system = playtestPlayerSystemPrompt(
+        {
+          id: "curious-explorer",
+          instruction: "Explore unfamiliar places and follow discoveries.",
+        },
+        language,
+      );
       prompt = playtestPlayerPrompt("<PLAYER-VISIBLE CONTEXT — no secrets>");
       sections = ["player-profile", "output-language", "player-visible-context", "next-action"];
       break;
@@ -173,7 +194,17 @@ export function inspectPrompt(
         mechanicalAudit: buildMechanicalAudit([]),
         coverage: assessCoverage(CERTIFICATION_PACKAGE, []),
       });
-      sections = ["judge-policy", "quality-rubric", "current-state-reconciliation", "check-difficulty", "deterministic-coverage", "transcript", "mechanical-audit", "starting-state", "final-state"];
+      sections = [
+        "judge-policy",
+        "quality-rubric",
+        "current-state-reconciliation",
+        "check-difficulty",
+        "deterministic-coverage",
+        "transcript",
+        "mechanical-audit",
+        "starting-state",
+        "final-state",
+      ];
       break;
     case "connection-probe":
       system = CONNECTION_SYSTEM_PROMPT;

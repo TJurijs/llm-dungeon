@@ -63,9 +63,10 @@ export function modelSpec(value: string): ParsedModelSpec {
   const routeSeparator = modelAndRoute.lastIndexOf("@");
   const model = routeSeparator < 0 ? modelAndRoute : modelAndRoute.slice(0, routeSeparator);
   const parsedProvider = ProviderConfigSchema.shape.provider.parse(provider);
-  const route = routeSeparator < 0
-    ? defaultPlaytestRoute(parsedProvider)
-    : modelAndRoute.slice(routeSeparator + 1).trim();
+  const route =
+    routeSeparator < 0
+      ? defaultPlaytestRoute(parsedProvider)
+      : modelAndRoute.slice(routeSeparator + 1).trim();
   if (!model.trim() || !route) throw new Error(`${value} must use provider:model[@route]`);
   return {
     config: ProviderConfigSchema.parse({ provider: parsedProvider, model }),
@@ -74,9 +75,15 @@ export function modelSpec(value: string): ParsedModelSpec {
 }
 
 export function languageList(value: string): LanguageCode[] {
-  return LanguageCodeSchema.array().min(1).parse(
-    value.split(",").map((language) => language.trim().toLowerCase()).filter(Boolean),
-  ).filter((language, index, all) => all.indexOf(language) === index);
+  return LanguageCodeSchema.array()
+    .min(1)
+    .parse(
+      value
+        .split(",")
+        .map((language) => language.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    .filter((language, index, all) => all.indexOf(language) === index);
 }
 
 export function collectValue(value: string, previous: string[] = []): string[] {
@@ -107,11 +114,18 @@ export function modelPrice(
   previous: Record<string, ModelPriceOverride> = {},
 ): Record<string, ModelPriceOverride> {
   const separator = value.lastIndexOf("=");
-  const rates = value.slice(separator + 1).split(",").map((item) => Number(item.trim()));
-  if (separator < 1
-    || rates.length !== 2
-    || rates.some((rate) => !Number.isFinite(rate) || rate < 0)) {
-    throw new Error(`${value} must use provider:model[@route]=input-usd-per-million,output-usd-per-million`);
+  const rates = value
+    .slice(separator + 1)
+    .split(",")
+    .map((item) => Number(item.trim()));
+  if (
+    separator < 1 ||
+    rates.length !== 2 ||
+    rates.some((rate) => !Number.isFinite(rate) || rate < 0)
+  ) {
+    throw new Error(
+      `${value} must use provider:model[@route]=input-usd-per-million,output-usd-per-million`,
+    );
   }
   const spec = modelSpec(value.slice(0, separator));
   return {
@@ -196,9 +210,10 @@ function replayDraft(profile: FrozenModelExecutionProfile): ModelExecutionProfil
 function replayCodec(
   bundle: Awaited<ReturnType<typeof readDiagnosticBundle>>,
 ): FocusedReplayCodec<unknown> {
-  const phase = bundle.expectedPhase === "repair"
-    ? bundle.request.repairOfPhase ?? "decision"
-    : bundle.expectedPhase;
+  const phase =
+    bundle.expectedPhase === "repair"
+      ? (bundle.request.repairOfPhase ?? "decision")
+      : bundle.expectedPhase;
   if (phase === "setup") return { schema: SetupResultSchema };
   if (/playtest_(judgment|player_action)/u.test(bundle.request.schemaName)) {
     throw new Error(
@@ -236,19 +251,19 @@ export class PlaytestCli {
   constructor(private readonly project: PlaytestProjectContext) {}
 
   packages(): void {
-    const lines = listPlaytestPackages().map((playtestPackage) => [
-      `${playtestPackage.id}@${playtestPackage.version}`,
-      playtestPackage.purpose,
-      `${playtestPackage.turns.minimum}-${playtestPackage.turns.maximum} turns`,
-      playtestPackage.turnDriver.kind,
-    ].join("\t"));
+    const lines = listPlaytestPackages().map((playtestPackage) =>
+      [
+        `${playtestPackage.id}@${playtestPackage.version}`,
+        playtestPackage.purpose,
+        `${playtestPackage.turns.minimum}-${playtestPackage.turns.maximum} turns`,
+        playtestPackage.turnDriver.kind,
+      ].join("\t"),
+    );
     console.log(lines.join("\n"));
   }
 
   async calibrate(options: CalibrationOptions): Promise<void> {
-    const selected = options.target
-      ? modelSpec(options.target)
-      : await this.defaultModelSpec();
+    const selected = options.target ? modelSpec(options.target) : await this.defaultModelSpec();
     const variants = options.variants?.length
       ? await readCalibrationVariants(options.variants, this.project.paths.root)
       : undefined;
@@ -256,18 +271,22 @@ export class PlaytestCli {
       throw new Error("Custom calibration pricing requires both --input-cost and --output-cost");
     }
     p.intro(`Adapter calibration: ${targetLabel(selected)}`);
-    p.log.info("This command makes live provider calls. Calibration is non-scored and does not certify gameplay quality.");
+    p.log.info(
+      "This command makes live provider calls. Calibration is non-scored and does not certify gameplay quality.",
+    );
     const result = await this.project.calibrateModel(selected.config, {
       route: selected.route,
       maxCostUsd: options.maxCost,
       ...(variants ? { variants } : {}),
       ...(options.evidenceId ? { evidenceId: options.evidenceId } : {}),
-      ...(options.inputCost === undefined ? {} : {
-        cost: {
-          inputPerMillion: options.inputCost,
-          outputPerMillion: options.outputCost!,
-        },
-      }),
+      ...(options.inputCost === undefined
+        ? {}
+        : {
+            cost: {
+              inputPerMillion: options.inputCost,
+              outputPerMillion: options.outputCost!,
+            },
+          }),
     });
     for (const [index, attempt] of result.attempts.entries()) {
       const passed = attempt.probe.cases.filter((probe) => probe.success).length;
@@ -276,7 +295,9 @@ export class PlaytestCli {
       );
     }
     if (!result.selected) {
-      throw new Error(`No compatible execution profile was found. Evidence: playtests/calibration/${result.evidenceId}`);
+      throw new Error(
+        `No compatible execution profile was found. Evidence: playtests/calibration/${result.evidenceId}`,
+      );
     }
     p.outro(
       `Frozen profile ${result.selected.fingerprint}. Cost: $${result.totalEstimatedCostUsd.toFixed(4)}. Evidence: playtests/calibration/${result.evidenceId}`,
@@ -284,21 +305,24 @@ export class PlaytestCli {
   }
 
   async probe(options: CompatibilityProbeOptions): Promise<void> {
-    const selected = options.target
-      ? modelSpec(options.target)
-      : await this.defaultModelSpec();
+    const selected = options.target ? modelSpec(options.target) : await this.defaultModelSpec();
     const languages = options.languages ?? ["en", "ru"];
     p.intro(`Protocol compatibility: ${targetLabel(selected)}`);
-    p.log.info(`Strict setup and gameplay probes for ${languages.map((language) => language.toUpperCase()).join(", ")}.`);
+    p.log.info(
+      `Strict setup and gameplay probes for ${languages.map((language) => language.toUpperCase()).join(", ")}.`,
+    );
     const result = await this.project.probeModelCompatibility(
       selected.config,
       languages,
       options.maxCost,
     );
     for (const language of result.passed) p.log.success(`${language.toUpperCase()}: compatible`);
-    for (const failure of result.failed) p.log.error(`${failure.language.toUpperCase()}: ${failure.error}`);
+    for (const failure of result.failed)
+      p.log.error(`${failure.language.toUpperCase()}: ${failure.error}`);
     if (result.failed.length) {
-      throw new Error(`Compatibility failed for ${result.failed.map((failure) => failure.language.toUpperCase()).join(", ")}`);
+      throw new Error(
+        `Compatibility failed for ${result.failed.map((failure) => failure.language.toUpperCase()).join(", ")}`,
+      );
     }
     p.outro(`Compatibility current. Cost: $${result.costUsd.toFixed(4)}.`);
   }
@@ -313,12 +337,16 @@ export class PlaytestCli {
       route: selected.route,
       note: options.note,
     });
-    p.log.success(`Promoted languages: ${result.promotedLanguages.map((language) => language.toUpperCase()).join(", ")}`);
+    p.log.success(
+      `Promoted languages: ${result.promotedLanguages.map((language) => language.toUpperCase()).join(", ")}`,
+    );
     for (const skipped of result.skippedLanguages) {
       p.log.warn(`${skipped.language.toUpperCase()} not promoted: ${skipped.reason}`);
     }
     for (const file of result.filesWritten) p.log.info(`Wrote ${file}`);
-    p.outro(`Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same evidence.`);
+    p.outro(
+      `Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same evidence.`,
+    );
   }
 
   async replay(bundleFile: string, options: ReplayOptions): Promise<void> {
@@ -330,22 +358,24 @@ export class PlaytestCli {
     const variants = options.variants?.length
       ? await readCalibrationVariants(options.variants, this.project.paths.root)
       : [replayDraft(bundle.executionProfile)];
-    const price = options.inputCost === undefined
-      ? inferTokenPrice(bundle.provider as ProviderConfig["provider"], bundle.model)
-      : { inputPerMillion: options.inputCost, outputPerMillion: options.outputCost! };
+    const price =
+      options.inputCost === undefined
+        ? inferTokenPrice(bundle.provider as ProviderConfig["provider"], bundle.model)
+        : { inputPerMillion: options.inputCost, outputPerMillion: options.outputCost! };
     if (!price) {
-      throw new Error("Focused replay requires explicit --input-cost and --output-cost for an unpriced model");
+      throw new Error(
+        "Focused replay requires explicit --input-cost and --output-cost for an unpriced model",
+      );
     }
-    const replayId = options.replayId === undefined
-      ? undefined
-      : PlaytestRunIdSchema.parse(options.replayId);
+    const replayId =
+      options.replayId === undefined ? undefined : PlaytestRunIdSchema.parse(options.replayId);
     const artifactsRoot = path.join(this.project.playtestsRoot(), "replays");
     let historicalCost = 0;
     if (replayId) {
       try {
-        historicalCost = (await readFocusedReplayManifest(
-          path.join(artifactsRoot, replayId, "manifest.json"),
-        )).totalEstimatedCostUsd;
+        historicalCost = (
+          await readFocusedReplayManifest(path.join(artifactsRoot, replayId, "manifest.json"))
+        ).totalEstimatedCostUsd;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
@@ -361,10 +391,13 @@ export class PlaytestCli {
           calibratedAt: bundle.executionProfile.calibratedAt,
           evidenceRef: `focused-replay:${replayId ?? "new"}`,
         });
-        return this.project.createProvider(ProviderConfigSchema.parse({
-          provider: bundle.provider as ProviderConfig["provider"],
-          model: bundle.model,
-        }), frozen);
+        return this.project.createProvider(
+          ProviderConfigSchema.parse({
+            provider: bundle.provider as ProviderConfig["provider"],
+            model: bundle.model,
+          }),
+          frozen,
+        );
       },
       {
         costManager: new PlaytestCostManager(options.maxCost, historicalCost),
@@ -386,19 +419,18 @@ export class PlaytestCli {
 
   async certify(options: PlaytestRunOptions): Promise<void> {
     const languages = options.languages ?? ["en", "ru"];
-    const config = await this.buildRunConfig(
-      "certification-v1",
-      { ...options, languages },
-      false,
-    );
+    const config = await this.buildRunConfig("certification-v1", { ...options, languages }, false);
     await this.execute(config);
   }
 
   async matrix(packageId: string, options: PlaytestRunOptions): Promise<void> {
-    const candidates = options.candidates
-      ?? (Array.isArray(options.candidate)
+    const candidates =
+      options.candidates ??
+      (Array.isArray(options.candidate)
         ? options.candidate
-        : options.candidate ? [options.candidate] : []);
+        : options.candidate
+          ? [options.candidate]
+          : []);
     if (candidates.length < 2) {
       throw new Error("A matrix requires at least two --candidate provider:model[@route] values");
     }
@@ -436,17 +468,25 @@ export class PlaytestCli {
   }
 
   async legacyEvaluate(options: LegacyEvaluateOptions): Promise<void> {
-    p.log.warn("`llm-dungeon evaluate` is deprecated; use `llm-dungeon playtest run campaign-autoplay-v1`.");
+    p.log.warn(
+      "`llm-dungeon evaluate` is deprecated; use `llm-dungeon playtest run campaign-autoplay-v1`.",
+    );
     const profiles = options.playerProfiles ?? ["curious-explorer"];
     if (profiles.length !== 1) {
       throw new Error("The deprecated evaluate alias accepts one fixed player profile per run");
     }
-    const playerProvider = ProviderConfigSchema.shape.provider.parse(options.playerProvider ?? "gemini");
-    const playerModel = options.playerModel
-      ?? (playerProvider === "gemini"
+    const playerProvider = ProviderConfigSchema.shape.provider.parse(
+      options.playerProvider ?? "gemini",
+    );
+    const playerModel =
+      options.playerModel ??
+      (playerProvider === "gemini"
         ? "gemini-3.5-flash-lite"
-        : playerProvider === "openrouter" ? "google/gemini-3.5-flash-lite" : undefined);
-    if (!playerModel) throw new Error("--player-model is required for the selected player provider");
+        : playerProvider === "openrouter"
+          ? "google/gemini-3.5-flash-lite"
+          : undefined);
+    if (!playerModel)
+      throw new Error("--player-model is required for the selected player provider");
     await this.run("campaign-autoplay-v1", {
       repetitions: options.sessions ?? 1,
       turns: options.turns ?? 25,
@@ -478,16 +518,20 @@ export class PlaytestCli {
     const playtestPackage = getPlaytestPackage(packageId);
     const candidateSpecs = matrix
       ? options.candidates!.map(modelSpec)
-      : [typeof options.candidate === "string"
-        ? modelSpec(options.candidate)
-        : await this.defaultModelSpec()];
-    const candidates = await Promise.all(candidateSpecs.map((candidate) =>
-      this.target(candidate, options.modelPrice)));
+      : [
+          typeof options.candidate === "string"
+            ? modelSpec(options.candidate)
+            : await this.defaultModelSpec(),
+        ];
+    const candidates = await Promise.all(
+      candidateSpecs.map((candidate) => this.target(candidate, options.modelPrice)),
+    );
     const languages = options.languages ?? [await this.project.language()];
     const workers = options.concurrency ?? 1;
-    const player = playtestPackage.turnDriver.kind === "scripted"
-      ? undefined
-      : await this.playerConfiguration(playtestPackage.playerProfiles, options);
+    const player =
+      playtestPackage.turnDriver.kind === "scripted"
+        ? undefined
+        : await this.playerConfiguration(playtestPackage.playerProfiles, options);
     const judge = await this.judgeConfiguration(
       playtestPackage,
       options.judge,
@@ -520,7 +564,9 @@ export class PlaytestCli {
     options: PlaytestRunOptions,
   ): Promise<PlaytestRunConfig["player"]> {
     if (!options.player) {
-      throw new Error("This package requires --player provider:model[@route] and a frozen player profile");
+      throw new Error(
+        "This package requires --player provider:model[@route] and a frozen player profile",
+      );
     }
     const profile = ProfileIdSchema.parse(options.playerProfile ?? allowedProfiles[0]);
     if (!allowedProfiles.includes(profile)) {
@@ -537,7 +583,8 @@ export class PlaytestCli {
   ): Promise<PlaytestRunConfig["judge"]> {
     if (playtestPackage.judgePolicy.kind === "none") {
       if (judgeSpec) throw new Error(`${playtestPackage.id} does not define a judge rubric`);
-      if (checkpointEvery !== undefined) throw new Error("--checkpoint-every requires a judged package");
+      if (checkpointEvery !== undefined)
+        throw new Error("--checkpoint-every requires a judged package");
       return {
         policy: "none",
         rubricVersion: 1,
@@ -571,10 +618,6 @@ export class PlaytestCli {
   }
 
   private runDir(runId: string): string {
-    return path.join(
-      this.project.playtestsRoot(),
-      "runs",
-      PlaytestRunIdSchema.parse(runId),
-    );
+    return path.join(this.project.playtestsRoot(), "runs", PlaytestRunIdSchema.parse(runId));
   }
 }

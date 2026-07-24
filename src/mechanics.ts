@@ -37,27 +37,32 @@ export function resolveCheck(rawSpec: CheckSpec, roll: number): CheckResult {
   return { spec, roll, modifierTotal, total, margin, outcome };
 }
 
-export const CheckResultSchema: z.ZodType<CheckResult> = z.object({
-  spec: CheckSpecSchema,
-  roll: z.number().int().min(1).max(100),
-  modifierTotal: z.number().int(),
-  total: z.number().int(),
-  margin: z.number().int(),
-  outcome: z.enum(["exceptional_success", "success", "failure", "severe_failure"]),
-}).superRefine((result, context) => {
-  const expected = resolveCheck(result.spec, result.roll);
-  for (const field of ["modifierTotal", "total", "margin", "outcome"] as const) {
-    if (result[field] !== expected[field]) {
-      context.addIssue({
-        code: "custom",
-        path: [field],
-        message: `does not match the locked natural roll (expected ${expected[field]})`,
-      });
+export const CheckResultSchema: z.ZodType<CheckResult> = z
+  .object({
+    spec: CheckSpecSchema,
+    roll: z.number().int().min(1).max(100),
+    modifierTotal: z.number().int(),
+    total: z.number().int(),
+    margin: z.number().int(),
+    outcome: z.enum(["exceptional_success", "success", "failure", "severe_failure"]),
+  })
+  .superRefine((result, context) => {
+    const expected = resolveCheck(result.spec, result.roll);
+    for (const field of ["modifierTotal", "total", "margin", "outcome"] as const) {
+      if (result[field] !== expected[field]) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `does not match the locked natural roll (expected ${expected[field]})`,
+        });
+      }
     }
-  }
-});
+  });
 
-export function formatCheck(result: CheckResult, language: LanguageCode = DEFAULT_LANGUAGE): string {
+export function formatCheck(
+  result: CheckResult,
+  language: LanguageCode = DEFAULT_LANGUAGE,
+): string {
   const copy = languageDefinition(language).mechanics;
   const modifierLines = result.spec.modifiers.length
     ? result.spec.modifiers

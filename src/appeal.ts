@@ -16,7 +16,10 @@ export function parseAppealCommand(value: string): AppealInput | undefined {
   if (boundary && !/\s/.test(boundary)) return undefined;
 
   const remainder = input.slice(APPEAL_COMMAND.length).trimStart();
-  if (!remainder.startsWith("--turn") || (remainder.length > 6 && !/\s/.test(remainder.charAt(6)))) {
+  if (
+    !remainder.startsWith("--turn") ||
+    (remainder.length > 6 && !/\s/.test(remainder.charAt(6)))
+  ) {
     return { claim: validateClaim(remainder) };
   }
 

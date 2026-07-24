@@ -23,7 +23,8 @@ import {
 import type { PlaytestProjectContext } from "./playtest-project-context.js";
 
 function latencyMode(value: string): "canonical" | "loaded" {
-  if (value !== "canonical" && value !== "loaded") throw new Error("Latency mode must be canonical or loaded");
+  if (value !== "canonical" && value !== "loaded")
+    throw new Error("Latency mode must be canonical or loaded");
   return value;
 }
 
@@ -36,7 +37,10 @@ function addPlaytestRunOptions(command: Command, matrix = false): Command {
       [],
     );
   } else {
-    command.option("--candidate <target>", "candidate provider:model[@route]; defaults to configured model");
+    command.option(
+      "--candidate <target>",
+      "candidate provider:model[@route]; defaults to configured model",
+    );
   }
   return command
     .option("--languages <codes>", "comma-separated gameplay languages", languageList)
@@ -44,17 +48,40 @@ function addPlaytestRunOptions(command: Command, matrix = false): Command {
     .option("--repetitions <number>", "repetitions per candidate and language", positiveInteger, 1)
     .option("--concurrency <number>", "global worker limit", positiveInteger, 1)
     .option("--latency-mode <mode>", "canonical (one worker) or loaded", latencyMode)
-    .option("--provider-concurrency <provider=limit>", "provider-specific call limit; repeat by provider", providerConcurrency, {})
-    .option("--model-price <target=input,output>", "custom USD per million input/output tokens", modelPrice, {})
+    .option(
+      "--provider-concurrency <provider=limit>",
+      "provider-specific call limit; repeat by provider",
+      providerConcurrency,
+      {},
+    )
+    .option(
+      "--model-price <target=input,output>",
+      "custom USD per million input/output tokens",
+      modelPrice,
+      {},
+    )
     .requiredOption("--max-cost <usd>", "hard aggregate cost ceiling", positiveNumber)
     .option("--max-duration-minutes <minutes>", "active execution time ceiling", positiveNumber)
     .option("--seed <seed>", "deterministic roll seed for seeded packages")
-    .option("--scenario-seed <id>", "shipped scenario-seed id to start a generated package from (defaults/scenario-seeds/<id>)")
+    .option(
+      "--scenario-seed <id>",
+      "shipped scenario-seed id to start a generated package from (defaults/scenario-seeds/<id>)",
+    )
     .option("--player <target>", "fixed player-driver provider:model[@route]")
     .option("--player-profile <profile>", "fixed simulated-player profile")
-    .option("--judge <target>", "separate judge provider:model[@route]; defaults to Gemini 3.5 Flash")
-    .option("--checkpoint-every <turns>", "judge each interval plus the final campaign", positiveInteger)
-    .option("--tuning-variable <kind:description>", "one controlled model:, adapter:, or prompt: variable for tuning-v1");
+    .option(
+      "--judge <target>",
+      "separate judge provider:model[@route]; defaults to Gemini 3.5 Flash",
+    )
+    .option(
+      "--checkpoint-every <turns>",
+      "judge each interval plus the final campaign",
+      positiveInteger,
+    )
+    .option(
+      "--tuning-variable <kind:description>",
+      "one controlled model:, adapter:, or prompt: variable for tuning-v1",
+    );
 }
 
 export function createPlaytestCliProgram(project: PlaytestProjectContext): Command {
@@ -77,30 +104,42 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
         : await project.language();
       const preview = inspectPrompt(phaseValue as PromptPhase, language);
       console.log(terminalBanner(`Prompt suite V${preview.version}`));
-      console.log(`${terminalHeading("Phase", preview.phase)}\nSections: ${preview.sections.join(", ") || "none"}`);
+      console.log(
+        `${terminalHeading("Phase", preview.phase)}\nSections: ${preview.sections.join(", ") || "none"}`,
+      );
       if (preview.system) console.log(`\n${terminalHeading("System prompt")}\n\n${preview.system}`);
       if (preview.prompt) console.log(`\n${terminalHeading("Task prompt")}\n\n${preview.prompt}`);
     });
   const playtests = program.command("playtest").description("Run the unified playtest engine");
 
-  playtests.command("packages").description("List versioned built-in playtest packages").action(() => playtest.packages());
+  playtests
+    .command("packages")
+    .description("List versioned built-in playtest packages")
+    .action(() => playtest.packages());
   playtests
     .command("calibrate")
     .description("Probe one provider route and freeze a compatible execution profile")
     .option("--target <target>", "provider:model[@route]; defaults to configured model")
-    .option("--variant <file>", "JSON profile draft or array; repeat in one-variable order", collectValue, [])
+    .option(
+      "--variant <file>",
+      "JSON profile draft or array; repeat in one-variable order",
+      collectValue,
+      [],
+    )
     .option("--evidence-id <id>", "stable safe ID for retained calibration evidence")
     .option("--input-cost <usd>", "custom input USD per million tokens", positiveNumber)
     .option("--output-cost <usd>", "custom output USD per million tokens", positiveNumber)
     .requiredOption("--max-cost <usd>", "hard calibration cost ceiling", positiveNumber)
-    .action((options: CalibrationOptions & { variant?: string[] }) => playtest.calibrate({
-      target: options.target,
-      variants: options.variant,
-      evidenceId: options.evidenceId,
-      maxCost: options.maxCost,
-      inputCost: options.inputCost,
-      outputCost: options.outputCost,
-    }));
+    .action((options: CalibrationOptions & { variant?: string[] }) =>
+      playtest.calibrate({
+        target: options.target,
+        variants: options.variant,
+        evidenceId: options.evidenceId,
+        maxCost: options.maxCost,
+        inputCost: options.inputCost,
+        outputCost: options.outputCost,
+      }),
+    );
   playtests
     .command("probe")
     .description("Refresh strict setup/gameplay compatibility for a calibrated model")
@@ -110,7 +149,9 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .action((options: CompatibilityProbeOptions) => playtest.probe(options));
   playtests
     .command("promote <target>")
-    .description("Sync a calibrated/certified model's local evidence into defaults/ for git (does not add it as a public candidate)")
+    .description(
+      "Sync a calibrated/certified model's local evidence into defaults/ for git (does not add it as a public candidate)",
+    )
     .option("--note <text>", "human provenance stored with the shipped compatibility test")
     .action((target: string, options: { note?: string }) => playtest.promote(target, options));
   playtests
@@ -121,24 +162,31 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .option("--input-cost <usd>", "custom input USD per million tokens", positiveNumber)
     .option("--output-cost <usd>", "custom output USD per million tokens", positiveNumber)
     .requiredOption("--max-cost <usd>", "hard focused-replay cost ceiling", positiveNumber)
-    .action((bundle: string, options: ReplayOptions & { variant?: string[] }) => playtest.replay(bundle, {
-      variants: options.variant,
-      replayId: options.replayId,
-      maxCost: options.maxCost,
-      inputCost: options.inputCost,
-      outputCost: options.outputCost,
-    }));
+    .action((bundle: string, options: ReplayOptions & { variant?: string[] }) =>
+      playtest.replay(bundle, {
+        variants: options.variant,
+        replayId: options.replayId,
+        maxCost: options.maxCost,
+        inputCost: options.inputCost,
+        outputCost: options.outputCost,
+      }),
+    );
 
-  addPlaytestRunOptions(playtests.command("run <package>").description("Run one playtest package for a candidate"))
-    .action((packageId: string, options: PlaytestRunOptions) => playtest.run(packageId, options));
-  addPlaytestRunOptions(playtests.command("certify").description("Run authoritative bilingual certification-v1"))
-    .action((options: PlaytestRunOptions) => playtest.certify(options));
-  addPlaytestRunOptions(playtests.command("matrix <package>").description("Run a package across frozen candidates"), true)
-    .action((packageId: string, options: PlaytestRunOptions) => playtest.matrix(packageId, options));
+  addPlaytestRunOptions(
+    playtests.command("run <package>").description("Run one playtest package for a candidate"),
+  ).action((packageId: string, options: PlaytestRunOptions) => playtest.run(packageId, options));
+  addPlaytestRunOptions(
+    playtests.command("certify").description("Run authoritative bilingual certification-v1"),
+  ).action((options: PlaytestRunOptions) => playtest.certify(options));
+  addPlaytestRunOptions(
+    playtests.command("matrix <package>").description("Run a package across frozen candidates"),
+    true,
+  ).action((packageId: string, options: PlaytestRunOptions) => playtest.matrix(packageId, options));
   playtests.command("resume <runId>").action((runId: string) => playtest.resume(runId));
   playtests.command("judge <runId>").action((runId: string) => playtest.judge(runId));
   playtests.command("report <runId>").action((runId: string) => playtest.report(runId));
-  playtests.command("compare <leftRunId> <rightRunId>")
+  playtests
+    .command("compare <leftRunId> <rightRunId>")
     .action((leftRunId: string, rightRunId: string) => playtest.compare(leftRunId, rightRunId));
 
   program
@@ -154,6 +202,8 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .option("--player-model <model>", "override simulated-player model")
     .action((options: EvaluateOptions) => evaluation.run(options));
   program.command("evaluate:resume <runId>").action((runId: string) => evaluation.resume(runId));
-  program.command("evaluate:report <runId>").action((runId: string) => evaluation.regenerateReport(runId));
+  program
+    .command("evaluate:report <runId>")
+    .action((runId: string) => evaluation.regenerateReport(runId));
   return program;
 }

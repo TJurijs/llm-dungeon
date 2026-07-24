@@ -42,7 +42,11 @@ export function adjudicationPrompt(context: string, action: string): string {
   return adjudicationPromptDocument(context, action).text;
 }
 
-export function resolutionPromptDocument(context: string, action: string, result: CheckResult): PromptDocument {
+export function resolutionPromptDocument(
+  context: string,
+  action: string,
+  result: CheckResult,
+): PromptDocument {
   return renderPrompt([
     section("campaign-context", undefined, context),
     actionSection(action),

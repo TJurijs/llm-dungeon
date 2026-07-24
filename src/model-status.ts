@@ -32,21 +32,23 @@ export type ModelLanguageTechnicalStatuses = Partial<
 >;
 export type ModelLanguageQualityStatuses = Partial<Record<LanguageCode, ModelQualityStatus>>;
 
-export const ModelEvidenceReferenceSchema = z.object({
-  source: z.enum(["calibration", "certification", "legacy_evaluation"]),
-  reference: z.string().trim().min(1).max(500),
-  packageId: z.string().trim().min(1).max(100).optional(),
-  packageVersion: z.string().trim().min(1).max(100).optional(),
-  executionProfileFingerprint: z.string().trim().min(1).max(500).optional(),
-  recordedAt: z.string().datetime({ offset: true }).optional(),
-}).strict();
+export const ModelEvidenceReferenceSchema = z
+  .object({
+    source: z.enum(["calibration", "certification", "legacy_evaluation"]),
+    reference: z.string().trim().min(1).max(500),
+    packageId: z.string().trim().min(1).max(100).optional(),
+    packageVersion: z.string().trim().min(1).max(100).optional(),
+    executionProfileFingerprint: z.string().trim().min(1).max(500).optional(),
+    recordedAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
 export type ModelEvidenceReference = z.infer<typeof ModelEvidenceReferenceSchema>;
 
-export const ModelRecommendationEligibilitySchema = z.object({
-  eligible: z.boolean(),
-  reasons: z.array(z.string().trim().min(1).max(200)).max(20),
-  evidence: ModelEvidenceReferenceSchema.optional(),
-}).strict();
-export type ModelRecommendationEligibility = z.infer<
-  typeof ModelRecommendationEligibilitySchema
->;
+export const ModelRecommendationEligibilitySchema = z
+  .object({
+    eligible: z.boolean(),
+    reasons: z.array(z.string().trim().min(1).max(200)).max(20),
+    evidence: ModelEvidenceReferenceSchema.optional(),
+  })
+  .strict();
+export type ModelRecommendationEligibility = z.infer<typeof ModelRecommendationEligibilitySchema>;

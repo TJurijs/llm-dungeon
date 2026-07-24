@@ -19,7 +19,9 @@ export function replyGeneration(metadata: Omit<TurnGenerationMetadata, "turn">):
   return { ...base, costUsd: estimateTokenCost(metadata.usage, price), costBasis: "estimated" };
 }
 
-export function summarizeCampaignCost(turns: readonly TurnGenerationMetadata[]): CampaignCostSummary {
+export function summarizeCampaignCost(
+  turns: readonly TurnGenerationMetadata[],
+): CampaignCostSummary {
   let totalUsd = 0;
   let exactTurns = 0;
   let estimatedTurns = 0;
@@ -40,11 +42,8 @@ export function summarizeCampaignCost(turns: readonly TurnGenerationMetadata[]):
     unpricedTurns += 1;
   }
 
-  const basis = exactTurns > 0 && estimatedTurns === 0
-    ? "exact"
-    : exactTurns > 0
-      ? "mixed"
-      : "estimated";
+  const basis =
+    exactTurns > 0 && estimatedTurns === 0 ? "exact" : exactTurns > 0 ? "mixed" : "estimated";
   return {
     totalUsd: roundUsd(totalUsd),
     basis,
@@ -61,9 +60,10 @@ export function combineCampaignCostSummaries(
   const pricedBases = [left, right]
     .filter((summary) => summary.pricedTurns > 0)
     .map((summary) => summary.basis);
-  const basis = pricedBases.includes("mixed") || new Set(pricedBases).size > 1
-    ? "mixed" as const
-    : pricedBases[0] ?? "estimated";
+  const basis =
+    pricedBases.includes("mixed") || new Set(pricedBases).size > 1
+      ? ("mixed" as const)
+      : (pricedBases[0] ?? "estimated");
   return {
     totalUsd: roundUsd(left.totalUsd + right.totalUsd),
     basis,

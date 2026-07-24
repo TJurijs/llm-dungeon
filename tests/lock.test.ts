@@ -11,7 +11,10 @@ interface WorkerMessage {
   error?: string;
 }
 
-function messageOfType(child: ChildProcess, types: WorkerMessage["type"][]): Promise<WorkerMessage> {
+function messageOfType(
+  child: ChildProcess,
+  types: WorkerMessage["type"][],
+): Promise<WorkerMessage> {
   return new Promise((resolve, reject) => {
     const onMessage = (value: WorkerMessage) => {
       if (!types.includes(value.type)) return;
@@ -45,11 +48,15 @@ describe("filesystem lock", () => {
     const exitedPid = exited.pid;
     await once(exited, "exit");
     if (!exitedPid) throw new Error("Could not obtain the exited lock-owner PID");
-    await writeFile(target, `${JSON.stringify({
-      pid: exitedPid,
-      token: "stale-owner",
-      createdAt: new Date(0).toISOString(),
-    })}\n`, { mode: 0o600 });
+    await writeFile(
+      target,
+      `${JSON.stringify({
+        pid: exitedPid,
+        token: "stale-owner",
+        createdAt: new Date(0).toISOString(),
+      })}\n`,
+      { mode: 0o600 },
+    );
 
     const workerPath = fileURLToPath(new URL("./fixtures/lock-worker.ts", import.meta.url));
     const workerEntries = Array.from({ length: 16 }, () => {
@@ -67,13 +74,17 @@ describe("filesystem lock", () => {
 
     try {
       await Promise.all(workerEntries.map((entry) => entry.ready));
-      const outcomes = workers.map((worker) => messageOfType(worker, ["acquired", "locked", "error"]));
+      const outcomes = workers.map((worker) =>
+        messageOfType(worker, ["acquired", "locked", "error"]),
+      );
       for (const worker of workers) worker.send("go");
       const initial = await Promise.all(outcomes);
       const acquired = workers.filter((_, index) => initial[index]?.type === "acquired");
       expect(initial.filter((message) => message.type === "error")).toEqual([]);
       expect(acquired).toHaveLength(1);
-      expect(initial.filter((message) => message.type === "locked")).toHaveLength(workers.length - 1);
+      expect(initial.filter((message) => message.type === "locked")).toHaveLength(
+        workers.length - 1,
+      );
 
       const released = messageOfType(acquired[0]!, ["released", "error"]);
       acquired[0]!.send("release");

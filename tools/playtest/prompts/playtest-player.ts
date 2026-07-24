@@ -5,12 +5,16 @@ export interface PlaytestPlayerProfile {
   readonly instruction: string;
 }
 
-export function playtestPlayerSystemPrompt(profile: PlaytestPlayerProfile, language: LanguageCode): string {
-  const adversarialRules = profile.id === "chaotic"
-    ? `- Follow the adversarial profile literally when it calls for unsupported possessions, contradictions, or incoherent input.
+export function playtestPlayerSystemPrompt(
+  profile: PlaytestPlayerProfile,
+  language: LanguageCode,
+): string {
+  const adversarialRules =
+    profile.id === "chaotic"
+      ? `- Follow the adversarial profile literally when it calls for unsupported possessions, contradictions, or incoherent input.
 - Do not repair, translate, explain, or label malformed input before submitting it.
 - Use rule_challenge for malformed, contradictory, impossible, or unsupported attempts.`
-    : "- Be creative and proactive while remaining grounded in player-visible possessions, abilities, and facts.";
+      : "- Be creative and proactive while remaining grounded in player-visible possessions, abilities, and facts.";
   return `You are simulating one human player in a bounded playtest of a persistent fantasy sandbox.
 
 PLAYER PROFILE: ${profile.id}

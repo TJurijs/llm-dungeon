@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -66,12 +66,15 @@ describe("ModelExecutionProfileStore", () => {
     const persisted = JSON.parse(await readFile(store.filePath, "utf8")) as {
       profiles: Array<{ fingerprint: string }>;
     };
-    expect(persisted.profiles.find((profile) => profile.fingerprint === replacement.fingerprint))
-      .toEqual({ ...replacement });
-    await expect(store.put({
-      ...replacement,
-      fingerprint: "0".repeat(64),
-    })).rejects.toThrow("stale fingerprint");
+    expect(
+      persisted.profiles.find((profile) => profile.fingerprint === replacement.fingerprint),
+    ).toEqual({ ...replacement });
+    await expect(
+      store.put({
+        ...replacement,
+        fingerprint: "0".repeat(64),
+      }),
+    ).rejects.toThrow("stale fingerprint");
     const staleRevision = freezeModelExecutionProfile({
       ...draft,
       adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION - 1,
@@ -79,8 +82,60 @@ describe("ModelExecutionProfileStore", () => {
       evidenceRef: "playtests/calibration/stale-adapter",
     });
     await expect(store.put(staleRevision)).rejects.toThrow("current revision");
-    await expect(store.require({ ...replacement.key, model: "missing-model" }))
-      .rejects.toThrow("run playtest calibrate first");
+    await expect(store.require({ ...replacement.key, model: "missing-model" })).rejects.toThrow(
+      "run playtest calibrate first",
+    );
+  });
+
+  it("uses newer shipped authority without deleting stale local profile history", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "llm-dungeon-profiles-upgrade-"));
+    const store = new ModelExecutionProfileStore(root);
+    const shipped = SHIPPED_MODEL_EXECUTION_PROFILES[0]!;
+    const draft = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+      (candidate) =>
+        candidate.key.provider === shipped.key.provider &&
+        candidate.key.model === shipped.key.model &&
+        candidate.key.route === shipped.key.route,
+    )!;
+    const staleLocal = freezeModelExecutionProfile({
+      ...draft,
+      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION - 1,
+      calibratedAt: "2026-07-18T10:00:00.000Z",
+      evidenceRef: "playtests/calibration/pre-upgrade-local",
+    });
+    await mkdir(path.dirname(store.filePath), { recursive: true });
+    await writeFile(
+      store.filePath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          profiles: [staleLocal],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await expect(store.require(shipped.key)).resolves.toEqual(shipped);
+
+    const custom = freezeModelExecutionProfile({
+      ...DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!,
+      key: {
+        ...DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!.key,
+        model: "local-history-regression",
+      },
+      calibratedAt: "2026-07-24T10:00:00.000Z",
+      evidenceRef: "playtests/calibration/current-local",
+    });
+    await store.put(custom);
+
+    const persisted = JSON.parse(await readFile(store.filePath, "utf8")) as {
+      profiles: Array<{ fingerprint: string }>;
+    };
+    expect(persisted.profiles.map((profile) => profile.fingerprint)).toHaveLength(2);
+    expect(persisted.profiles.map((profile) => profile.fingerprint)).toEqual(
+      expect.arrayContaining([custom.fingerprint, staleLocal.fingerprint]),
+    );
   });
 
   it("preserves concurrent profiles for independent model routes", async () => {

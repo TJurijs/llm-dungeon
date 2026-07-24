@@ -3,7 +3,9 @@ import { CampaignOperationCoordinator } from "../src/web/campaign-operations.js"
 
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -28,8 +30,9 @@ describe("campaign operation coordination", () => {
     await Promise.resolve();
     expect(started).toBe(2);
     expect(coordinator.isBusy("campaign:a")).toBe(true);
-    await expect(coordinator.run("campaign:a", async () => "duplicate"))
-      .rejects.toThrow("Another operation is still running for this campaign");
+    await expect(coordinator.run("campaign:a", async () => "duplicate")).rejects.toThrow(
+      "Another operation is still running for this campaign",
+    );
 
     first.resolve();
     second.resolve();
@@ -67,12 +70,13 @@ describe("campaign operation coordination", () => {
     const secondGate = deferred();
     let active = 0;
     let maximumActive = 0;
-    const run = (campaignId: string, gate?: ReturnType<typeof deferred>) => coordinator.run(campaignId, async () => {
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      if (gate) await gate.promise;
-      active -= 1;
-    });
+    const run = (campaignId: string, gate?: ReturnType<typeof deferred>) =>
+      coordinator.run(campaignId, async () => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        if (gate) await gate.promise;
+        active -= 1;
+      });
 
     const first = run("campaign:a", firstGate);
     const second = run("campaign:b", secondGate);

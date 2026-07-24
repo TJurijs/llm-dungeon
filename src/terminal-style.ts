@@ -2,8 +2,17 @@ import { stdout } from "node:process";
 
 const enabled = Boolean(stdout.isTTY) && !process.env.NO_COLOR;
 
+/**
+ * Preserve readable whitespace while removing terminal control characters from
+ * player- or model-provided text. Application-owned styling is added only
+ * after this boundary.
+ */
+export function sanitizeTerminalText(value: string): string {
+  return value.replaceAll("\r\n", "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+}
+
 function code(open: number, close = 0): (value: string) => string {
-  return (value) => enabled ? `\u001b[${open}m${value}\u001b[${close}m` : value;
+  return (value) => (enabled ? `\u001b[${open}m${value}\u001b[${close}m` : value);
 }
 
 export const terminalStyle = {
@@ -29,8 +38,8 @@ export function terminalBanner(subtitle = "Persistent worlds. Unscripted adventu
 }
 
 export function terminalHeading(title: string, detail?: string): string {
-  const heading = `${terminalStyle.gold("◆")} ${terminalStyle.bold(title)}`;
-  return detail ? `${heading} ${terminalStyle.dim(`— ${detail}`)}` : heading;
+  const heading = `${terminalStyle.gold("◆")} ${terminalStyle.bold(sanitizeTerminalText(title))}`;
+  return detail ? `${heading} ${terminalStyle.dim(`— ${sanitizeTerminalText(detail)}`)}` : heading;
 }
 
 export function terminalRule(): string {

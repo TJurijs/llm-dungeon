@@ -66,7 +66,9 @@ class ExactCalibrationProvider implements LlmProvider {
 
 describe("model calibration", () => {
   it("exercises all eight required non-scored protocol cases sequentially", async () => {
-    const result = await runModelCalibrationProbe(new ExactCalibrationProvider("fake", "fake-model"));
+    const result = await runModelCalibrationProbe(
+      new ExactCalibrationProvider("fake", "fake-model"),
+    );
     expect(result.passed).toBe(true);
     expect(result.cases.map((item) => item.caseId)).toEqual([
       "representative_setup",
@@ -100,11 +102,12 @@ describe("model calibration", () => {
     };
     const results = await runCalibrationVariants(
       [base, variant],
-      (profile) => new ExactCalibrationProvider(
-        profile.key.provider,
-        profile.key.model,
-        profile.temperature.policy === "fixed",
-      ),
+      (profile) =>
+        new ExactCalibrationProvider(
+          profile.key.provider,
+          profile.key.model,
+          profile.temperature.policy === "fixed",
+        ),
       {
         evidenceId: "gemini-calibration",
         evidenceStore,
@@ -122,51 +125,66 @@ describe("model calibration", () => {
 
   it("adds only truncation-proven bounded budget steps and keeps route failures inconclusive", async () => {
     const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
-    const results = await runCalibrationVariants([base], (profile) =>
-      new ExactCalibrationProvider(
-        profile.key.provider,
-        profile.key.model,
-        profile.outputBudgets.setup < 16_000,
-      ));
+    const results = await runCalibrationVariants(
+      [base],
+      (profile) =>
+        new ExactCalibrationProvider(
+          profile.key.provider,
+          profile.key.model,
+          profile.outputBudgets.setup < 16_000,
+        ),
+    );
     expect(results).toHaveLength(2);
     expect(results[1]?.changedVariable).toBe("outputBudgets.setup");
     expect(results[1]?.profile.outputBudgets.setup).toBe(16_000);
     expect(results[1]?.probe.passed).toBe(true);
 
-    const blocked = await runCalibrationVariants([base], () => ({
-      id: "gemini",
-      model: "gemini-3.5-flash",
-      async generateStructured() {
-        throw new GenerationFailure("rate_limit", "busy", true, 429);
-      },
-    }), { autoEscalateTruncation: false });
+    const blocked = await runCalibrationVariants(
+      [base],
+      () => ({
+        id: "gemini",
+        model: "gemini-3.5-flash",
+        async generateStructured() {
+          throw new GenerationFailure("rate_limit", "busy", true, 429);
+        },
+      }),
+      { autoEscalateTruncation: false },
+    );
     expect(calibrationFailureStatus(blocked)).toBe("calibration_inconclusive");
-    expect(calibrationFailureStatus(results.filter((result) => !result.probe.passed)))
-      .toBe("no_compatible_profile");
+    expect(calibrationFailureStatus(results.filter((result) => !result.probe.passed))).toBe(
+      "no_compatible_profile",
+    );
   });
 
   it("rejects unsafe evidence IDs and unbounded or multi-variable variants before any calls", async () => {
     expect(() => calibrationEvidenceId("../lost-evidence")).toThrow("safe filename");
     const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
     let providersCreated = 0;
-    await expect(runCalibrationVariants(
-      Array.from({ length: 9 }, () => base),
-      () => {
-        providersCreated += 1;
-        return new ExactCalibrationProvider("gemini", "gemini-3.5-flash");
-      },
-    )).rejects.toThrow("between one and 8");
-    await expect(runCalibrationVariants([
-      base,
-      {
-        ...base,
-        temperature: { policy: "omitted" },
-        reasoning: { policy: "omitted" },
-      },
-    ], () => {
-      providersCreated += 1;
-      return new ExactCalibrationProvider("gemini", "gemini-3.5-flash");
-    })).rejects.toThrow("exactly one variable");
+    await expect(
+      runCalibrationVariants(
+        Array.from({ length: 9 }, () => base),
+        () => {
+          providersCreated += 1;
+          return new ExactCalibrationProvider("gemini", "gemini-3.5-flash");
+        },
+      ),
+    ).rejects.toThrow("between one and 8");
+    await expect(
+      runCalibrationVariants(
+        [
+          base,
+          {
+            ...base,
+            temperature: { policy: "omitted" },
+            reasoning: { policy: "omitted" },
+          },
+        ],
+        () => {
+          providersCreated += 1;
+          return new ExactCalibrationProvider("gemini", "gemini-3.5-flash");
+        },
+      ),
+    ).rejects.toThrow("exactly one variable");
     expect(providersCreated).toBe(0);
   });
 
@@ -177,20 +195,28 @@ describe("model calibration", () => {
       outputBudgets: { ...base.outputBudgets, setup: 16_000 },
     };
     let providersCreated = 0;
-    await expect(runCalibrationVariants([base, nextSetup], (profile) => {
-      providersCreated += 1;
-      return new ExactCalibrationProvider(profile.key.provider, profile.key.model, false);
-    }, { autoEscalateTruncation: false })).rejects.toThrow("requires confirmed truncation");
+    await expect(
+      runCalibrationVariants(
+        [base, nextSetup],
+        (profile) => {
+          providersCreated += 1;
+          return new ExactCalibrationProvider(profile.key.provider, profile.key.model, false);
+        },
+        { autoEscalateTruncation: false },
+      ),
+    ).rejects.toThrow("requires confirmed truncation");
     expect(providersCreated).toBe(1);
 
     const skippedSetup: ModelExecutionProfileDraft = {
       ...base,
       outputBudgets: { ...base.outputBudgets, setup: 32_000 },
     };
-    await expect(runCalibrationVariants([base, skippedSetup], () => {
-      providersCreated += 1;
-      return new ExactCalibrationProvider("gemini", "gemini-3.5-flash", true);
-    })).rejects.toThrow("next bounded truncation-escalation step");
+    await expect(
+      runCalibrationVariants([base, skippedSetup], () => {
+        providersCreated += 1;
+        return new ExactCalibrationProvider("gemini", "gemini-3.5-flash", true);
+      }),
+    ).rejects.toThrow("next bounded truncation-escalation step");
     expect(providersCreated).toBe(1);
   });
 });

@@ -29,15 +29,23 @@ export interface ModelPriceEstimate extends TokenPrice {
   estimated50TurnsUsd: number;
 }
 
-const OpenRouterPriceResponseSchema = z.object({
-  data: z.array(z.object({
-    id: z.string().trim().min(1),
-    pricing: z.object({
-      prompt: z.union([z.string(), z.number()]),
-      completion: z.union([z.string(), z.number()]),
-    }).passthrough(),
-  }).passthrough()),
-}).passthrough();
+const OpenRouterPriceResponseSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          id: z.string().trim().min(1),
+          pricing: z
+            .object({
+              prompt: z.union([z.string(), z.number()]),
+              completion: z.union([z.string(), z.number()]),
+            })
+            .passthrough(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
 
 const OPENROUTER_PRICE_REFRESH_MS = 6 * 60 * 60 * 1_000;
 const OPENROUTER_PRICE_TIMEOUT_MS = 5_000;
@@ -90,7 +98,9 @@ export function parseOpenRouterPrices(value: unknown): Map<string, TokenPrice> {
   return prices;
 }
 
-export async function fetchOpenRouterPrices(fetchImplementation: typeof fetch = fetch): Promise<unknown> {
+export async function fetchOpenRouterPrices(
+  fetchImplementation: typeof fetch = fetch,
+): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OPENROUTER_PRICE_TIMEOUT_MS);
   try {
@@ -122,7 +132,12 @@ export class OpenRouterPricingCatalog {
   }
 
   refreshInBackground(): void {
-    if (!this.fetchPrices || this.refreshPromise || Date.now() - this.lastRefreshStarted < OPENROUTER_PRICE_REFRESH_MS) return;
+    if (
+      !this.fetchPrices ||
+      this.refreshPromise ||
+      Date.now() - this.lastRefreshStarted < OPENROUTER_PRICE_REFRESH_MS
+    )
+      return;
     this.lastRefreshStarted = Date.now();
     this.refreshPromise = this.fetchPrices()
       .then((value) => {
@@ -130,7 +145,9 @@ export class OpenRouterPricingCatalog {
         this.checkedAt = new Date().toISOString().slice(0, 10);
       })
       .catch(() => {})
-      .finally(() => { this.refreshPromise = undefined; });
+      .finally(() => {
+        this.refreshPromise = undefined;
+      });
   }
 }
 
@@ -141,9 +158,9 @@ export function roundUsd(value: number): number {
 export function estimateTokenCost(usage: Usage | undefined, price: TokenPrice): number {
   if (!usage) return 0;
   return roundUsd(
-    ((usage.inputTokens ?? 0) * price.inputPerMillion
-      + (usage.outputTokens ?? 0) * price.outputPerMillion)
-      / 1_000_000,
+    ((usage.inputTokens ?? 0) * price.inputPerMillion +
+      (usage.outputTokens ?? 0) * price.outputPerMillion) /
+      1_000_000,
   );
 }
 
@@ -170,10 +187,13 @@ export function estimateModelPrice(
   return {
     ...price,
     sourceModel,
-    estimated50TurnsUsd: estimateTokenCost({
-      inputTokens: FIFTY_TURN_ESTIMATE.inputTokens,
-      outputTokens: FIFTY_TURN_ESTIMATE.outputTokens,
-    }, price),
+    estimated50TurnsUsd: estimateTokenCost(
+      {
+        inputTokens: FIFTY_TURN_ESTIMATE.inputTokens,
+        outputTokens: FIFTY_TURN_ESTIMATE.outputTokens,
+      },
+      price,
+    ),
   };
 }
 

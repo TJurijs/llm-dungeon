@@ -5,7 +5,12 @@ import {
   normalizeTerminalEntry,
   sortCampaigns,
 } from "./terminal-history.js";
-import { actionPrefillValue, BrowserChatHistory, createChatEntry, createThinkingEntry } from "./chat-ui.js";
+import {
+  actionPrefillValue,
+  BrowserChatHistory,
+  createChatEntry,
+  createThinkingEntry,
+} from "./chat-ui.js";
 import { renderInspectionView, inspectionMessage } from "./inspection-ui.js";
 import { createSetupSettingsController } from "./setup-settings.js";
 import { UI_COPY } from "./ui-copy.js";
@@ -29,7 +34,13 @@ const SIDEBAR_WIDTH_KEY = "llm-dungeon:sidebar-width";
 const SIDEBAR_COLLAPSED_KEY = "llm-dungeon:sidebar-collapsed";
 const INSPECTION_WIDTH_KEY = "llm-dungeon:inspection-width";
 let locale = "";
-let status = { language: "en", languages: [], config: null, llm: { defaultModel: null, providers: [] }, campaigns: [] };
+let status = {
+  language: "en",
+  languages: [],
+  config: null,
+  llm: { defaultModel: null, providers: [] },
+  campaigns: [],
+};
 let campaigns = [];
 let selectedCampaignId = null;
 let currentView = "chat";
@@ -37,6 +48,7 @@ let currentInspectionView = "character";
 let statusPollPromise = null;
 let statusRefreshQueued = false;
 let sidebarReturnFocus = null;
+let editingCampaignId = null;
 let pendingArchiveCampaignId = null;
 let pendingDeleteCampaignId = null;
 let inspectionSequence = 0;
@@ -73,7 +85,7 @@ function saveActionDraft(campaignId = selectedCampaignId) {
 }
 
 function restoreActionDraft(campaignId = selectedCampaignId) {
-  $("#action").value = campaignId ? actionDrafts.get(campaignId) ?? "" : "";
+  $("#action").value = campaignId ? (actionDrafts.get(campaignId) ?? "") : "";
   resizeComposer();
 }
 
@@ -86,9 +98,15 @@ function applyLocale(language) {
   if (nextLocale === locale) return false;
   locale = nextLocale;
   document.documentElement.lang = locale;
-  $$('[data-i18n]').forEach((element) => { element.textContent = t(element.dataset.i18n); });
-  $$('[data-i18n-aria-label]').forEach((element) => { element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel)); });
-  $$('[data-i18n-title]').forEach((element) => { element.title = t(element.dataset.i18nTitle); });
+  $$("[data-i18n]").forEach((element) => {
+    element.textContent = t(element.dataset.i18n);
+  });
+  $$("[data-i18n-aria-label]").forEach((element) => {
+    element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
+  });
+  $$("[data-i18n-title]").forEach((element) => {
+    element.title = t(element.dataset.i18nTitle);
+  });
   $("#action").placeholder = t("actionPlaceholder");
   $("#action").setAttribute("aria-label", t("whatDo"));
   $("#send-action").setAttribute("aria-label", t("sendAction"));
@@ -154,7 +172,12 @@ function showToast(message, mode = "normal") {
   toast.className = `toast ${mode}`;
   toast.setAttribute("role", mode === "error" ? "alert" : "status");
   toast.hidden = false;
-  toastTimer = setTimeout(() => { toast.hidden = true; }, mode === "error" ? 7000 : 3500);
+  toastTimer = setTimeout(
+    () => {
+      toast.hidden = true;
+    },
+    mode === "error" ? 7000 : 3500,
+  );
 }
 
 function withButtonBusy(button, busyCopy, operation) {
@@ -162,45 +185,66 @@ function withButtonBusy(button, busyCopy, operation) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   if (busyCopy) button.textContent = busyCopy;
-  return Promise.resolve().then(operation).finally(() => {
-    button.disabled = false;
-    button.removeAttribute("aria-busy");
-    button.textContent = original;
-    renderCampaignChrome();
-  });
+  return Promise.resolve()
+    .then(operation)
+    .finally(() => {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = original;
+      renderCampaignChrome();
+    });
 }
 
 function appendHistory(campaignId, value, { render = true } = {}) {
   if (!chatHistory.append(campaignId, value)) return;
-  if (render && selectedCampaignId === campaignId && currentView === "chat") renderChat({ scroll: true });
+  if (render && selectedCampaignId === campaignId && currentView === "chat")
+    renderChat({ scroll: true });
 }
 
 function appendCommittedResponse(campaignId, result, { render = true } = {}) {
   const campaignT = interfaceTranslator();
-  if (result.checkText) appendHistory(campaignId, { title: campaignT("check"), text: result.checkText, mode: "normal" }, { render: false });
+  if (result.checkText)
+    appendHistory(
+      campaignId,
+      { title: campaignT("check"), text: result.checkText, mode: "normal" },
+      { render: false },
+    );
   if (result.kind === "appeal") {
-    const target = Number.isSafeInteger(result.appealTargetTurn) ? ` · ${campaignT("turn")} ${result.appealTargetTurn}` : "";
-    appendHistory(campaignId, {
-      title: `${campaignT("appealHeading")}${target}`,
-      text: result.narration,
-      mode: "success",
-      kind: "appeal",
-      turn: result.turn,
-      ...(result.generation ? { generation: result.generation } : {}),
-      ...(result.appealTargetTurn === undefined ? {} : { appealTargetTurn: result.appealTargetTurn }),
-    }, { render: false });
+    const target = Number.isSafeInteger(result.appealTargetTurn)
+      ? ` · ${campaignT("turn")} ${result.appealTargetTurn}`
+      : "";
+    appendHistory(
+      campaignId,
+      {
+        title: `${campaignT("appealHeading")}${target}`,
+        text: result.narration,
+        mode: "success",
+        kind: "appeal",
+        turn: result.turn,
+        ...(result.generation ? { generation: result.generation } : {}),
+        ...(result.appealTargetTurn === undefined
+          ? {}
+          : { appealTargetTurn: result.appealTargetTurn }),
+      },
+      { render: false },
+    );
   } else {
-    appendHistory(campaignId, {
-      title: `${campaignT("dm")} · ${campaignT("turn")} ${result.turn}`,
-      text: result.narration,
-      mode: "success",
-      kind: "gameplay",
-      turn: result.turn,
-      ...(result.generation ? { generation: result.generation } : {}),
-    }, { render: false });
+    appendHistory(
+      campaignId,
+      {
+        title: `${campaignT("dm")} · ${campaignT("turn")} ${result.turn}`,
+        text: result.narration,
+        mode: "success",
+        kind: "gameplay",
+        turn: result.turn,
+        ...(result.generation ? { generation: result.generation } : {}),
+      },
+      { render: false },
+    );
   }
   if (result.state) updateCampaignFromState(result.state);
-  if (render && selectedCampaignId === campaignId && currentView === "chat") renderChat({ scroll: true });
+  if (render && selectedCampaignId === campaignId && currentView === "chat")
+    renderChat({ scroll: true });
 }
 
 function updateCampaignFromState(state, config) {
@@ -241,10 +285,18 @@ function renderChat({ scroll = false } = {}) {
     turn: t("turn"),
     campaignTitle: campaign.title,
   };
-  log.replaceChildren(...chatHistory.entries(campaign.campaignId).map((entry) => createChatEntry(entry, playerName, labels)));
-  if (inFlightCampaigns.has(campaign.campaignId)) log.append(createThinkingEntry({ dm: t("dm"), working: t("working") }));
+  log.replaceChildren(
+    ...chatHistory
+      .entries(campaign.campaignId)
+      .map((entry) => createChatEntry(entry, playerName, labels)),
+  );
+  if (inFlightCampaigns.has(campaign.campaignId))
+    log.append(createThinkingEntry({ dm: t("dm"), working: t("working") }));
   updateComposer(campaign);
-  if (scroll) requestAnimationFrame(() => { $("#chat-scroll").scrollTop = $("#chat-scroll").scrollHeight; });
+  if (scroll)
+    requestAnimationFrame(() => {
+      $("#chat-scroll").scrollTop = $("#chat-scroll").scrollHeight;
+    });
 }
 
 function campaignBusy(campaign) {
@@ -252,11 +304,23 @@ function campaignBusy(campaign) {
 }
 
 function campaignCanPlay(campaign) {
-  return Boolean(campaign && !campaign.archived && campaign.status === "active" && !campaign.pending && !campaignBusy(campaign));
+  return Boolean(
+    campaign &&
+    !campaign.archived &&
+    campaign.status === "active" &&
+    !campaign.pending &&
+    !campaignBusy(campaign),
+  );
 }
 
 function campaignCanRecover(campaign) {
-  return Boolean(campaign && !campaign.archived && campaign.status === "active" && campaign.pending && !campaignBusy(campaign));
+  return Boolean(
+    campaign &&
+    !campaign.archived &&
+    campaign.status === "active" &&
+    campaign.pending &&
+    !campaignBusy(campaign),
+  );
 }
 
 function updateComposer(campaign) {
@@ -317,7 +381,8 @@ function renderCampaignItem(campaign) {
   const deleteLabel = formatTemplate("deleteCampaignLabel", { title: campaign.title });
   deleteButton.setAttribute("aria-label", deleteLabel);
   deleteButton.title = deleteLabel;
-  deleteButton.innerHTML = '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 3h6l1 4H8l1-4Z"></path><path d="m7 7 1 14h8l1-14"></path><path d="M10 11v6M14 11v6"></path></svg>';
+  deleteButton.innerHTML =
+    '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 3h6l1 4H8l1-4Z"></path><path d="m7 7 1 14h8l1-14"></path><path d="M10 11v6M14 11v6"></path></svg>';
   row.append(button, deleteButton);
   return row;
 }
@@ -356,21 +421,40 @@ function syncCampaignModel(campaign) {
   }
   const currentValue = modelValue(config.provider, config.model);
   const allEntries = llmModelEntries(status.llm, { includeHidden: true });
-  const options = llmModelEntries(status.llm, { availableOnly: true, requireKey: true, language: campaign.language });
+  const options = llmModelEntries(status.llm, {
+    availableOnly: true,
+    requireKey: true,
+    language: campaign.language,
+  });
   if (!options.some((option) => modelValue(option.provider, option.model) === currentValue)) {
-    const known = allEntries.find((option) => modelValue(option.provider, option.model) === currentValue);
-    options.unshift(known ?? {
-      provider: config.provider,
-      providerLabel: config.provider,
-      model: config.model,
-      label: config.model,
-      available: false,
-      enabled: false,
-      keyPresent: false,
-      hidden: true,
-    });
+    const known = allEntries.find(
+      (option) => modelValue(option.provider, option.model) === currentValue,
+    );
+    options.unshift(
+      known ?? {
+        provider: config.provider,
+        providerLabel: config.provider,
+        model: config.model,
+        label: config.model,
+        available: false,
+        enabled: false,
+        keyPresent: false,
+        hidden: true,
+      },
+    );
   }
-  const signature = options.map((option) => [modelValue(option.provider, option.model), option.providerLabel, option.label, option.available, option.enabled, option.keyPresent].join(":")).join("|");
+  const signature = options
+    .map((option) =>
+      [
+        modelValue(option.provider, option.model),
+        option.providerLabel,
+        option.label,
+        option.available,
+        option.enabled,
+        option.keyPresent,
+      ].join(":"),
+    )
+    .join("|");
   if (select.dataset.options !== signature) {
     const groups = new Map();
     for (const option of options) {
@@ -381,7 +465,9 @@ function syncCampaignModel(campaign) {
       }
       const element = document.createElement("option");
       element.value = modelValue(option.provider, option.model);
-      const isCurrentUnavailable = element.value === currentValue && !(option.available && option.enabled && option.keyPresent);
+      const isCurrentUnavailable =
+        element.value === currentValue &&
+        !(option.available && option.enabled && option.keyPresent);
       const unavailableLabel = option.hidden ? t("legacyModel") : t("needsTest");
       element.textContent = `${option.label}${option.recommended ? ` · ${t("recommended")}` : ""}${isCurrentUnavailable ? ` · ${unavailableLabel}` : ""}`;
       groups.get(option.provider).append(element);
@@ -390,14 +476,27 @@ function syncCampaignModel(campaign) {
     select.dataset.options = signature;
   }
   select.value = currentValue;
-  select.disabled = campaign.archived || campaign.status !== "active" || campaignBusy(campaign) || Boolean(campaign.pending) || savingCampaignConfigs.has(campaign.campaignId);
+  select.disabled =
+    campaign.archived ||
+    campaign.status !== "active" ||
+    campaignBusy(campaign) ||
+    Boolean(campaign.pending) ||
+    savingCampaignConfigs.has(campaign.campaignId);
 }
 
 function renderCampaignChrome() {
   const campaign = selectedCampaign();
-  if ($("#campaign-title-form").hidden) $("#campaign-title").textContent = campaign?.title ?? "llm-dungeon";
+  if ($("#campaign-title-form").hidden)
+    $("#campaign-title").textContent = campaign?.title ?? "llm-dungeon";
   $("#campaign-meta").textContent = campaign
-    ? [`${t("turn")} ${campaign.turn}`, campaign.timeLabel, statusLabel(campaign), campaignCostText(campaign.campaignCost, t("campaignCost"))].filter(Boolean).join(" · ")
+    ? [
+        `${t("turn")} ${campaign.turn}`,
+        campaign.timeLabel,
+        statusLabel(campaign),
+        campaignCostText(campaign.campaignCost, t("campaignCost")),
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : "";
   syncCampaignModel(campaign);
   const unavailable = !campaign || campaignBusy(campaign);
@@ -412,6 +511,7 @@ function renderCampaignChrome() {
 function beginCampaignTitleEdit() {
   const campaign = selectedCampaign();
   if (!campaign || campaign.archived || campaignBusy(campaign)) return;
+  editingCampaignId = campaign.campaignId;
   $("#campaign-title-input").value = campaign.title;
   $("#campaign-title").hidden = true;
   $("#edit-campaign-title").hidden = true;
@@ -420,16 +520,17 @@ function beginCampaignTitleEdit() {
   $("#campaign-title-input").select();
 }
 
-function cancelCampaignTitleEdit() {
+function cancelCampaignTitleEdit({ restoreFocus = true } = {}) {
+  editingCampaignId = null;
   $("#campaign-title-form").hidden = true;
   $("#campaign-title").hidden = false;
   $("#edit-campaign-title").hidden = false;
   renderCampaignChrome();
-  $("#edit-campaign-title").focus();
+  if (restoreFocus) $("#edit-campaign-title").focus();
 }
 
 async function saveCampaignTitle() {
-  const campaign = selectedCampaign();
+  const campaign = campaignById(editingCampaignId);
   const title = $("#campaign-title-input").value.trim();
   if (!campaign || campaign.archived || campaignBusy(campaign) || !title) return;
   try {
@@ -459,7 +560,11 @@ function closeSidebar({ restoreFocus = false } = {}) {
 
 function setDesktopSidebarCollapsed(collapsed) {
   document.body.classList.toggle("sidebar-collapsed", collapsed);
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed)); } catch { /* Storage can be disabled. */ }
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+  } catch {
+    /* Storage can be disabled. */
+  }
   syncSidebarAccessibility();
 }
 
@@ -493,7 +598,9 @@ function syncSidebarAccessibility() {
   const sidebarHidden = mobile ? !open || inspectionOpen : collapsed;
   $("#campaign-sidebar").inert = sidebarHidden;
   $("#campaign-sidebar").setAttribute("aria-hidden", String(sidebarHidden));
-  $$(".sidebar-opener").forEach((button) => button.setAttribute("aria-expanded", String(mobile ? open : !collapsed)));
+  $$(".sidebar-opener").forEach((button) =>
+    button.setAttribute("aria-expanded", String(mobile ? open : !collapsed)),
+  );
   $("#close-sidebar").setAttribute("aria-expanded", String(mobile ? open : !collapsed));
   $("#sidebar-resizer").tabIndex = collapsed ? -1 : 0;
   $(".main-pane").inert = mobile && (open || inspectionOpen);
@@ -505,8 +612,13 @@ function syncSidebarAccessibility() {
 
 function initializeSidebarState() {
   try {
-    document.body.classList.toggle("sidebar-collapsed", localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
-  } catch { /* Storage can be disabled. */ }
+    document.body.classList.toggle(
+      "sidebar-collapsed",
+      localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
+    );
+  } catch {
+    /* Storage can be disabled. */
+  }
 }
 
 function clampPanelWidth(value, minimum, maximum) {
@@ -514,7 +626,10 @@ function clampPanelWidth(value, minimum, maximum) {
 }
 
 function panelWidth(variable, fallback) {
-  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(variable)) || fallback;
+  return (
+    Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(variable)) ||
+    fallback
+  );
 }
 
 function setPanelWidth(variable, handle, value, minimum, maximum) {
@@ -526,17 +641,33 @@ function setPanelWidth(variable, handle, value, minimum, maximum) {
   return width;
 }
 
-function bindPanelResizer({ selector, variable, storageKey, fallback, minimum, maximum, direction }) {
+function bindPanelResizer({
+  selector,
+  variable,
+  storageKey,
+  fallback,
+  minimum,
+  maximum,
+  direction,
+}) {
   const handle = $(selector);
-  const maximumWidth = () => Math.max(minimum, Math.min(maximum, window.innerWidth * .55));
+  const maximumWidth = () => Math.max(minimum, Math.min(maximum, window.innerWidth * 0.55));
   let initial = fallback;
-  try { initial = Number(localStorage.getItem(storageKey)) || fallback; } catch { /* Storage can be disabled. */ }
+  try {
+    initial = Number(localStorage.getItem(storageKey)) || fallback;
+  } catch {
+    /* Storage can be disabled. */
+  }
   setPanelWidth(variable, handle, initial, minimum, maximumWidth());
   let startX = null;
   let startWidth = 0;
 
   const persist = () => {
-    try { localStorage.setItem(storageKey, String(Math.round(panelWidth(variable, fallback)))); } catch { /* Storage can be disabled. */ }
+    try {
+      localStorage.setItem(storageKey, String(Math.round(panelWidth(variable, fallback))));
+    } catch {
+      /* Storage can be disabled. */
+    }
   };
   const finish = (event) => {
     if (startX === null) return;
@@ -555,30 +686,56 @@ function bindPanelResizer({ selector, variable, storageKey, fallback, minimum, m
   });
   handle.addEventListener("pointermove", (event) => {
     if (startX === null) return;
-    setPanelWidth(variable, handle, startWidth + ((event.clientX - startX) * direction), minimum, maximumWidth());
+    setPanelWidth(
+      variable,
+      handle,
+      startWidth + (event.clientX - startX) * direction,
+      minimum,
+      maximumWidth(),
+    );
   });
   handle.addEventListener("pointerup", finish);
   handle.addEventListener("pointercancel", finish);
   handle.addEventListener("keydown", (event) => {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     const screenDirection = event.key === "ArrowRight" ? 1 : -1;
-    setPanelWidth(variable, handle, panelWidth(variable, fallback) + (screenDirection * direction * 16), minimum, maximumWidth());
+    setPanelWidth(
+      variable,
+      handle,
+      panelWidth(variable, fallback) + screenDirection * direction * 16,
+      minimum,
+      maximumWidth(),
+    );
     persist();
     event.preventDefault();
   });
-  return () => setPanelWidth(variable, handle, panelWidth(variable, fallback), minimum, maximumWidth());
+  return () =>
+    setPanelWidth(variable, handle, panelWidth(variable, fallback), minimum, maximumWidth());
 }
 
 function initializePanelResizing() {
   const clampSidebar = bindPanelResizer({
-    selector: "#sidebar-resizer", variable: "--sidebar-width", storageKey: SIDEBAR_WIDTH_KEY,
-    fallback: 272, minimum: 220, maximum: 480, direction: 1,
+    selector: "#sidebar-resizer",
+    variable: "--sidebar-width",
+    storageKey: SIDEBAR_WIDTH_KEY,
+    fallback: 272,
+    minimum: 220,
+    maximum: 480,
+    direction: 1,
   });
   const clampInspection = bindPanelResizer({
-    selector: "#inspection-resizer", variable: "--inspection-width", storageKey: INSPECTION_WIDTH_KEY,
-    fallback: 420, minimum: 320, maximum: 640, direction: -1,
+    selector: "#inspection-resizer",
+    variable: "--inspection-width",
+    storageKey: INSPECTION_WIDTH_KEY,
+    fallback: 420,
+    minimum: 320,
+    maximum: 640,
+    direction: -1,
   });
-  window.addEventListener("resize", () => { clampSidebar(); clampInspection(); });
+  window.addEventListener("resize", () => {
+    clampSidebar();
+    clampInspection();
+  });
 }
 
 function showView(name, { focus = true } = {}) {
@@ -601,10 +758,17 @@ function showView(name, { focus = true } = {}) {
 
 async function selectCampaign(campaignId) {
   if (!campaignById(campaignId)) return;
-  if (selectedCampaignId !== campaignId) saveActionDraft(selectedCampaignId);
+  if (selectedCampaignId !== campaignId) {
+    saveActionDraft(selectedCampaignId);
+    if (editingCampaignId !== null) cancelCampaignTitleEdit({ restoreFocus: false });
+  }
   selectedCampaignId = campaignId;
   restoreActionDraft(campaignId);
-  try { localStorage.setItem(SELECTED_CAMPAIGN_KEY, campaignId); } catch { /* Storage can be disabled. */ }
+  try {
+    localStorage.setItem(SELECTED_CAMPAIGN_KEY, campaignId);
+  } catch {
+    /* Storage can be disabled. */
+  }
   closeInspection();
   showView("chat");
   await reconcileTranscript(campaignId);
@@ -619,9 +783,11 @@ function openProviderSettings() {
   showView("settings", { focus: false });
   setupSettings.selectSettingsSection("providers");
   const recommendedProvider = status.llm?.providers?.find((provider) => provider.recommended);
-  const recommendedCard = [.../** @type {NodeListOf<HTMLDetailsElement>} */ (
-    document.querySelectorAll("[data-provider-details]")
-  )].find((card) => card.dataset.providerDetails === recommendedProvider?.id);
+  const recommendedCard = [
+    .../** @type {NodeListOf<HTMLDetailsElement>} */ (
+      document.querySelectorAll("[data-provider-details]")
+    ),
+  ].find((card) => card.dataset.providerDetails === recommendedProvider?.id);
   if (recommendedCard) recommendedCard.open = true;
   $("#llm-settings-title").focus({ preventScroll: true });
 }
@@ -641,22 +807,72 @@ async function reconcileTranscript(campaignId) {
   if (selectedCampaignId === campaignId) $("#chat-log").setAttribute("aria-busy", "true");
   try {
     const body = await api(campaignApiPath(campaignId, "transcript"));
-    if (typeof body.playerName === "string" && body.playerName.trim()) characterNames.set(campaignId, body.playerName.trim());
+    if (typeof body.playerName === "string" && body.playerName.trim())
+      characterNames.set(campaignId, body.playerName.trim());
     const turns = Array.isArray(body.turns) ? body.turns : [];
     const entries = chatHistory.entries(campaignId);
     const authoritative = [];
     for (const turn of turns) {
       if (!Number.isSafeInteger(turn.turn)) continue;
       if (turn.turn === 0 || turn.kind === "opening") {
-        authoritative.push(normalizeTerminalEntry({ title: `${campaignT("openingHeading")} · ${campaign.title}`, text: turn.narration, mode: "success", channel: "game", kind: "opening", turn: 0, generation: turn.generation }));
+        authoritative.push(
+          normalizeTerminalEntry({
+            title: `${campaignT("openingHeading")} · ${campaign.title}`,
+            text: turn.narration,
+            mode: "success",
+            channel: "game",
+            kind: "opening",
+            turn: 0,
+            generation: turn.generation,
+          }),
+        );
       } else {
-        if (turn.action) authoritative.push(normalizeTerminalEntry({ title: campaignT("you"), text: turn.action, mode: "normal", channel: "game" }));
-        if (turn.checkText) authoritative.push(normalizeTerminalEntry({ title: campaignT("check"), text: turn.checkText, mode: "normal", channel: "game" }));
+        if (turn.action)
+          authoritative.push(
+            normalizeTerminalEntry({
+              title: campaignT("you"),
+              text: turn.action,
+              mode: "normal",
+              channel: "game",
+            }),
+          );
+        if (turn.checkText)
+          authoritative.push(
+            normalizeTerminalEntry({
+              title: campaignT("check"),
+              text: turn.checkText,
+              mode: "normal",
+              channel: "game",
+            }),
+          );
         if (turn.kind === "appeal") {
-          const target = Number.isSafeInteger(turn.appealTargetTurn) ? ` · ${campaignT("turn")} ${turn.appealTargetTurn}` : "";
-          authoritative.push(normalizeTerminalEntry({ title: `${campaignT("appealHeading")}${target}`, text: turn.narration, mode: "success", channel: "game", kind: "appeal", turn: turn.turn, appealTargetTurn: turn.appealTargetTurn, generation: turn.generation }));
+          const target = Number.isSafeInteger(turn.appealTargetTurn)
+            ? ` · ${campaignT("turn")} ${turn.appealTargetTurn}`
+            : "";
+          authoritative.push(
+            normalizeTerminalEntry({
+              title: `${campaignT("appealHeading")}${target}`,
+              text: turn.narration,
+              mode: "success",
+              channel: "game",
+              kind: "appeal",
+              turn: turn.turn,
+              appealTargetTurn: turn.appealTargetTurn,
+              generation: turn.generation,
+            }),
+          );
         } else {
-          authoritative.push(normalizeTerminalEntry({ title: `${campaignT("dm")} · ${campaignT("turn")} ${turn.turn}`, text: turn.narration, mode: "success", channel: "game", kind: "gameplay", turn: turn.turn, generation: turn.generation }));
+          authoritative.push(
+            normalizeTerminalEntry({
+              title: `${campaignT("dm")} · ${campaignT("turn")} ${turn.turn}`,
+              text: turn.narration,
+              mode: "success",
+              channel: "game",
+              kind: "gameplay",
+              turn: turn.turn,
+              generation: turn.generation,
+            }),
+          );
         }
       }
     }
@@ -682,7 +898,11 @@ async function performStatusRefresh() {
   setupSettings.syncLlm();
   let preferred = selectedCampaignId;
   if (!preferred) {
-    try { preferred = localStorage.getItem(SELECTED_CAMPAIGN_KEY); } catch { /* Storage can be disabled. */ }
+    try {
+      preferred = localStorage.getItem(SELECTED_CAMPAIGN_KEY);
+    } catch {
+      /* Storage can be disabled. */
+    }
   }
   const nextSelected = chooseCampaignId(nextCampaigns, preferred);
   const selectionChanged = selectedCampaignId !== nextSelected;
@@ -717,7 +937,9 @@ function refreshStatus({ ensureFresh = false } = {}) {
       statusRefreshQueued = false;
       await performStatusRefresh();
     } while (statusRefreshQueued);
-  })().finally(() => { statusPollPromise = null; });
+  })().finally(() => {
+    statusPollPromise = null;
+  });
   return statusPollPromise;
 }
 
@@ -775,7 +997,12 @@ async function submitAction() {
         body: action === ":retry" ? "{}" : JSON.stringify({ action }),
       });
       if (result.kind === "question") {
-        appendHistory(campaignId, { title: campaignT("answerNoTurn"), text: result.answer, mode: "success", ...(result.generation ? { generation: result.generation } : {}) });
+        appendHistory(campaignId, {
+          title: campaignT("answerNoTurn"),
+          text: result.answer,
+          mode: "success",
+          ...(result.generation ? { generation: result.generation } : {}),
+        });
       } else {
         appendCommittedResponse(campaignId, result);
       }
@@ -797,8 +1024,11 @@ async function changeCampaignModel() {
   const choice = modelChoice($("#campaign-model").value);
   const currentConfig = campaign?.config ?? status.llm?.defaultModel ?? status.config;
   if (!campaign || !choice || !currentConfig) return;
-  const selectable = llmModelEntries(status.llm, { availableOnly: true, requireKey: true, language: campaign.language })
-    .some((entry) => entry.provider === choice.provider && entry.model === choice.model);
+  const selectable = llmModelEntries(status.llm, {
+    availableOnly: true,
+    requireKey: true,
+    language: campaign.language,
+  }).some((entry) => entry.provider === choice.provider && entry.model === choice.model);
   if (!selectable) {
     syncCampaignModel(campaign);
     showToast(t("modelUnavailable"), "error");
@@ -808,7 +1038,10 @@ async function changeCampaignModel() {
   savingCampaignConfigs.add(campaignId);
   renderCampaignChrome();
   try {
-    const body = await api(campaignApiPath(campaignId, "config"), { method: "PUT", body: JSON.stringify(choice) });
+    const body = await api(campaignApiPath(campaignId, "config"), {
+      method: "PUT",
+      body: JSON.stringify(choice),
+    });
     const saved = body.config ?? body;
     const target = campaignById(campaignId);
     if (target) target.config = saved;
@@ -829,17 +1062,28 @@ async function loadInspection(view) {
   if (!campaignId) return;
   currentInspectionView = view;
   const requestId = ++inspectionSequence;
-  $$("#inspection-tabs [role=tab]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.view === view)));
+  $$("#inspection-tabs [role=tab]").forEach((button) =>
+    button.setAttribute("aria-selected", String(button.dataset.view === view)),
+  );
   $("#inspection-title").textContent = t(view === "threads" ? "storyThreads" : view);
   $("#inspection-output").replaceChildren(inspectionMessage(t("loadingState")));
   try {
-    const body = await api(`${campaignApiPath(campaignId, "inspect")}?view=${encodeURIComponent(view)}`);
-    if (requestId !== inspectionSequence || selectedCampaignId !== campaignId || currentInspectionView !== view) return;
+    const body = await api(
+      `${campaignApiPath(campaignId, "inspect")}?view=${encodeURIComponent(view)}`,
+    );
+    if (
+      requestId !== inspectionSequence ||
+      selectedCampaignId !== campaignId ||
+      currentInspectionView !== view
+    )
+      return;
     if (!body.inspection || body.inspection.view !== view) throw new Error(t("stateError"));
     $("#inspection-output").replaceChildren(renderInspectionView(body.inspection, t));
   } catch (error) {
     if (requestId !== inspectionSequence || selectedCampaignId !== campaignId) return;
-    $("#inspection-output").replaceChildren(inspectionMessage(`${t("stateError")} ${error.message}`, "error"));
+    $("#inspection-output").replaceChildren(
+      inspectionMessage(`${t("stateError")} ${error.message}`, "error"),
+    );
   }
 }
 
@@ -936,7 +1180,9 @@ async function openCampaignSetup() {
       content.replaceChildren(inspectionMessage(t("setupUnavailable")));
       return;
     }
-    const language = status.languages.find((item) => item.code === body.setup.language)?.name ?? body.setup.language;
+    const language =
+      status.languages.find((item) => item.code === body.setup.language)?.name ??
+      body.setup.language;
     content.replaceChildren(
       campaignSetupSection(t("premise"), body.setup.premise),
       campaignSetupSection(t("characterConcept"), body.setup.character),
@@ -959,7 +1205,9 @@ function requestDeleteArchivedCampaign(campaignId) {
   const campaign = campaignById(campaignId);
   if (!campaign?.archived) return;
   pendingDeleteCampaignId = campaignId;
-  $("#delete-campaign-warning").textContent = formatTemplate("deleteCampaignConfirm", { title: campaign.title });
+  $("#delete-campaign-warning").textContent = formatTemplate("deleteCampaignConfirm", {
+    title: campaign.title,
+  });
   $("#delete-campaign-confirmation").value = "";
   $("#confirm-delete-campaign").disabled = true;
   $("#delete-campaign-dialog").showModal();
@@ -977,7 +1225,10 @@ async function deleteArchivedCampaign(campaignId) {
   inFlightCampaigns.add(campaignId);
   renderSidebar();
   try {
-    await api(campaignApiPath(campaignId, "delete"), { method: "DELETE", body: JSON.stringify({ title: campaign.title }) });
+    await api(campaignApiPath(campaignId, "delete"), {
+      method: "DELETE",
+      body: JSON.stringify({ title: campaign.title }),
+    });
     chatHistory.remove(campaignId);
     characterNames.delete(campaignId);
     actionDrafts.delete(campaignId);
@@ -985,7 +1236,11 @@ async function deleteArchivedCampaign(campaignId) {
     if (selectedCampaignId === campaignId) {
       closeInspection();
       selectedCampaignId = null;
-      try { localStorage.removeItem(SELECTED_CAMPAIGN_KEY); } catch { /* Storage can be disabled. */ }
+      try {
+        localStorage.removeItem(SELECTED_CAMPAIGN_KEY);
+      } catch {
+        /* Storage can be disabled. */
+      }
     }
     showToast(t("campaignDeleted"), "success");
   } catch (error) {
@@ -1013,19 +1268,26 @@ const setupSettings = createSetupSettingsController({
   onCampaignCreated: async (body) => {
     const campaignT = interfaceTranslator();
     updateCampaignFromState(body.state, body.config);
-    if (typeof body.playerName === "string" && body.playerName.trim()) characterNames.set(body.state.campaignId, body.playerName.trim());
-    appendHistory(body.state.campaignId, {
-      title: `${campaignT("openingHeading")} · ${body.state.title}`,
-      text: body.openingNarration,
-      mode: "success",
-      kind: "opening",
-      turn: 0,
-    }, { render: false });
+    if (typeof body.playerName === "string" && body.playerName.trim())
+      characterNames.set(body.state.campaignId, body.playerName.trim());
+    appendHistory(
+      body.state.campaignId,
+      {
+        title: `${campaignT("openingHeading")} · ${body.state.title}`,
+        text: body.openingNarration,
+        mode: "success",
+        kind: "opening",
+        turn: 0,
+      },
+      { render: false },
+    );
     await refreshStatus({ ensureFresh: true });
     await selectCampaign(body.state.campaignId);
   },
   refreshStatus,
-  setDefaults: (values) => { status = { ...status, ...values }; },
+  setDefaults: (values) => {
+    status = { ...status, ...values };
+  },
   showToast,
   t,
   withButtonBusy,
@@ -1038,7 +1300,9 @@ function bindEvents() {
   $("#open-settings").addEventListener("click", () => showView("settings"));
   $("#campaign-list").addEventListener("click", handleCampaignListClick);
   $("#archived-campaign-list").addEventListener("click", handleCampaignListClick);
-  $$(".sidebar-opener").forEach((button) => button.addEventListener("click", (event) => openSidebar(event.currentTarget)));
+  $$(".sidebar-opener").forEach((button) =>
+    button.addEventListener("click", (event) => openSidebar(event.currentTarget)),
+  );
   $("#close-sidebar").addEventListener("click", () => collapseSidebar({ restoreFocus: true }));
   $("#sidebar-backdrop").addEventListener("click", () => closeSidebar({ restoreFocus: true }));
   window.addEventListener("resize", syncSidebarAccessibility);
@@ -1078,7 +1342,9 @@ function bindEvents() {
     }
   });
   $("#close-campaign-setup").addEventListener("click", closeCampaignSetup);
-  $("#campaign-setup-dialog").addEventListener("close", () => { campaignSetupSequence += 1; });
+  $("#campaign-setup-dialog").addEventListener("close", () => {
+    campaignSetupSequence += 1;
+  });
   $("#archive-campaign").addEventListener("click", requestArchiveCampaign);
   $("#archive-campaign-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1086,23 +1352,31 @@ function bindEvents() {
   });
   $("#cancel-archive-campaign").addEventListener("click", closeArchiveCampaignDialog);
   $("#cancel-archive-campaign-x").addEventListener("click", closeArchiveCampaignDialog);
-  $("#archive-campaign-dialog").addEventListener("close", () => { pendingArchiveCampaignId = null; });
+  $("#archive-campaign-dialog").addEventListener("close", () => {
+    pendingArchiveCampaignId = null;
+  });
   $("#delete-campaign-confirmation").addEventListener("input", (event) => {
     const campaign = campaignById(pendingDeleteCampaignId);
-    $("#confirm-delete-campaign").disabled = !campaign
-      || event.target.value !== confirmationTitleValue(campaign.title);
+    $("#confirm-delete-campaign").disabled =
+      !campaign || event.target.value !== confirmationTitleValue(campaign.title);
   });
   $("#delete-campaign-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const campaignId = pendingDeleteCampaignId;
     const campaign = campaignById(campaignId);
-    if (!campaign || $("#delete-campaign-confirmation").value !== confirmationTitleValue(campaign.title)) return;
+    if (
+      !campaign ||
+      $("#delete-campaign-confirmation").value !== confirmationTitleValue(campaign.title)
+    )
+      return;
     closeDeleteCampaignDialog();
     deleteArchivedCampaign(campaignId);
   });
   $("#cancel-delete-campaign").addEventListener("click", closeDeleteCampaignDialog);
   $("#cancel-delete-campaign-x").addEventListener("click", closeDeleteCampaignDialog);
-  $("#delete-campaign-dialog").addEventListener("close", () => { pendingDeleteCampaignId = null; });
+  $("#delete-campaign-dialog").addEventListener("close", () => {
+    pendingDeleteCampaignId = null;
+  });
 
   document.addEventListener("click", (event) => {
     const menu = $("#campaign-menu");

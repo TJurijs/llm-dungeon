@@ -27,12 +27,13 @@ import { atomicWriteJson, pathExists, unlinkIfExists } from "./persistence/files
 import { withSerializedFileLock } from "./persistence/lock.js";
 import { validatePreparedTurnLog } from "./persistence/markdown.js";
 import { campaignIdAt } from "./persistence/replacement.js";
-import { ProviderConfigSchema, SafeIdSchema, type GameState, type ProviderConfig } from "./schemas.js";
 import {
-  StateStore,
-  loadCampaignDirectory,
-  validateInitialSetup,
-} from "./store.js";
+  ProviderConfigSchema,
+  SafeIdSchema,
+  type GameState,
+  type ProviderConfig,
+} from "./schemas.js";
+import { StateStore, loadCampaignDirectory, validateInitialSetup } from "./store.js";
 import type { NewGameInput } from "./types.js";
 
 export interface CampaignCatalogOptions {
@@ -72,7 +73,9 @@ interface CatalogEntry {
   manifest: GameState;
 }
 
-function optionalProviderConfig(config: ProviderConfig | undefined): { providerConfig?: ProviderConfig } {
+function optionalProviderConfig(config: ProviderConfig | undefined): {
+  providerConfig?: ProviderConfig;
+} {
   return config === undefined ? {} : { providerConfig: ProviderConfigSchema.parse(config) };
 }
 
@@ -96,15 +99,16 @@ function summaryOf(entry: CatalogEntry): CampaignCatalogSummary {
 
 function validatedNewGameInput(input: unknown): NewGameInput {
   const parsed = CatalogNewGameInputSchema.parse(input);
-  const openingGeneration = parsed.openingGeneration === undefined
-    ? undefined
-    : {
-      provider: parsed.openingGeneration.provider,
-      model: parsed.openingGeneration.model,
-      ...(parsed.openingGeneration.usage === undefined
-        ? {}
-        : { usage: parsed.openingGeneration.usage }),
-    };
+  const openingGeneration =
+    parsed.openingGeneration === undefined
+      ? undefined
+      : {
+          provider: parsed.openingGeneration.provider,
+          model: parsed.openingGeneration.model,
+          ...(parsed.openingGeneration.usage === undefined
+            ? {}
+            : { usage: parsed.openingGeneration.usage }),
+        };
   return {
     setup: validateInitialSetup(parsed.setup),
     worldRules: parsed.worldRules,
@@ -118,7 +122,10 @@ function sameMetadata(left: CampaignMetadata, right: CampaignMetadata): boolean 
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function creationFingerprint(input: NewGameInput, providerConfig: ProviderConfig | undefined): string {
+function creationFingerprint(
+  input: NewGameInput,
+  providerConfig: ProviderConfig | undefined,
+): string {
   return createHash("sha256")
     .update(JSON.stringify({ input, providerConfig: providerConfig ?? null }))
     .digest("hex");
@@ -137,14 +144,18 @@ export class CampaignCatalog {
   private readonly defaultProviderConfig: ProviderConfig | undefined;
   private readonly lockContext = new AsyncLocalStorage<boolean>();
 
-  constructor(readonly dataRoot: string, options: CampaignCatalogOptions = {}) {
+  constructor(
+    readonly dataRoot: string,
+    options: CampaignCatalogOptions = {},
+  ) {
     this.campaignsRoot = path.join(dataRoot, CAMPAIGNS_DIRECTORY);
     this.lockPath = path.join(dataRoot, ".campaign-catalog.lock");
     this.migrationIntentPath = path.join(dataRoot, CAMPAIGN_MIGRATION_INTENT_FILE);
     this.creationIntentPath = path.join(dataRoot, CAMPAIGN_CREATION_INTENT_FILE);
-    this.defaultProviderConfig = options.defaultProviderConfig === undefined
-      ? undefined
-      : ProviderConfigSchema.parse(options.defaultProviderConfig);
+    this.defaultProviderConfig =
+      options.defaultProviderConfig === undefined
+        ? undefined
+        : ProviderConfigSchema.parse(options.defaultProviderConfig);
   }
 
   private async withCatalogLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -183,11 +194,16 @@ export class CampaignCatalog {
     await this.recoverLegacyCreationOrphansUnlocked();
   }
 
-  private async removeCreationStagingUnlocked(scopeRoot: string, campaignId: string): Promise<void> {
+  private async removeCreationStagingUnlocked(
+    scopeRoot: string,
+    campaignId: string,
+  ): Promise<void> {
     const entries = await readdir(scopeRoot, { withFileTypes: true });
     for (const entry of entries.filter((candidate) => candidate.name.startsWith(".new-"))) {
       if (!entry.isDirectory()) {
-        throw new Error(`Campaign ${campaignId} has an unsafe creation staging entry ${entry.name}`);
+        throw new Error(
+          `Campaign ${campaignId} has an unsafe creation staging entry ${entry.name}`,
+        );
       }
       const stagingPath = path.join(scopeRoot, entry.name);
       const stagedId = await campaignIdAt(stagingPath);
@@ -200,15 +216,17 @@ export class CampaignCatalog {
 
   private async recoverCreationUnlocked(): Promise<CreatedCampaign | undefined> {
     if (!(await pathExists(this.creationIntentPath))) return undefined;
-    const intent = CampaignCreationIntentSchema.parse(JSON.parse(
-      await readFile(this.creationIntentPath, "utf8"),
-    ));
+    const intent = CampaignCreationIntentSchema.parse(
+      JSON.parse(await readFile(this.creationIntentPath, "utf8")),
+    );
     const scopeRoot = campaignScopePath(this.dataRoot, intent.metadata.campaignId);
     await mkdir(scopeRoot, { recursive: true });
     if (await pathExists(campaignMetadataPath(scopeRoot))) {
       const existing = await readCampaignMetadata(scopeRoot);
       if (!sameMetadata(existing, intent.metadata)) {
-        throw new Error(`Campaign ${intent.metadata.campaignId} creation metadata conflicts with its durable intent`);
+        throw new Error(
+          `Campaign ${intent.metadata.campaignId} creation metadata conflicts with its durable intent`,
+        );
       }
     } else {
       await writeCampaignMetadata(scopeRoot, intent.metadata);
@@ -223,7 +241,9 @@ export class CampaignCatalog {
         return;
       }
       if (await pathExists(store.currentDir)) {
-        throw new Error(`Campaign ${intent.metadata.campaignId} has an incomplete current directory`);
+        throw new Error(
+          `Campaign ${intent.metadata.campaignId} has an incomplete current directory`,
+        );
       }
       await this.removeCreationStagingUnlocked(scopeRoot, intent.metadata.campaignId);
       state = await store.createGame(validatedNewGameInput(intent.input));
@@ -277,12 +297,17 @@ export class CampaignCatalog {
           const stagePath = path.join(scopeRoot, entry.name);
           const stagedId = await campaignIdAt(stagePath);
           if (stagedId !== undefined && stagedId !== metadata.campaignId) {
-            throw new Error(`Campaign ${metadata.campaignId} staging belongs to another campaign: ${stagedId}`);
+            throw new Error(
+              `Campaign ${metadata.campaignId} staging belongs to another campaign: ${stagedId}`,
+            );
           }
-          if (await this.validLegacyInitialStage(stagePath, metadata.campaignId)) valid.push(stagePath);
+          if (await this.validLegacyInitialStage(stagePath, metadata.campaignId))
+            valid.push(stagePath);
         }
         if (valid.length > 1) {
-          throw new Error(`Campaign ${metadata.campaignId} has multiple complete creation staging directories`);
+          throw new Error(
+            `Campaign ${metadata.campaignId} has multiple complete creation staging directories`,
+          );
         }
         if (valid.length === 1) {
           await rename(valid[0]!, store.currentDir);
@@ -302,9 +327,10 @@ export class CampaignCatalog {
     const seen = new Set<string>();
 
     const add = async (source: LegacyCampaignSource, archived: boolean): Promise<void> => {
-      const sourcePath = source.kind === "current"
-        ? path.join(this.dataRoot, "current")
-        : path.join(this.dataRoot, "archive", source.directory);
+      const sourcePath =
+        source.kind === "current"
+          ? path.join(this.dataRoot, "current")
+          : path.join(this.dataRoot, "archive", source.directory);
       const campaignId = await campaignIdAt(sourcePath);
       if (campaignId === undefined) return;
       if (seen.has(campaignId)) {
@@ -329,7 +355,9 @@ export class CampaignCatalog {
     await add({ kind: "current" }, false);
     let archivedDirectories: string[] = [];
     try {
-      archivedDirectories = (await readdir(path.join(this.dataRoot, "archive"), { withFileTypes: true }))
+      archivedDirectories = (
+        await readdir(path.join(this.dataRoot, "archive"), { withFileTypes: true })
+      )
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
         .sort();
@@ -340,9 +368,7 @@ export class CampaignCatalog {
       await add({ kind: "archive", directory }, true);
     }
 
-    return entries.length === 0
-      ? undefined
-      : { schemaVersion: 1, createdAt, entries };
+    return entries.length === 0 ? undefined : { schemaVersion: 1, createdAt, entries };
   }
 
   private storeFor(scopeRoot: string, metadata: CampaignMetadata, readOnly: boolean): StateStore {
@@ -361,7 +387,9 @@ export class CampaignCatalog {
     }
     const metadata = await readCampaignMetadata(scopeRoot);
     if (metadata.campaignId !== validatedId) {
-      throw new Error(`Campaign catalog directory belongs to ${metadata.campaignId}, not ${validatedId}`);
+      throw new Error(
+        `Campaign catalog directory belongs to ${metadata.campaignId}, not ${validatedId}`,
+      );
     }
     const manifest = await this.storeFor(scopeRoot, metadata, metadata.archived).readManifest();
     return { scopeRoot, metadata, manifest };
@@ -378,13 +406,15 @@ export class CampaignCatalog {
       const metadataExists = await pathExists(campaignMetadataPath(scopeRoot));
       const manifestExists = await pathExists(path.join(scopeRoot, "current", "manifest.json"));
       if (!metadataExists && !manifestExists) continue;
-      if (!metadataExists) throw new Error(`Catalog campaign ${directory.name} is missing metadata`);
+      if (!metadataExists)
+        throw new Error(`Catalog campaign ${directory.name} is missing metadata`);
       if (!manifestExists) continue; // Conservatively preserved unrecognized legacy orphan.
       const metadata = await readCampaignMetadata(scopeRoot);
       if (directory.name !== campaignDirectoryName(metadata.campaignId)) {
         throw new Error(`Catalog campaign ${metadata.campaignId} is stored in the wrong directory`);
       }
-      if (seen.has(metadata.campaignId)) throw new Error(`Duplicate catalog campaign ${metadata.campaignId}`);
+      if (seen.has(metadata.campaignId))
+        throw new Error(`Duplicate catalog campaign ${metadata.campaignId}`);
       seen.add(metadata.campaignId);
       const manifest = await this.storeFor(scopeRoot, metadata, metadata.archived).readManifest();
       entries.push({ scopeRoot, metadata, manifest });
@@ -392,7 +422,9 @@ export class CampaignCatalog {
     return entries;
   }
 
-  private async entryForCreationRequestUnlocked(requestId: string): Promise<CatalogEntry | undefined> {
+  private async entryForCreationRequestUnlocked(
+    requestId: string,
+  ): Promise<CatalogEntry | undefined> {
     const matches: Array<{ scopeRoot: string; metadata: CampaignMetadata }> = [];
     const directories = (await readdir(this.campaignsRoot, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
@@ -409,12 +441,20 @@ export class CampaignCatalog {
     const match = matches[0];
     if (match === undefined) return undefined;
     if (path.basename(match.scopeRoot) !== campaignDirectoryName(match.metadata.campaignId)) {
-      throw new Error(`Catalog campaign ${match.metadata.campaignId} is stored in the wrong directory`);
+      throw new Error(
+        `Catalog campaign ${match.metadata.campaignId} is stored in the wrong directory`,
+      );
     }
     if (!(await pathExists(path.join(match.scopeRoot, "current", "manifest.json")))) {
-      throw new Error(`Campaign creation request ${requestId} belongs to an incomplete preserved campaign`);
+      throw new Error(
+        `Campaign creation request ${requestId} belongs to an incomplete preserved campaign`,
+      );
     }
-    const manifest = await this.storeFor(match.scopeRoot, match.metadata, match.metadata.archived).readManifest();
+    const manifest = await this.storeFor(
+      match.scopeRoot,
+      match.metadata,
+      match.metadata.archived,
+    ).readManifest();
     return { ...match, manifest };
   }
 
@@ -432,9 +472,11 @@ export class CampaignCatalog {
       const summaries = (await this.entriesUnlocked()).map(summaryOf);
       return summaries.sort((left, right) => {
         if (left.archived !== right.archived) return left.archived ? 1 : -1;
-        return right.updatedAt.localeCompare(left.updatedAt)
-          || left.title.localeCompare(right.title)
-          || left.campaignId.localeCompare(right.campaignId);
+        return (
+          right.updatedAt.localeCompare(left.updatedAt) ||
+          left.title.localeCompare(right.title) ||
+          left.campaignId.localeCompare(right.campaignId)
+        );
       });
     });
   }
@@ -445,21 +487,23 @@ export class CampaignCatalog {
   ): Promise<CreatedCampaign> {
     return this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();
-      const requestId = options.requestId === undefined
-        ? undefined
-        : z.string().uuid().parse(options.requestId);
+      const requestId =
+        options.requestId === undefined ? undefined : z.string().uuid().parse(options.requestId);
       const providerConfig = options.providerConfig ?? this.defaultProviderConfig;
-      const normalizedProviderConfig = providerConfig === undefined
-        ? undefined
-        : ProviderConfigSchema.parse(providerConfig);
+      const normalizedProviderConfig =
+        providerConfig === undefined ? undefined : ProviderConfigSchema.parse(providerConfig);
       const validatedInput = validatedNewGameInput(input);
       const fingerprint = creationFingerprint(validatedInput, normalizedProviderConfig);
       if (requestId !== undefined) {
         const existing = await this.entryForCreationRequestUnlocked(requestId);
         if (existing !== undefined) {
-          if (existing.metadata.creationFingerprint !== undefined
-            && existing.metadata.creationFingerprint !== fingerprint) {
-            throw new Error(`Campaign creation request ${requestId} was reused with different setup data`);
+          if (
+            existing.metadata.creationFingerprint !== undefined &&
+            existing.metadata.creationFingerprint !== fingerprint
+          ) {
+            throw new Error(
+              `Campaign creation request ${requestId} was reused with different setup data`,
+            );
           }
           return this.createdCampaign(existing);
         }
@@ -472,10 +516,12 @@ export class CampaignCatalog {
         campaignId,
         registeredAt: new Date().toISOString(),
         archived: false,
-        ...(requestId === undefined ? {} : {
-          creationRequestId: requestId,
-          creationFingerprint: fingerprint,
-        }),
+        ...(requestId === undefined
+          ? {}
+          : {
+              creationRequestId: requestId,
+              creationFingerprint: fingerprint,
+            }),
         ...optionalProviderConfig(normalizedProviderConfig),
       });
       const intent: CampaignCreationIntent = CampaignCreationIntentSchema.parse({
@@ -485,7 +531,8 @@ export class CampaignCatalog {
       });
       await atomicWriteJson(this.creationIntentPath, intent);
       const created = await this.recoverCreationUnlocked();
-      if (created === undefined) throw new Error("Campaign creation intent disappeared before completion");
+      if (created === undefined)
+        throw new Error("Campaign creation intent disappeared before completion");
       return created;
     });
   }
@@ -504,7 +551,8 @@ export class CampaignCatalog {
     return this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();
       const entry = await this.entryUnlocked(campaignId);
-      if (entry.metadata.archived) throw new Error(`Campaign ${campaignId} is archived and cannot be resumed`);
+      if (entry.metadata.archived)
+        throw new Error(`Campaign ${campaignId} is archived and cannot be resumed`);
       return this.storeFor(entry.scopeRoot, entry.metadata, false);
     });
   }
@@ -527,7 +575,9 @@ export class CampaignCatalog {
       return store.withCampaignLock(async () => {
         await store.recoverCommit();
         if (await store.getPending()) {
-          throw new Error("Campaign has an unfinished request; recover or discard it before archiving");
+          throw new Error(
+            "Campaign has an unfinished request; recover or discard it before archiving",
+          );
         }
         const metadata = CampaignMetadataSchema.parse({
           ...entry.metadata,
@@ -548,7 +598,8 @@ export class CampaignCatalog {
     return this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();
       const entry = await this.entryUnlocked(campaignId);
-      if (entry.metadata.archived) throw new Error(`Campaign ${campaignId} is archived and cannot be renamed`);
+      if (entry.metadata.archived)
+        throw new Error(`Campaign ${campaignId} is archived and cannot be renamed`);
       const store = this.storeFor(entry.scopeRoot, entry.metadata, false);
       const manifest = await store.setTitle(title);
       return summaryOf({ ...entry, manifest });
@@ -560,7 +611,9 @@ export class CampaignCatalog {
       await this.ensureReadyUnlocked();
       const entry = await this.entryUnlocked(campaignId);
       if (!entry.metadata.archived) {
-        throw new Error(`Campaign ${campaignId} must be archived before it can be permanently deleted`);
+        throw new Error(
+          `Campaign ${campaignId} must be archived before it can be permanently deleted`,
+        );
       }
       const store = this.storeFor(entry.scopeRoot, entry.metadata, true);
       await store.withCampaignLock(async () => {
@@ -570,7 +623,9 @@ export class CampaignCatalog {
         }
         const manifest = await store.readManifest();
         if (manifest.campaignId !== campaignId) {
-          throw new Error(`Campaign ${campaignId} manifest identity does not match its catalog entry`);
+          throw new Error(
+            `Campaign ${campaignId} manifest identity does not match its catalog entry`,
+          );
         }
         await rm(entry.scopeRoot, { recursive: true });
       });
@@ -588,19 +643,26 @@ export class CampaignCatalog {
     return this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();
       const entry = await this.entryUnlocked(campaignId);
-      if (entry.metadata.archived) throw new Error("Archived campaign provider configuration cannot be changed");
+      if (entry.metadata.archived)
+        throw new Error("Archived campaign provider configuration cannot be changed");
       const providerConfig = ProviderConfigSchema.parse(config);
       const store = this.storeFor(entry.scopeRoot, entry.metadata, false);
       await store.withCampaignLock(async () => {
         const metadata = await readCampaignMetadata(entry.scopeRoot);
-        if (metadata.archived) throw new Error("Archived campaign provider configuration cannot be changed");
-        if (metadata.providerConfig !== undefined && await store.getPending()) {
-          throw new Error("Campaign has an unfinished request; recover or discard it before changing model");
+        if (metadata.archived)
+          throw new Error("Archived campaign provider configuration cannot be changed");
+        if (metadata.providerConfig !== undefined && (await store.getPending())) {
+          throw new Error(
+            "Campaign has an unfinished request; recover or discard it before changing model",
+          );
         }
-        await writeCampaignMetadata(entry.scopeRoot, CampaignMetadataSchema.parse({
-          ...metadata,
-          providerConfig,
-        }));
+        await writeCampaignMetadata(
+          entry.scopeRoot,
+          CampaignMetadataSchema.parse({
+            ...metadata,
+            providerConfig,
+          }),
+        );
       });
       return providerConfig;
     });

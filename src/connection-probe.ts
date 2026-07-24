@@ -23,20 +23,24 @@ import type { LlmProvider, StructuredResult } from "./types.js";
 export const PROVIDER_COMPATIBILITY_PROBE_REVISION = 2 as const;
 
 export const PROVIDER_COMPATIBILITY_FINGERPRINT = createHash("sha256")
-  .update(JSON.stringify({
-    adapterRevision: PROVIDER_ADAPTER_COMPATIBILITY_REVISION,
-    probeRevision: PROVIDER_COMPATIBILITY_PROBE_REVISION,
-    protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
-    systemPrompt: CONNECTION_SYSTEM_PROMPT,
-    setupSchema: z.toJSONSchema(SetupResultSchema, { target: "draft-7" }),
-    gameplaySchema: GAMEPLAY_WIRE_JSON_SCHEMA,
-    languages: (Object.keys(LANGUAGES) as LanguageCode[]).map((language) => ({
-      language,
-      probe: connectionProbeForLanguage(language),
-      setupPrompt: connectionSetupPrompt(connectionProbeForLanguage(language).setup),
-      gameplayPrompt: connectionGameplayPrompt(connectionProbeForLanguage(language).gameplayMarker),
-    })),
-  }))
+  .update(
+    JSON.stringify({
+      adapterRevision: PROVIDER_ADAPTER_COMPATIBILITY_REVISION,
+      probeRevision: PROVIDER_COMPATIBILITY_PROBE_REVISION,
+      protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+      systemPrompt: CONNECTION_SYSTEM_PROMPT,
+      setupSchema: z.toJSONSchema(SetupResultSchema, { target: "draft-7" }),
+      gameplaySchema: GAMEPLAY_WIRE_JSON_SCHEMA,
+      languages: (Object.keys(LANGUAGES) as LanguageCode[]).map((language) => ({
+        language,
+        probe: connectionProbeForLanguage(language),
+        setupPrompt: connectionSetupPrompt(connectionProbeForLanguage(language).setup),
+        gameplayPrompt: connectionGameplayPrompt(
+          connectionProbeForLanguage(language).gameplayMarker,
+        ),
+      })),
+    }),
+  )
   .digest("hex");
 
 export interface ConnectionProbeResult {
@@ -48,7 +52,12 @@ export interface ConnectionProbeResult {
   testedLanguages: LanguageCode[];
 }
 
-function requireProbeValue(actual: string, expected: string, language: LanguageCode, field: string): void {
+function requireProbeValue(
+  actual: string,
+  expected: string,
+  language: LanguageCode,
+  field: string,
+): void {
   if (actual !== expected) {
     throw new GenerationFailure(
       "provider",
@@ -65,8 +74,11 @@ export async function probeProviderConnection(
 ): Promise<ConnectionProbeResult> {
   let usage: StructuredResult<unknown>["usage"];
   let lastGameplay: StructuredResult<unknown> | undefined;
-  const testedLanguages = [...new Set(languages.map((language) => LanguageCodeSchema.parse(language)))];
-  if (testedLanguages.length === 0) throw new Error("At least one gameplay language must be tested");
+  const testedLanguages = [
+    ...new Set(languages.map((language) => LanguageCodeSchema.parse(language))),
+  ];
+  if (testedLanguages.length === 0)
+    throw new Error("At least one gameplay language must be tested");
 
   for (const language of testedLanguages) {
     const probe = connectionProbeForLanguage(language);
@@ -79,24 +91,45 @@ export async function probeProviderConnection(
       maxOutputTokens: 2_000,
       generationPhase: "setup",
     });
-    requireProbeValue(setup.data.campaignTitle, probe.setup.campaignTitle, language, "campaign setup");
+    requireProbeValue(
+      setup.data.campaignTitle,
+      probe.setup.campaignTitle,
+      language,
+      "campaign setup",
+    );
     usage = combineUsage(usage, setup.usage);
 
-    const gameplay = await provider.generateStructured(gameplayRequest({
-      schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_${language}`,
-      schema: TurnDecisionSchema,
-      decodeResponse: decodeTurnDecision,
-      system: CONNECTION_SYSTEM_PROMPT,
-      prompt: connectionGameplayPrompt(probe.gameplayMarker),
-      temperature: 0,
-      maxOutputTokens: 2_000,
-      generationPhase: "decision",
-    }));
+    const gameplay = await provider.generateStructured(
+      gameplayRequest({
+        schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_${language}`,
+        schema: TurnDecisionSchema,
+        decodeResponse: decodeTurnDecision,
+        system: CONNECTION_SYSTEM_PROMPT,
+        prompt: connectionGameplayPrompt(probe.gameplayMarker),
+        temperature: 0,
+        maxOutputTokens: 2_000,
+        generationPhase: "decision",
+      }),
+    );
     if (gameplay.data.kind !== "resolved") {
-      throw new GenerationFailure("provider", `Provider compatibility test returned a check for ${language}`, false);
+      throw new GenerationFailure(
+        "provider",
+        `Provider compatibility test returned a check for ${language}`,
+        false,
+      );
     }
-    requireProbeValue(gameplay.data.narration, probe.gameplayMarker, language, "gameplay narration");
-    requireProbeValue(gameplay.data.turnSummary, probe.gameplayMarker, language, "gameplay summary");
+    requireProbeValue(
+      gameplay.data.narration,
+      probe.gameplayMarker,
+      language,
+      "gameplay narration",
+    );
+    requireProbeValue(
+      gameplay.data.turnSummary,
+      probe.gameplayMarker,
+      language,
+      "gameplay summary",
+    );
     usage = combineUsage(usage, gameplay.usage);
     lastGameplay = gameplay;
   }

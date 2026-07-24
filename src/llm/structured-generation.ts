@@ -65,9 +65,12 @@ export class StructuredClient {
           prompt,
           ...(activePhase === undefined ? {} : { generationPhase: activePhase }),
           ...(activeRepairOfPhase === undefined ? {} : { repairOfPhase: activeRepairOfPhase }),
-          attemptKind: kind === "repair"
-            ? "schema_repair"
-            : kind === "transient_retry" ? "transient_retry" : request.attemptKind ?? "initial",
+          attemptKind:
+            kind === "repair"
+              ? "schema_repair"
+              : kind === "transient_retry"
+                ? "transient_retry"
+                : (request.attemptKind ?? "initial"),
           retryBackoffMs: activeRetryBackoffMs,
           ...(kind === "repair" ? { temperature: Math.min(request.temperature ?? 0.4, 0.4) } : {}),
         });
@@ -86,12 +89,19 @@ export class StructuredClient {
             activeRepairOfPhase = originalPhase;
           }
           const failed = structuredFailureDetails(error);
-          prompt = structuredRepairPrompt(request.prompt, failed?.parsedResponse ?? failed?.rawText ?? null, error);
+          prompt = structuredRepairPrompt(
+            request.prompt,
+            failed?.parsedResponse ?? failed?.rawText ?? null,
+            error,
+          );
           continue;
         }
 
-        if ((classified.kind === "network" || classified.kind === "rate_limit")
-          && classified.retryable && transientRetries < maxTransientRetries) {
+        if (
+          (classified.kind === "network" || classified.kind === "rate_limit") &&
+          classified.retryable &&
+          transientRetries < maxTransientRetries
+        ) {
           transientRetries += 1;
           kind = "transient_retry";
           activeRetryBackoffMs = delayMs * transientRetries;

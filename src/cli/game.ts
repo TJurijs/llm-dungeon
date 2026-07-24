@@ -10,7 +10,14 @@ import type { LanguageCode } from "../language.js";
 import { formatCheck } from "../mechanics.js";
 import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
-import { terminalBanner, terminalHeading, terminalPrompt, terminalRule, terminalStyle } from "../terminal-style.js";
+import {
+  sanitizeTerminalText,
+  terminalBanner,
+  terminalHeading,
+  terminalPrompt,
+  terminalRule,
+  terminalStyle,
+} from "../terminal-style.js";
 import type { GameEngine, GenerationMetadata, StateView, TurnResult } from "../types.js";
 import type { CliCampaignSession, CliProjectContext } from "./project-context.js";
 import { takePrompt } from "./prompt.js";
@@ -33,6 +40,10 @@ const INSPECTION_COMMANDS = new Map<string, StateView>([
   [":location", "location"],
   [":threads", "threads"],
 ]);
+
+function terminalError(error: unknown): string {
+  return sanitizeTerminalText(error instanceof Error ? error.message : String(error));
+}
 
 const HELP = `Commands:
 
@@ -61,21 +72,24 @@ Campaign
 export class HumanGameCli {
   constructor(
     private readonly project: CliProjectContext,
-    private readonly chooseCampaign: (campaigns: CampaignCatalogSummary[]) => Promise<string> = async (campaigns) => takePrompt(
-      await p.select({
-        message: "Choose a campaign",
-        options: campaigns.map((campaign) => ({
-          value: campaign.campaignId,
-          label: campaign.title,
-          hint: `turn ${campaign.turn} · ${campaign.status}`,
-        })),
-      }),
-    ),
+    private readonly chooseCampaign: (
+      campaigns: CampaignCatalogSummary[],
+    ) => Promise<string> = async (campaigns) =>
+      takePrompt(
+        await p.select({
+          message: "Choose a campaign",
+          options: campaigns.map((campaign) => ({
+            value: campaign.campaignId,
+            label: sanitizeTerminalText(campaign.title),
+            hint: `turn ${campaign.turn} · ${campaign.status}`,
+          })),
+        }),
+      ),
   ) {}
 
   async play(campaignId?: string): Promise<void> {
     const selected = await this.selectCampaign(campaignId);
-    await this.playLoop(selected ?? await this.setupNewGame());
+    await this.playLoop(selected ?? (await this.setupNewGame()));
   }
 
   async newGame(): Promise<void> {
@@ -86,8 +100,9 @@ export class HumanGameCli {
     campaignId?: string,
     excludedCampaignId?: string,
   ): Promise<CliCampaignSession | undefined> {
-    const campaigns = (await this.project.campaigns())
-      .filter((campaign) => !campaign.archived && campaign.campaignId !== excludedCampaignId);
+    const campaigns = (await this.project.campaigns()).filter(
+      (campaign) => !campaign.archived && campaign.campaignId !== excludedCampaignId,
+    );
     if (campaignId) {
       if (!campaigns.some((campaign) => campaign.campaignId === campaignId)) {
         throw new Error(`Unarchived campaign ${campaignId} was not found`);
@@ -95,9 +110,8 @@ export class HumanGameCli {
       return { campaignId, engine: await this.project.createEngine(campaignId) };
     }
     if (campaigns.length === 0) return undefined;
-    const selectedId = campaigns.length === 1
-      ? campaigns[0]!.campaignId
-      : await this.chooseCampaign(campaigns);
+    const selectedId =
+      campaigns.length === 1 ? campaigns[0]!.campaignId : await this.chooseCampaign(campaigns);
     if (!campaigns.some((campaign) => campaign.campaignId === selectedId)) {
       throw new Error(`Campaign choice ${selectedId} is not available`);
     }
@@ -132,13 +146,17 @@ export class HumanGameCli {
 
   private previewSetup(setup: SetupResult): void {
     console.log(`\n${terminalHeading(setup.campaignTitle, "campaign preview")}\n`);
-    console.log(setup.scenarioMarkdown.trim());
+    console.log(sanitizeTerminalText(setup.scenarioMarkdown.trim()));
     console.log(`\n${terminalRule()}\n${terminalHeading(setup.player.name, "your character")}\n`);
-    console.log(setup.player.description.trim());
+    console.log(sanitizeTerminalText(setup.player.description.trim()));
     if (setup.player.traits.length) {
-      console.log(`\n${terminalStyle.bold("Traits:")} ${setup.player.traits.join(", ")}`);
+      console.log(
+        `\n${terminalStyle.bold("Traits:")} ${sanitizeTerminalText(setup.player.traits.join(", "))}`,
+      );
     }
-    console.log(`\n${terminalRule()}\n${terminalHeading("Opening scene")}\n\n${setup.openingNarration.trim()}\n`);
+    console.log(
+      `\n${terminalRule()}\n${terminalHeading("Opening scene")}\n\n${sanitizeTerminalText(setup.openingNarration.trim())}\n`,
+    );
   }
 
   private async acceptedSetupDraft(engine: GameEngine): Promise<AcceptedSetupDraft> {
@@ -151,7 +169,11 @@ export class HumanGameCli {
       let setup: SetupResult;
       let openingGeneration: GenerationMetadata;
       try {
-        const generated = await engine.generateSetupWithMetadata({ worldRules, language, ...seeds });
+        const generated = await engine.generateSetupWithMetadata({
+          worldRules,
+          language,
+          ...seeds,
+        });
         setup = generated.setup;
         openingGeneration = generated.generation;
         spin.stop("Campaign draft ready.");
@@ -179,28 +201,33 @@ export class HumanGameCli {
     const setupSession = await this.project.createSetupSession();
     const draft = await this.acceptedSetupDraft(setupSession.engine);
     const session = await this.project.createCampaignSession(draft, setupSession.config);
-    console.log(`\n${draft.setup.openingNarration.trim()}\n`);
+    console.log(`\n${sanitizeTerminalText(draft.setup.openingNarration.trim())}\n`);
     return session;
   }
 
   private printTurn(result: TurnResult): void {
     console.log();
     if (result.kind === "appeal") {
-      const target = result.appealTargetTurn === undefined ? "general" : `turn ${result.appealTargetTurn}`;
+      const target =
+        result.appealTargetTurn === undefined ? "general" : `turn ${result.appealTargetTurn}`;
       console.log(terminalHeading(`Appeal ${result.turn}`, target));
       console.log();
-      console.log(result.narration.trim());
+      console.log(sanitizeTerminalText(result.narration.trim()));
       console.log(`\n${terminalRule()}\n`);
       return;
     }
     if (result.check) {
-      console.log(`${terminalHeading("D100 check", result.check.spec.name)}\n${terminalStyle.blue(formatCheck(result.check, result.state.language))}\n`);
+      console.log(
+        `${terminalHeading("D100 check", result.check.spec.name)}\n${terminalStyle.blue(sanitizeTerminalText(formatCheck(result.check, result.state.language)))}\n`,
+      );
     }
     console.log(terminalHeading(`Turn ${result.turn}`, "Dungeon Master"));
     console.log();
-    console.log(result.narration.trim());
+    console.log(sanitizeTerminalText(result.narration.trim()));
     if (result.state.status !== "active") {
-      console.log(`\n${terminalStyle.red(`Campaign ${result.state.status}.`)} ${terminalStyle.dim("You may inspect the save or start :new.")}`);
+      console.log(
+        `\n${terminalStyle.red(`Campaign ${result.state.status}.`)} ${terminalStyle.dim("You may inspect the save or start :new.")}`,
+      );
     }
     console.log(`\n${terminalRule()}\n`);
   }
@@ -213,14 +240,19 @@ export class HumanGameCli {
       p.log.success("Recovered an interrupted committed turn.");
       return true;
     }
-    const pendingDescription = pending.kind === "appeal"
-      ? `appeal${pending.targetTurn === undefined ? "" : ` for turn ${pending.targetTurn}`}`
-      : `action: “${pending.action}”`;
+    const pendingDescription =
+      pending.kind === "appeal"
+        ? `appeal${pending.targetTurn === undefined ? "" : ` for turn ${pending.targetTurn}`}`
+        : `action: “${sanitizeTerminalText(pending.action)}”`;
     const choice = takePrompt(
       await p.select({
         message: `An uncommitted ${pendingDescription} was found.`,
         options: [
-          { value: "retry", label: "Retry it", ...(pending.phase === "rolled" ? { hint: "reuses the locked roll" } : {}) },
+          {
+            value: "retry",
+            label: "Retry it",
+            ...(pending.phase === "rolled" ? { hint: "reuses the locked roll" } : {}),
+          },
           { value: "discard", label: "Discard it", hint: "no committed state will be changed" },
           { value: "quit", label: "Quit" },
         ],
@@ -250,7 +282,9 @@ export class HumanGameCli {
     console.log(terminalBanner());
     if (!(await this.handleRecovery(engine))) return;
     const readline = createInterface({ input, output });
-    console.log(`${terminalStyle.dim("Type :help for commands. Ctrl+C or :quit leaves the game.")}\n`);
+    console.log(
+      `${terminalStyle.dim("Type :help for commands. Ctrl+C or :quit leaves the game.")}\n`,
+    );
     try {
       for (;;) {
         const action = (await readline.question(terminalPrompt())).trim();
@@ -263,7 +297,9 @@ export class HumanGameCli {
         const inspection = INSPECTION_COMMANDS.get(action);
         if (inspection) {
           const state = await engine.inspect(inspection);
-          console.log(`\n${terminalHeading(inspectionTitle(state))}\n\n${renderInspection(state)}\n`);
+          console.log(
+            `\n${terminalHeading(inspectionTitle(state))}\n\n${sanitizeTerminalText(renderInspection(state))}\n`,
+          );
           continue;
         }
         if (action === ":retry") {
@@ -276,7 +312,7 @@ export class HumanGameCli {
             this.printTurn(result);
           } catch (error) {
             spin.stop("Retry failed; the turn remains pending.");
-            p.log.error(error instanceof Error ? error.message : String(error));
+            p.log.error(terminalError(error));
           }
           continue;
         }
@@ -311,7 +347,7 @@ export class HumanGameCli {
         try {
           question = parseQuestionCommand(action);
         } catch (error) {
-          p.log.error(error instanceof Error ? error.message : String(error));
+          p.log.error(terminalError(error));
           continue;
         }
         if (question) {
@@ -321,10 +357,12 @@ export class HumanGameCli {
             engine = await this.project.createEngine(session.campaignId);
             const result = await engine.ask(question);
             spin.stop("Question answered; no turn advanced.");
-            console.log(`\n${terminalHeading("Dungeon Master", "answer — no turn")}\n\n${result.answer.trim()}\n\n${terminalRule()}\n`);
+            console.log(
+              `\n${terminalHeading("Dungeon Master", "answer — no turn")}\n\n${sanitizeTerminalText(result.answer.trim())}\n\n${terminalRule()}\n`,
+            );
           } catch (error) {
             spin.stop("The question was not answered.");
-            p.log.error(error instanceof Error ? error.message : String(error));
+            p.log.error(terminalError(error));
           }
           continue;
         }
@@ -332,7 +370,7 @@ export class HumanGameCli {
         try {
           appeal = parseAppealCommand(action);
         } catch (error) {
-          p.log.error(error instanceof Error ? error.message : String(error));
+          p.log.error(terminalError(error));
           continue;
         }
         if (appeal) {
@@ -345,7 +383,7 @@ export class HumanGameCli {
             this.printTurn(result);
           } catch (error) {
             spin.stop("The appeal was not committed.");
-            p.log.error(error instanceof Error ? error.message : String(error));
+            p.log.error(terminalError(error));
             if ((await engine.getPendingTurn())?.kind === "appeal") {
               console.log("Use :retry to retry the pending appeal.\n");
             }
@@ -365,7 +403,7 @@ export class HumanGameCli {
           this.printTurn(result);
         } catch (error) {
           spin.stop("The turn was not committed.");
-          p.log.error(error instanceof Error ? error.message : String(error));
+          p.log.error(terminalError(error));
           const pending = await engine.getPendingTurn();
           if (pending?.kind === "action" || pending?.kind === "appeal") {
             console.log("Use :retry to retry the pending request.\n");

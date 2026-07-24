@@ -15,15 +15,33 @@ import { actionPrefillValue } from "../web/chat-ui.js";
 
 describe("browser terminal history", () => {
   it("preserves only safe model and reply-cost tooltip metadata", () => {
-    expect(normalizeTerminalEntry({
-      title: "DM",
-      text: "Reply",
-      generation: { provider: "openrouter", model: "vendor/model", costUsd: 0.0042, costBasis: "exact", inputTokens: 999 },
-    })).toMatchObject({
-      generation: { provider: "openrouter", model: "vendor/model", costUsd: 0.0042, costBasis: "exact" },
+    expect(
+      normalizeTerminalEntry({
+        title: "DM",
+        text: "Reply",
+        generation: {
+          provider: "openrouter",
+          model: "vendor/model",
+          costUsd: 0.0042,
+          costBasis: "exact",
+          inputTokens: 999,
+        },
+      }),
+    ).toMatchObject({
+      generation: {
+        provider: "openrouter",
+        model: "vendor/model",
+        costUsd: 0.0042,
+        costBasis: "exact",
+      },
     });
-    expect(normalizeTerminalEntry({ title: "DM", text: "Reply", generation: { provider: "", model: "secret" } }))
-      .not.toHaveProperty("generation");
+    expect(
+      normalizeTerminalEntry({
+        title: "DM",
+        text: "Reply",
+        generation: { provider: "", model: "secret" },
+      }),
+    ).not.toHaveProperty("generation");
   });
 
   it("uses the exported normalization helper in the browser entry point", async () => {
@@ -45,9 +63,10 @@ describe("browser terminal history", () => {
       readFile(new URL("../web/index.html", import.meta.url), "utf8"),
       readFile(new URL("../web/styles.css", import.meta.url), "utf8"),
     ]);
+    const compactHtml = html.replace(/\s+/g, " ");
 
-    expect(html).toContain('id="ask-generic" class="prefill-button ask-button"');
-    expect(html).toContain('id="appeal-generic" class="prefill-button appeal-button"');
+    expect(compactHtml).toContain('id="ask-generic" class="prefill-button ask-button"');
+    expect(compactHtml).toContain('id="appeal-generic" class="prefill-button appeal-button"');
     expect(html).toContain('<circle cx="12" cy="12" r="9"></circle>');
     expect(html).toContain('<path d="M12 3 2.7 20h18.6L12 3Z"></path>');
     expect(html).not.toContain('id="retry"');
@@ -67,11 +86,21 @@ describe("browser terminal history", () => {
 
   it("makes ask and appeal mutually exclusive while preserving the message", () => {
     expect(actionPrefillValue("", "ask")).toBe(":ask ");
-    expect(actionPrefillValue("Is the northern door open?", "appeal")).toBe(":appeal Is the northern door open?");
-    expect(actionPrefillValue(":ask Is the northern door open?", "appeal")).toBe(":appeal Is the northern door open?");
-    expect(actionPrefillValue(":appeal That result contradicts the map.", "ask")).toBe(":ask That result contradicts the map.");
-    expect(actionPrefillValue(":appeal :ask :appeal Why did that happen?", "ask")).toBe(":ask Why did that happen?");
-    expect(actionPrefillValue(":appeal --turn 6 Karl was already there.", "appeal")).toBe(":appeal Karl was already there.");
+    expect(actionPrefillValue("Is the northern door open?", "appeal")).toBe(
+      ":appeal Is the northern door open?",
+    );
+    expect(actionPrefillValue(":ask Is the northern door open?", "appeal")).toBe(
+      ":appeal Is the northern door open?",
+    );
+    expect(actionPrefillValue(":appeal That result contradicts the map.", "ask")).toBe(
+      ":ask That result contradicts the map.",
+    );
+    expect(actionPrefillValue(":appeal :ask :appeal Why did that happen?", "ask")).toBe(
+      ":ask Why did that happen?",
+    );
+    expect(actionPrefillValue(":appeal --turn 6 Karl was already there.", "appeal")).toBe(
+      ":appeal Karl was already there.",
+    );
   });
 
   it("keeps endpoint overrides out and accepts only unpersisted password-style session keys", async () => {
@@ -94,7 +123,9 @@ describe("browser terminal history", () => {
   });
 
   it("builds encoded campaign-scoped paths and chooses a stable available campaign", () => {
-    expect(campaignApiPath("campaign:one", "inspect")).toBe("/api/campaigns/campaign%3Aone/inspect");
+    expect(campaignApiPath("campaign:one", "inspect")).toBe(
+      "/api/campaigns/campaign%3Aone/inspect",
+    );
     expect(campaignApiPath("campaign:one", "/play")).toBe("/api/campaigns/campaign%3Aone/play");
     expect(() => campaignApiPath("", "play")).toThrow("Campaign ID is required");
 
@@ -116,24 +147,28 @@ describe("browser terminal history", () => {
   it("keeps async gameplay responses scoped to the campaign captured at submission", async () => {
     const source = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
     expect(source).toContain("const campaignId = campaign?.campaignId;");
-    expect(source).toContain('api(campaignApiPath(campaignId, endpoint)');
+    expect(source).toContain("api(campaignApiPath(campaignId, endpoint)");
     expect(source).toContain("appendCommittedResponse(campaignId, result)");
-    expect(source).toContain("if (selectedCampaignId === campaignId) renderChat({ scroll: true });");
+    expect(source).toContain(
+      "if (selectedCampaignId === campaignId) renderChat({ scroll: true });",
+    );
     expect(source).toContain("const inFlightCampaigns = new Set();");
     expect(source).not.toContain("let gameBusy");
   });
 
   it("normalizes untrusted local storage entries conservatively", () => {
     expect(normalizeTerminalEntry(null)).toBeNull();
-    expect(normalizeTerminalEntry({
-      title: "x".repeat(600),
-      text: "y".repeat(50_100),
-      mode: "unknown",
-      channel: "unknown",
-      kind: "unknown",
-      turn: -1,
-      appealTargetTurn: 0,
-    })).toEqual({
+    expect(
+      normalizeTerminalEntry({
+        title: "x".repeat(600),
+        text: "y".repeat(50_100),
+        mode: "unknown",
+        channel: "unknown",
+        kind: "unknown",
+        turn: -1,
+        appealTargetTurn: 0,
+      }),
+    ).toEqual({
       title: "x".repeat(500),
       text: "y".repeat(50_000),
       mode: "normal",
@@ -169,21 +204,32 @@ describe("browser terminal history", () => {
   });
 
   it("drops obsolete transcript and inspection cache entries during parsing", () => {
-    const parsed = parseTerminalHistory(JSON.stringify({
-      version: 2,
-      entries: [
-        { title: "TRANSCRIPT — session-001", text: "# Self-Play Transcript: old", channel: "evaluations" },
-        { title: "CHARACTER", text: "old inspection", channel: "game" },
-        { title: "DUNGEON MASTER — TURN 2", text: "kept", channel: "game" },
-      ],
-    }));
+    const parsed = parseTerminalHistory(
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            title: "TRANSCRIPT — session-001",
+            text: "# Self-Play Transcript: old",
+            channel: "evaluations",
+          },
+          { title: "CHARACTER", text: "old inspection", channel: "game" },
+          { title: "DUNGEON MASTER — TURN 2", text: "kept", channel: "game" },
+        ],
+      }),
+    );
 
     expect(parsed).toEqual({
-      entries: [expect.objectContaining({ title: "DUNGEON MASTER — TURN 2", kind: "gameplay", turn: 2 })],
+      entries: [
+        expect.objectContaining({ title: "DUNGEON MASTER — TURN 2", kind: "gameplay", turn: 2 }),
+      ],
       migrated: true,
     });
     expect(parseTerminalHistory("not-json")).toEqual({ entries: [], migrated: false });
-    expect(parseTerminalHistory(JSON.stringify({ version: 99, entries: [] }))).toEqual({ entries: [], migrated: false });
+    expect(parseTerminalHistory(JSON.stringify({ version: 99, entries: [] }))).toEqual({
+      entries: [],
+      migrated: false,
+    });
   });
 
   it("bounds persisted history by entry count and storage size", () => {
@@ -192,10 +238,12 @@ describe("browser terminal history", () => {
     expect(capped.entries).toHaveLength(300);
     expect(capped.entries[0].title).toBe("10");
 
-    const large = serializeTerminalHistory(Array.from(
-      { length: 20 },
-      (_, index) => ({ title: String(index), text: "x".repeat(50_000) }),
-    ));
+    const large = serializeTerminalHistory(
+      Array.from({ length: 20 }, (_, index) => ({
+        title: String(index),
+        text: "x".repeat(50_000),
+      })),
+    );
     expect(large.serialized.length).toBeLessThanOrEqual(750_000);
     expect(large.entries.length).toBeLessThan(20);
     expect(JSON.parse(large.serialized)).toEqual({ version: 3, entries: large.entries });
@@ -219,20 +267,40 @@ describe("browser terminal history", () => {
     for (let turn = 1; turn <= 220; turn += 1) {
       authoritative.push(
         { title: "You", text: `Action ${turn}`, mode: "normal", channel: "game" },
-        { title: `Dungeon Master · Turn ${turn}`, text: `Result ${turn}`, mode: "success", channel: "game", kind: "gameplay", turn },
+        {
+          title: `Dungeon Master · Turn ${turn}`,
+          text: `Result ${turn}`,
+          mode: "success",
+          channel: "game",
+          kind: "gameplay",
+          turn,
+        },
       );
     }
 
     const local = [...authoritative];
-    const afterTurn210 = local.findIndex((entry) => entry.kind === "gameplay" && entry.turn === 210) + 1;
+    const afterTurn210 =
+      local.findIndex((entry) => entry.kind === "gameplay" && entry.turn === 210) + 1;
     local.splice(
       afterTurn210,
       0,
       { title: "You", text: ":ask Is the bridge stable?", mode: "normal", channel: "game" },
-      { title: "DM · Answer — no turn", text: "It looks weathered.", mode: "success", channel: "game" },
+      {
+        title: "DM · Answer — no turn",
+        text: "It looks weathered.",
+        mode: "success",
+        channel: "game",
+      },
     );
-    const beforeTurn215 = local.findIndex((entry) => entry.kind === "gameplay" && entry.turn === 215);
-    local.splice(beforeTurn215, 0, { title: "Error", text: "The first response failed.", mode: "error", channel: "game" });
+    const beforeTurn215 = local.findIndex(
+      (entry) => entry.kind === "gameplay" && entry.turn === 215,
+    );
+    local.splice(beforeTurn215, 0, {
+      title: "Error",
+      text: "The first response failed.",
+      mode: "error",
+      channel: "game",
+    });
     local.push(
       { title: "You", text: "Pending action", mode: "normal", channel: "game" },
       { title: "Error", text: "Resume is available.", mode: "error", channel: "game" },
@@ -253,7 +321,9 @@ describe("browser terminal history", () => {
 
     const texts = bounded.map((entry) => entry.text);
     expect(texts.indexOf("Result 210")).toBeLessThan(texts.indexOf(":ask Is the bridge stable?"));
-    expect(texts.indexOf(":ask Is the bridge stable?")).toBeLessThan(texts.indexOf("It looks weathered."));
+    expect(texts.indexOf(":ask Is the bridge stable?")).toBeLessThan(
+      texts.indexOf("It looks weathered."),
+    );
     expect(texts.indexOf("It looks weathered.")).toBeLessThan(texts.indexOf("Action 211"));
     expect(texts.indexOf("Action 215")).toBeLessThan(texts.indexOf("The first response failed."));
     expect(texts.indexOf("The first response failed.")).toBeLessThan(texts.indexOf("Result 215"));

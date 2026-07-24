@@ -20,20 +20,43 @@ import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
 // so a real curated model id here would pick up real shipped evidence and defeat test
 // isolation. A synthetic id has no shipped entry anywhere, so only what each test seeds
 // into the temp root's local config/ is in play.
-const TARGET = { provider: "deepseek", model: "deepseek-v4-flash-promote-test", route: "direct" } as const;
+const TARGET = {
+  provider: "deepseek",
+  model: "deepseek-v4-flash-promote-test",
+  route: "direct",
+} as const;
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
-function draft(outputBudgetsOverrides: Partial<Record<"setup" | "decision" | "lockedResolution" | "repair", number>> = {}) {
+function draft(
+  outputBudgetsOverrides: Partial<
+    Record<"setup" | "decision" | "lockedResolution" | "repair", number>
+  > = {},
+) {
   return {
     schemaVersion: 1 as const,
     key: TARGET,
-    structuredOutput: { mode: "json_object_local_schema" as const, projection: "identity_v1" as const, reinforceSchema: true as const },
+    structuredOutput: {
+      mode: "json_object_local_schema" as const,
+      projection: "identity_v1" as const,
+      reinforceSchema: true as const,
+    },
     temperature: { policy: "omitted" as const },
     reasoning: { policy: "deepseek_thinking_for_repairs" as const },
     outputTokenField: "max_tokens" as const,
-    outputBudgets: { setup: 8_000, decision: 4_000, lockedResolution: 4_000, repair: 8_000, ...outputBudgetsOverrides },
-    timeout: { setupMs: 180_000, decisionMs: 120_000, lockedResolutionMs: 120_000, repairMs: 120_000 },
+    outputBudgets: {
+      setup: 8_000,
+      decision: 4_000,
+      lockedResolution: 4_000,
+      repair: 8_000,
+      ...outputBudgetsOverrides,
+    },
+    timeout: {
+      setupMs: 180_000,
+      decisionMs: 120_000,
+      lockedResolutionMs: 120_000,
+      repairMs: 120_000,
+    },
     adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
   };
 }
@@ -54,13 +77,17 @@ async function tempProjectRoot(): Promise<string> {
   );
   await writeFile(
     path.join(defaultsDir, "llm-models.json"),
-    `${JSON.stringify({
-      version: 1,
-      recommended: { provider: "gemini", model: "gemini-3.5-flash" },
-      providers: [],
-      retiredModels: [],
-      shippedTests: [],
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version: 1,
+        recommended: { provider: "gemini", model: "gemini-3.5-flash" },
+        providers: [],
+        retiredModels: [],
+        shippedTests: [],
+      },
+      null,
+      2,
+    )}\n`,
   );
   return root;
 }
@@ -69,7 +96,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function seedCalibrated(root: string, outputBudgetsOverrides = {}): Promise<FrozenModelExecutionProfile> {
+async function seedCalibrated(
+  root: string,
+  outputBudgetsOverrides = {},
+): Promise<FrozenModelExecutionProfile> {
   const profile = freezeModelExecutionProfile({
     ...draft(outputBudgetsOverrides),
     calibratedAt: "2026-07-20T00:00:00.000Z",
@@ -110,12 +140,24 @@ async function seedCertification(
   });
 }
 
-async function seedCompatibilityProbe(root: string, languages: readonly ("en" | "ru")[] = ["en", "ru"]): Promise<void> {
-  const catalog = new LlmModelCatalog(root, { testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT, protocolVersion: 1 });
-  await catalog.recordTestSuccess({ provider: TARGET.provider, model: TARGET.model }, { testedLanguages: languages });
+async function seedCompatibilityProbe(
+  root: string,
+  languages: readonly ("en" | "ru")[] = ["en", "ru"],
+): Promise<void> {
+  const catalog = new LlmModelCatalog(root, {
+    testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+    protocolVersion: 1,
+  });
+  await catalog.recordTestSuccess(
+    { provider: TARGET.provider, model: TARGET.model },
+    { testedLanguages: languages },
+  );
 }
 
-async function seedFullyCurrent(root: string, outputBudgetsOverrides = {}): Promise<FrozenModelExecutionProfile> {
+async function seedFullyCurrent(
+  root: string,
+  outputBudgetsOverrides = {},
+): Promise<FrozenModelExecutionProfile> {
   const profile = await seedCalibrated(root, outputBudgetsOverrides);
   await seedCertification(root, "en", profile.fingerprint);
   await seedCertification(root, "ru", profile.fingerprint);
@@ -126,8 +168,9 @@ async function seedFullyCurrent(root: string, outputBudgetsOverrides = {}): Prom
 describe("promoteModelEvidence", () => {
   it("refuses to promote a model with no frozen execution profile", async () => {
     const root = await tempProjectRoot();
-    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET }))
-      .rejects.toThrow(/No frozen execution profile/);
+    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET })).rejects.toThrow(
+      /No frozen execution profile/,
+    );
   });
 
   it("refuses to promote an uncalibrated adapter", async () => {
@@ -138,8 +181,9 @@ describe("promoteModelEvidence", () => {
       evidenceRef: "playtests/calibration/test-run",
     });
     await new ModelExecutionProfileStore(root).put(profile);
-    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET }))
-      .rejects.toThrow(/No calibration adapter record/);
+    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET })).rejects.toThrow(
+      /No calibration adapter record/,
+    );
   });
 
   it("refuses to promote when the assessment's profile fingerprint does not match the frozen profile on disk", async () => {
@@ -165,23 +209,26 @@ describe("promoteModelEvidence", () => {
       }).fingerprint,
       evidence: { source: "calibration", reference: "playtests/calibration/test-run" },
     });
-    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET }))
-      .rejects.toThrow(/does not match the frozen profile/);
+    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET })).rejects.toThrow(
+      /does not match the frozen profile/,
+    );
   });
 
   it("refuses to promote when there is no current certification", async () => {
     const root = await tempProjectRoot();
     await seedCalibrated(root);
-    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET }))
-      .rejects.toThrow(/No current certification/);
+    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET })).rejects.toThrow(
+      /No current certification/,
+    );
   });
 
   it("refuses to promote when the compatibility probe is missing", async () => {
     const root = await tempProjectRoot();
     const profile = await seedCalibrated(root);
     await seedCertification(root, "en", profile.fingerprint);
-    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET }))
-      .rejects.toThrow(/No current compatibility probe/);
+    await expect(promoteModelEvidence({ projectRoot: root, ...TARGET })).rejects.toThrow(
+      /No current compatibility probe/,
+    );
   });
 
   it("promotes only the still-current language and reports one made stale by a later recalibration as skipped", async () => {
@@ -198,7 +245,10 @@ describe("promoteModelEvidence", () => {
     const result = await promoteModelEvidence({ projectRoot: root, ...TARGET });
     expect(result.promotedLanguages).toEqual(["en"]);
     expect(result.skippedLanguages).toEqual([
-      { language: "ru", reason: "certification profile fingerprint does not match the current frozen profile" },
+      {
+        language: "ru",
+        reason: "certification profile fingerprint does not match the current frozen profile",
+      },
     ]);
     expect(result.profileFingerprint).toBe(second.fingerprint);
   });
@@ -221,25 +271,50 @@ describe("promoteModelEvidence", () => {
     const root = await tempProjectRoot();
     const profile = await seedFullyCurrent(root);
 
-    const result = await promoteModelEvidence({ projectRoot: root, ...TARGET, note: "test provenance" });
+    const result = await promoteModelEvidence({
+      projectRoot: root,
+      ...TARGET,
+      note: "test provenance",
+    });
     expect(result.promotedLanguages.slice().sort()).toEqual(["en", "ru"]);
     expect(result.skippedLanguages).toEqual([]);
     expect(result.filesWritten).toHaveLength(3);
 
-    const profilesFile = JSON.parse(await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"));
-    const profileEntry = profilesFile.profiles.find((entry: { model: string }) => entry.model === TARGET.model);
-    expect(profileEntry).toMatchObject({ provider: "deepseek", model: TARGET.model, route: "direct" });
+    const profilesFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"),
+    );
+    const profileEntry = profilesFile.profiles.find(
+      (entry: { model: string }) => entry.model === TARGET.model,
+    );
+    expect(profileEntry).toMatchObject({
+      provider: "deepseek",
+      model: TARGET.model,
+      route: "direct",
+    });
     expect(profileEntry.outputBudgets).toBeUndefined();
     expect(profileEntry.timeout).toBeUndefined();
 
-    const assessmentsFile = JSON.parse(await readFile(path.join(root, "defaults", "model-assessments.json"), "utf8"));
-    const assessmentEntry = assessmentsFile.models.find((entry: { model: string }) => entry.model === TARGET.model);
+    const assessmentsFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-assessments.json"), "utf8"),
+    );
+    const assessmentEntry = assessmentsFile.models.find(
+      (entry: { model: string }) => entry.model === TARGET.model,
+    );
     expect(assessmentEntry.profileFingerprint).toBe(profile.fingerprint);
-    expect(assessmentEntry.certifications.map((c: { language: string }) => c.language).sort()).toEqual(["en", "ru"]);
+    expect(
+      assessmentEntry.certifications.map((c: { language: string }) => c.language).sort(),
+    ).toEqual(["en", "ru"]);
 
-    const llmModelsFile = JSON.parse(await readFile(path.join(root, "defaults", "llm-models.json"), "utf8"));
-    const testEntry = llmModelsFile.shippedTests.find((entry: { model: string }) => entry.model === TARGET.model);
-    expect(testEntry).toMatchObject({ testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT, note: "test provenance" });
+    const llmModelsFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "llm-models.json"), "utf8"),
+    );
+    const testEntry = llmModelsFile.shippedTests.find(
+      (entry: { model: string }) => entry.model === TARGET.model,
+    );
+    expect(testEntry).toMatchObject({
+      testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+      note: "test provenance",
+    });
     expect(testEntry.testedLanguages.slice().sort()).toEqual(["en", "ru"]);
   });
 
@@ -248,7 +323,9 @@ describe("promoteModelEvidence", () => {
     await seedFullyCurrent(root, { repair: 16_000 });
 
     await promoteModelEvidence({ projectRoot: root, ...TARGET });
-    const profilesFile = JSON.parse(await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"));
+    const profilesFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"),
+    );
     const entry = profilesFile.profiles.find((e: { model: string }) => e.model === TARGET.model);
     expect(entry.outputBudgets).toMatchObject({ repair: 16_000 });
   });
@@ -260,11 +337,23 @@ describe("promoteModelEvidence", () => {
     await promoteModelEvidence({ projectRoot: root, ...TARGET });
     await promoteModelEvidence({ projectRoot: root, ...TARGET });
 
-    const profilesFile = JSON.parse(await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"));
-    expect(profilesFile.profiles.filter((e: { model: string }) => e.model === TARGET.model)).toHaveLength(1);
-    const assessmentsFile = JSON.parse(await readFile(path.join(root, "defaults", "model-assessments.json"), "utf8"));
-    expect(assessmentsFile.models.filter((e: { model: string }) => e.model === TARGET.model)).toHaveLength(1);
-    const llmModelsFile = JSON.parse(await readFile(path.join(root, "defaults", "llm-models.json"), "utf8"));
-    expect(llmModelsFile.shippedTests.filter((e: { model: string }) => e.model === TARGET.model)).toHaveLength(1);
+    const profilesFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"),
+    );
+    expect(
+      profilesFile.profiles.filter((e: { model: string }) => e.model === TARGET.model),
+    ).toHaveLength(1);
+    const assessmentsFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-assessments.json"), "utf8"),
+    );
+    expect(
+      assessmentsFile.models.filter((e: { model: string }) => e.model === TARGET.model),
+    ).toHaveLength(1);
+    const llmModelsFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "llm-models.json"), "utf8"),
+    );
+    expect(
+      llmModelsFile.shippedTests.filter((e: { model: string }) => e.model === TARGET.model),
+    ).toHaveLength(1);
   });
 });

@@ -12,23 +12,25 @@ import {
 import type { CoverageAssessment } from "./audit.js";
 import type { PlaytestJudgment } from "./judge.js";
 
-export const CandidateTechnicalSnapshotSchema = z.object({
-  status: TechnicalGameplayStatusSchema,
-  evidenceComplete: z.boolean(),
-  turnsRequired: z.number().int().nonnegative(),
-  turnsCompleted: z.number().int().nonnegative(),
-  candidateCalls: z.number().int().nonnegative(),
-  candidateOwnedFailures: z.number().int().nonnegative(),
-  candidateOwnedFailedTurns: z.number().int().nonnegative(),
-  externalFailedTurns: z.number().int().nonnegative(),
-  schemaRepairs: z.number().int().nonnegative(),
-  transientRetries: z.number().int().nonnegative(),
-  domainRepairs: z.number().int().nonnegative(),
-  invariantFailures: z.number().int().nonnegative(),
-  deterministicCoveragePassed: z.boolean(),
-  excludedFailureCounts: z.record(z.string(), z.number().int().nonnegative()),
-  reasons: z.array(z.string().min(1)),
-}).strict();
+export const CandidateTechnicalSnapshotSchema = z
+  .object({
+    status: TechnicalGameplayStatusSchema,
+    evidenceComplete: z.boolean(),
+    turnsRequired: z.number().int().nonnegative(),
+    turnsCompleted: z.number().int().nonnegative(),
+    candidateCalls: z.number().int().nonnegative(),
+    candidateOwnedFailures: z.number().int().nonnegative(),
+    candidateOwnedFailedTurns: z.number().int().nonnegative(),
+    externalFailedTurns: z.number().int().nonnegative(),
+    schemaRepairs: z.number().int().nonnegative(),
+    transientRetries: z.number().int().nonnegative(),
+    domainRepairs: z.number().int().nonnegative(),
+    invariantFailures: z.number().int().nonnegative(),
+    deterministicCoveragePassed: z.boolean(),
+    excludedFailureCounts: z.record(z.string(), z.number().int().nonnegative()),
+    reasons: z.array(z.string().min(1)),
+  })
+  .strict();
 
 export type CandidateTechnicalSnapshot = z.infer<typeof CandidateTechnicalSnapshotSchema>;
 
@@ -55,6 +57,33 @@ function excludedFailures(calls: readonly PlaytestCallRecord[]): Record<string, 
   return counts;
 }
 
+function candidateOwnedRepairCounts(calls: readonly PlaytestCallRecord[]): {
+  schema: number;
+  transient: number;
+  domain: number;
+} {
+  const counts = { schema: 0, transient: 0, domain: 0 };
+  const ordered = calls
+    .filter((call) => call.actor === "candidate")
+    .toSorted((left, right) => left.sequence - right.sequence);
+  let previous: PlaytestCallRecord | undefined;
+  for (const call of ordered) {
+    if (call.repairKind === "domain") {
+      // Domain correction exists only because the candidate produced a valid
+      // wire response whose transaction could not be applied.
+      counts.domain += 1;
+    } else if (
+      call.repairKind !== undefined &&
+      previous?.success === false &&
+      previous.failureOwner === "candidate_model"
+    ) {
+      counts[call.repairKind] += 1;
+    }
+    previous = call;
+  }
+  return counts;
+}
+
 /**
  * Derives candidate technical health from candidate-owned evidence only.
  * Judge and player calls are deliberately excluded, including their repairs,
@@ -64,53 +93,87 @@ export function buildCandidateTechnicalSnapshot(
   input: CandidateTechnicalAssessmentInput,
 ): CandidateTechnicalSnapshot {
   const candidateCalls = input.calls.filter((call) => call.actor === "candidate");
-  const candidateOwnedFailures = candidateCalls.filter((call) =>
-    !call.success && call.failureOwner === "candidate_model").length;
+  const candidateOwnedFailures = candidateCalls.filter(
+    (call) => !call.success && call.failureOwner === "candidate_model",
+  ).length;
   const schemaRepairs = candidateCalls.filter((call) => call.repairKind === "schema").length;
   const transientRetries = candidateCalls.filter((call) => call.repairKind === "transient").length;
   const domainRepairs = candidateCalls.filter((call) => call.repairKind === "domain").length;
   const completedTurns = input.turns.filter((turn) => turn.status === "completed").length;
-  const candidateOwnedFailedTurns = input.turns.filter((turn) =>
-    turn.status === "failed" && turn.failureOwner === "candidate_model").length;
-  const externalFailedTurns = input.turns.filter((turn) =>
-    turn.status === "failed" && turn.failureOwner !== "candidate_model").length;
-  const invariantFailures = input.turns.filter((turn) =>
-    turn.status === "completed" && turn.invariantStatus === "failed").length;
+  const candidateOwnedFailedTurns = input.turns.filter(
+    (turn) => turn.status === "failed" && turn.failureOwner === "candidate_model",
+  ).length;
+  const externalFailedTurns = input.turns.filter(
+    (turn) => turn.status === "failed" && turn.failureOwner !== "candidate_model",
+  ).length;
+  const invariantFailures = input.turns.filter(
+    (turn) => turn.status === "completed" && turn.invariantStatus === "failed",
+  ).length;
   const turnsRequired = input.playtestPackage.technicalRequirements.requireAllTurns
     ? input.playtestPackage.turns.default
     : Math.min(input.playtestPackage.turns.default, input.turns.length);
   const reasons: string[] = [];
   let status: TechnicalGameplayStatus;
-  const totalRecoveries = schemaRepairs + domainRepairs;
+  const candidateRepairs = candidateOwnedRepairCounts(candidateCalls);
+  const totalCandidateRecoveries = candidateRepairs.schema + candidateRepairs.domain;
 
   if (input.adapterStatus === "no_compatible_profile") {
     status = "unsupported";
     reasons.push("no compatible calibrated execution profile");
   } else if (input.adapterStatus !== "calibrated" || !input.executionProfileCurrent) {
     status = "inconclusive";
-    reasons.push(input.adapterStatus !== "calibrated"
-      ? `adapter status is ${input.adapterStatus}`
-      : "the certification execution profile fingerprint is stale");
+    reasons.push(
+      input.adapterStatus !== "calibrated"
+        ? `adapter status is ${input.adapterStatus}`
+        : "the certification execution profile fingerprint is stale",
+    );
   } else if (!input.evidenceComplete || externalFailedTurns > 0) {
     status = "inconclusive";
     reasons.push("external failure prevented complete candidate evidence");
   } else {
     const requirements = input.playtestPackage.technicalRequirements;
-    const incomplete = requirements.requireAllTurns && completedTurns < turnsRequired && !input.legitimateTerminal;
+    const incomplete =
+      requirements.requireAllTurns && completedTurns < turnsRequired && !input.legitimateTerminal;
     const invariantsFailed = requirements.requireInvariantPass && invariantFailures > 0;
-    if (incomplete || candidateOwnedFailedTurns > 0 || invariantsFailed) {
+    const exceededLimits = [
+      candidateRepairs.schema > requirements.maxSchemaRepairs
+        ? `candidate-owned schema repairs ${candidateRepairs.schema} exceed limit ${requirements.maxSchemaRepairs}`
+        : undefined,
+      candidateRepairs.transient > requirements.maxTransientRetries
+        ? `candidate-owned transient retries ${candidateRepairs.transient} exceed limit ${requirements.maxTransientRetries}`
+        : undefined,
+      candidateRepairs.domain > requirements.maxDomainRepairs
+        ? `candidate-owned domain repairs ${candidateRepairs.domain} exceed limit ${requirements.maxDomainRepairs}`
+        : undefined,
+      candidateOwnedFailures > requirements.maxCandidateFailures
+        ? `candidate-owned failures ${candidateOwnedFailures} exceed limit ${requirements.maxCandidateFailures}`
+        : undefined,
+    ].filter((reason): reason is string => reason !== undefined);
+    if (
+      incomplete ||
+      candidateOwnedFailedTurns > 0 ||
+      invariantsFailed ||
+      exceededLimits.length > 0
+    ) {
       status = "unstable";
       if (incomplete) reasons.push(`completed ${completedTurns}/${turnsRequired} required turns`);
-      if (candidateOwnedFailedTurns > 0) reasons.push("bounded recovery did not produce a committable turn");
+      if (candidateOwnedFailedTurns > 0)
+        reasons.push("bounded recovery did not produce a committable turn");
       if (invariantsFailed) reasons.push("one or more committed turns failed invariant validation");
-    } else if (candidateOwnedFailures > 0 || totalRecoveries > 0) {
+      reasons.push(...exceededLimits);
+    } else if (candidateOwnedFailures > 0 || totalCandidateRecoveries > 0) {
       status = "playable_with_recovery";
-      reasons.push(`the candidate completed after ${totalRecoveries} bounded ${totalRecoveries === 1 ? "recovery" : "recoveries"}`);
+      const recoveryCount = Math.max(candidateOwnedFailures, totalCandidateRecoveries);
+      reasons.push(
+        `the candidate completed after ${recoveryCount} bounded ${recoveryCount === 1 ? "recovery" : "recoveries"}`,
+      );
     } else {
       status = "clean";
-      reasons.push(input.legitimateTerminal
-        ? "the fixture reached a valid terminal outcome without technical recovery"
-        : "all required candidate evidence completed without recovery");
+      reasons.push(
+        input.legitimateTerminal
+          ? "the fixture reached a valid terminal outcome without technical recovery"
+          : "all required candidate evidence completed without recovery",
+      );
     }
   }
 

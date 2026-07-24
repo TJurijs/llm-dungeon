@@ -19,7 +19,7 @@ export function renderPrompt(sections: readonly PromptSection[]): PromptDocument
   return {
     sections: normalized,
     text: normalized
-      .map((item) => item.title ? `${item.title}\n${item.content}` : item.content)
+      .map((item) => (item.title ? `${item.title}\n${item.content}` : item.content))
       .join("\n\n"),
   };
 }

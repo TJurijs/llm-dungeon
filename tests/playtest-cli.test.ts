@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createPlaytestCliProgram } from "../tools/playtest/cli/playtest-program.js";
-import {
-  EvaluationCli,
-} from "../tools/playtest/cli/evaluation.js";
+import { EvaluationCli } from "../tools/playtest/cli/evaluation.js";
 import {
   PlaytestCli,
   languageList,
@@ -38,7 +36,8 @@ function fakeProject(): PlaytestProjectContext {
     providerConfig: vi.fn(async () => configured),
     language: vi.fn(async () => "en"),
     resolvePlaytestTarget: vi.fn(async (config: ProviderConfig, route?: string) =>
-      target(config, route ?? "direct")),
+      target(config, route ?? "direct"),
+    ),
   } as unknown as PlaytestProjectContext;
 }
 
@@ -63,18 +62,28 @@ describe("playtest terminal commands", () => {
   it("constructs certification config from frozen targets without making calls", async () => {
     const project = fakeProject();
     const cli = new PlaytestCli(project);
-    const build = (cli as unknown as {
-      buildRunConfig(id: string, options: PlaytestRunOptions, matrix: boolean): Promise<PlaytestRunConfig>;
-    }).buildRunConfig.bind(cli);
+    const build = (
+      cli as unknown as {
+        buildRunConfig(
+          id: string,
+          options: PlaytestRunOptions,
+          matrix: boolean,
+        ): Promise<PlaytestRunConfig>;
+      }
+    ).buildRunConfig.bind(cli);
 
-    const config = await build("certification-v1", {
-      candidate: "openai:gpt-5.6-terra@direct",
-      judge: "gemini:gemini-3.5-flash@direct",
-      languages: ["en", "ru"],
-      repetitions: 2,
-      concurrency: 1,
-      maxCost: 4,
-    }, false);
+    const config = await build(
+      "certification-v1",
+      {
+        candidate: "openai:gpt-5.6-terra@direct",
+        judge: "gemini:gemini-3.5-flash@direct",
+        languages: ["en", "ru"],
+        repetitions: 2,
+        concurrency: 1,
+        maxCost: 4,
+      },
+      false,
+    );
 
     expect(config).toMatchObject({
       package: { id: "certification-v1", version: 3 },
@@ -97,15 +106,25 @@ describe("playtest terminal commands", () => {
   it("uses Gemini 3.5 Flash as the default separate judge, including for itself", async () => {
     const project = fakeProject();
     const cli = new PlaytestCli(project);
-    const build = (cli as unknown as {
-      buildRunConfig(id: string, options: PlaytestRunOptions, matrix: boolean): Promise<PlaytestRunConfig>;
-    }).buildRunConfig.bind(cli);
+    const build = (
+      cli as unknown as {
+        buildRunConfig(
+          id: string,
+          options: PlaytestRunOptions,
+          matrix: boolean,
+        ): Promise<PlaytestRunConfig>;
+      }
+    ).buildRunConfig.bind(cli);
 
-    const config = await build("certification-v1", {
-      candidate: "gemini:gemini-3.5-flash@direct",
-      languages: ["en"],
-      maxCost: 2,
-    }, false);
+    const config = await build(
+      "certification-v1",
+      {
+        candidate: "gemini:gemini-3.5-flash@direct",
+        languages: ["en"],
+        maxCost: 2,
+      },
+      false,
+    );
 
     expect(config.judge).toMatchObject({
       policy: "final",
@@ -116,18 +135,28 @@ describe("playtest terminal commands", () => {
 
   it("builds autoplay with fixed player and separate optional judge lanes", async () => {
     const cli = new PlaytestCli(fakeProject());
-    const build = (cli as unknown as {
-      buildRunConfig(id: string, options: PlaytestRunOptions, matrix: boolean): Promise<PlaytestRunConfig>;
-    }).buildRunConfig.bind(cli);
-    const config = await build("campaign-autoplay-v1", {
-      player: "gemini:gemini-3.1-flash-lite@direct",
-      playerProfile: "long-term-planner",
-      judge: "openai:gpt-5.6-terra@direct",
-      checkpointEvery: 12,
-      turns: 50,
-      concurrency: 3,
-      providerConcurrency: { gemini: 2, openai: 1 },
-    }, false);
+    const build = (
+      cli as unknown as {
+        buildRunConfig(
+          id: string,
+          options: PlaytestRunOptions,
+          matrix: boolean,
+        ): Promise<PlaytestRunConfig>;
+      }
+    ).buildRunConfig.bind(cli);
+    const config = await build(
+      "campaign-autoplay-v1",
+      {
+        player: "gemini:gemini-3.1-flash-lite@direct",
+        playerProfile: "long-term-planner",
+        judge: "openai:gpt-5.6-terra@direct",
+        checkpointEvery: 12,
+        turns: 50,
+        concurrency: 3,
+        providerConcurrency: { gemini: 2, openai: 1 },
+      },
+      false,
+    );
 
     expect(config.player).toMatchObject({ profile: "long-term-planner" });
     expect(config.judge).toMatchObject({
@@ -141,7 +170,9 @@ describe("playtest terminal commands", () => {
 
   it("registers the unified command tree and routes deprecated evaluate through its wrapper", async () => {
     const project = fakeProject();
-    const packages = vi.spyOn(PlaytestCli.prototype, "packages").mockImplementation(() => undefined);
+    const packages = vi
+      .spyOn(PlaytestCli.prototype, "packages")
+      .mockImplementation(() => undefined);
     const probe = vi.spyOn(PlaytestCli.prototype, "probe").mockResolvedValue();
     const legacy = vi.spyOn(EvaluationCli.prototype, "run").mockResolvedValue();
     try {
@@ -176,11 +207,13 @@ describe("playtest terminal commands", () => {
         "--max-cost",
         "0.25",
       ]);
-      expect(probe).toHaveBeenCalledWith(expect.objectContaining({
-        target: "gemini:gemini-3.5-flash",
-        languages: ["en", "ru"],
-        maxCost: 0.25,
-      }));
+      expect(probe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: "gemini:gemini-3.5-flash",
+          languages: ["en", "ru"],
+          maxCost: 0.25,
+        }),
+      );
 
       await program.parseAsync([
         "node",
@@ -197,11 +230,13 @@ describe("playtest terminal commands", () => {
         "--player-profiles",
         "curious-explorer",
       ]);
-      expect(legacy).toHaveBeenCalledWith(expect.objectContaining({
-        sessions: 2,
-        turns: 25,
-        playerProfiles: ["curious-explorer"],
-      }));
+      expect(legacy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessions: 2,
+          turns: 25,
+          playerProfiles: ["curious-explorer"],
+        }),
+      );
     } finally {
       packages.mockRestore();
       probe.mockRestore();

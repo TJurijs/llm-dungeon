@@ -25,11 +25,14 @@ async function temporaryProject(): Promise<string> {
   return root;
 }
 
-function catalog(root: string, options: {
-  fingerprint?: string;
-  protocolVersion?: number;
-  legacySelection?: ModelSelection;
-} = {}): LlmModelCatalog {
+function catalog(
+  root: string,
+  options: {
+    fingerprint?: string;
+    protocolVersion?: number;
+    legacySelection?: ModelSelection;
+  } = {},
+): LlmModelCatalog {
   return new LlmModelCatalog(root, {
     testFingerprint: options.fingerprint ?? "connection-probe-v1:languages=en,ru",
     ...(options.protocolVersion === undefined ? {} : { protocolVersion: options.protocolVersion }),
@@ -38,10 +41,7 @@ function catalog(root: string, options: {
   });
 }
 
-function model(
-  snapshot: LlmModelCatalogSnapshot,
-  selection: ModelSelection,
-) {
+function model(snapshot: LlmModelCatalogSnapshot, selection: ModelSelection) {
   return snapshot.providers
     .find((provider) => provider.id === selection.provider)
     ?.models.find((candidate) => candidate.model === selection.model);
@@ -78,29 +78,34 @@ describe("LLM provider definitions", () => {
       "anthropic",
       "deepseek",
     ]);
-    expect(LLM_PROVIDER_DEFINITIONS.filter((provider) => provider.recommended).map((provider) => provider.id))
-      .toEqual(["gemini"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.filter((provider) => provider.recommended).map(
+        (provider) => provider.id,
+      ),
+    ).toEqual(["gemini"]);
     for (const provider of LLM_PROVIDER_DEFINITIONS) {
       expect(provider.label).not.toBe("");
       expect(provider.candidateModels.length).toBeGreaterThan(0);
       expect(new Set(provider.candidateModels).size).toBe(provider.candidateModels.length);
     }
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openrouter")?.candidateModels).toEqual([
-      "qwen/qwen3.7-plus",
-    ]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels)
-      .toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "xai")?.candidateModels)
-      .toEqual(["grok-4.5"]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels)
-      .toEqual(["gpt-5.4"]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels).toEqual([
-      "claude-sonnet-5",
-    ]);
-    expect(LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels).toEqual([
-      "deepseek-v4-flash",
-      "deepseek-v4-pro",
-    ]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openrouter")?.candidateModels,
+    ).toEqual(["qwen/qwen3.7-plus"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels,
+    ).toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "xai")?.candidateModels,
+    ).toEqual(["grok-4.5"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openai")?.candidateModels,
+    ).toEqual(["gpt-5.4"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "anthropic")?.candidateModels,
+    ).toEqual(["claude-sonnet-5"]);
+    expect(
+      LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "deepseek")?.candidateModels,
+    ).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
     expect(RECOMMENDED_MODEL_SELECTION).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
   });
 });
@@ -108,7 +113,10 @@ describe("LLM provider definitions", () => {
 describe("LLM model catalog persistence", () => {
   it("ships evaluated models as current while keeping the recommended Gemini flash as default", async () => {
     const root = await temporaryProject();
-    const registry = catalog(root, { fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT, protocolVersion: 1 });
+    const registry = catalog(root, {
+      fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+      protocolVersion: 1,
+    });
 
     const snapshot = await registry.snapshot();
     expect(snapshot.defaultModel).toEqual(RECOMMENDED_MODEL_SELECTION);
@@ -117,10 +125,14 @@ describe("LLM model catalog persistence", () => {
       state: "compatible",
       enabled: true,
     });
-    await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en")).resolves.toBeDefined();
+    await expect(
+      registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en"),
+    ).resolves.toBeDefined();
     const anthropicProvider = snapshot.providers.find((provider) => provider.id === "anthropic");
     expect(anthropicProvider).toMatchObject({ public: true, recommended: false });
-    expect(anthropicProvider?.models.find((candidate) => candidate.model === "claude-sonnet-5")).toMatchObject({
+    expect(
+      anthropicProvider?.models.find((candidate) => candidate.model === "claude-sonnet-5"),
+    ).toMatchObject({
       candidate: true,
       state: "compatible",
       enabled: true,
@@ -162,8 +174,9 @@ describe("LLM model catalog persistence", () => {
       state: "untested",
       enabled: true,
     });
-    await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en"))
-      .rejects.toMatchObject({ reason: "untested" });
+    await expect(registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en")).rejects.toMatchObject(
+      { reason: "untested" },
+    );
 
     const persistedPath = path.join(root, "config", "llm-models.json");
     const firstWrite = await readFile(persistedPath, "utf8");
@@ -175,7 +188,9 @@ describe("LLM model catalog persistence", () => {
 
     expect(await registry.snapshot()).toEqual(snapshot);
     expect(await readFile(persistedPath, "utf8")).toBe(firstWrite);
-    expect((await readdir(path.join(root, "config"))).filter((name) => name.includes(".tmp-"))).toEqual([]);
+    expect(
+      (await readdir(path.join(root, "config"))).filter((name) => name.includes(".tmp-")),
+    ).toEqual([]);
   });
 
   it("adds arbitrary provider model IDs without duplicating them", async () => {
@@ -186,9 +201,16 @@ describe("LLM model catalog persistence", () => {
     await registry.addModel(custom);
     const snapshot = await registry.addModel(custom);
 
-    expect(snapshot.providers.find((provider) => provider.id === "anthropic")?.models
-      .filter((candidate) => candidate.model === custom.model)).toHaveLength(1);
-    expect(model(snapshot, custom)).toMatchObject({ candidate: false, state: "untested", enabled: false });
+    expect(
+      snapshot.providers
+        .find((provider) => provider.id === "anthropic")
+        ?.models.filter((candidate) => candidate.model === custom.model),
+    ).toHaveLength(1);
+    expect(model(snapshot, custom)).toMatchObject({
+      candidate: false,
+      state: "untested",
+      enabled: false,
+    });
   });
 
   it("removes only custom models that are not the default", async () => {
@@ -198,13 +220,52 @@ describe("LLM model catalog persistence", () => {
 
     await registry.addModel(custom);
     expect(model(await registry.removeModel(custom), custom)).toBeUndefined();
-    await expect(registry.removeModel({ provider: "gemini", model: "gemini-3.5-flash-lite" }))
-      .rejects.toThrow("Known model");
+    await expect(
+      registry.removeModel({ provider: "gemini", model: "gemini-3.5-flash-lite" }),
+    ).rejects.toThrow("Known model");
 
     await registry.addModel(custom);
     await registry.recordTestSuccess(custom, { testedLanguages: ["en"] });
     await registry.setDefault(custom);
     await expect(registry.removeModel(custom)).rejects.toThrow("Default model");
+  });
+
+  it("does not recreate a removed model when an in-flight probe records its result", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root);
+    const custom = { provider: "anthropic", model: "claude-removed-during-probe" } as const;
+
+    await registry.addModel(custom);
+    await registry.removeModel(custom);
+
+    await expect(
+      registry.recordTestSuccess(custom, { testedLanguages: ["en"] }, { requireRegistered: true }),
+    ).rejects.toMatchObject({ reason: "unregistered" });
+    await expect(
+      registry.recordTestFailure(
+        custom,
+        { failedLanguages: ["en"], failureSummary: "late result" },
+        { requireRegistered: true },
+      ),
+    ).rejects.toMatchObject({ reason: "unregistered" });
+    expect(model(await registry.snapshot(), custom)).toBeUndefined();
+  });
+
+  it("does not recreate a removed model through a late enable or default request", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root);
+    const custom = { provider: "anthropic", model: "claude-removed-before-toggle" } as const;
+
+    await registry.addModel(custom);
+    await registry.removeModel(custom);
+
+    await expect(registry.setEnabled(custom, false)).rejects.toMatchObject({
+      reason: "unregistered",
+    });
+    await expect(registry.setDefault(custom)).rejects.toMatchObject({
+      reason: "unregistered",
+    });
+    expect(model(await registry.snapshot(), custom)).toBeUndefined();
   });
 
   it("preserves retired curated rows without restoring them to the public candidate lineup", async () => {
@@ -216,11 +277,19 @@ describe("LLM model catalog persistence", () => {
       { provider: "anthropic", model: "claude-sonnet-4-6" },
     ] as const;
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, `${JSON.stringify({
-      version: 1,
-      defaultModel: null,
-      models: retired.map((selection) => ({ ...selection, state: "untested", enabled: false })),
-    }, null, 2)}\n`, "utf8");
+    await writeFile(
+      target,
+      `${JSON.stringify(
+        {
+          version: 1,
+          defaultModel: null,
+          models: retired.map((selection) => ({ ...selection, state: "untested", enabled: false })),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     const snapshot = await catalog(root).snapshot();
 
@@ -243,11 +312,21 @@ describe("LLM model catalog persistence", () => {
     const root = await temporaryProject();
     const target = path.join(root, "config", "llm-models.json");
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, `${JSON.stringify({
-      version: 1,
-      defaultModel: null,
-      models: [{ provider: "openai", model: "private-model", state: "untested", enabled: false }],
-    }, null, 2)}\n`, "utf8");
+    await writeFile(
+      target,
+      `${JSON.stringify(
+        {
+          version: 1,
+          defaultModel: null,
+          models: [
+            { provider: "openai", model: "private-model", state: "untested", enabled: false },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     const registry = catalog(root);
     const first = await registry.snapshot();
@@ -278,7 +357,9 @@ describe("LLM model catalog persistence", () => {
     for (const selection of selections) {
       expect(persisted.models).toContainEqual(expect.objectContaining(selection));
     }
-    expect((await readdir(path.join(root, "config"))).filter((name) => name.includes(".tmp-"))).toEqual([]);
+    expect(
+      (await readdir(path.join(root, "config"))).filter((name) => name.includes(".tmp-")),
+    ).toEqual([]);
   });
 
   it("fails closed without replacing malformed or unsupported persisted data", async () => {
@@ -309,17 +390,19 @@ describe("LLM model compatibility lifecycle", () => {
 
     let snapshot = await registry.recordTestSuccess(first, { testedLanguages: ["ru", "en", "ru"] });
     expect(snapshot.defaultModel).toEqual(first);
-    expect(model(snapshot, first)).toEqual(expect.objectContaining({
-      ...first,
-      state: "compatible",
-      enabled: true,
-      test: {
-        testedAt: now.toISOString(),
-        protocolVersion: 7,
-        testFingerprint: "connection-probe-v1:languages=en,ru",
-        testedLanguages: ["en", "ru"],
-      },
-    }));
+    expect(model(snapshot, first)).toEqual(
+      expect.objectContaining({
+        ...first,
+        state: "compatible",
+        enabled: true,
+        test: {
+          testedAt: now.toISOString(),
+          protocolVersion: 7,
+          testFingerprint: "connection-probe-v1:languages=en,ru",
+          testedLanguages: ["en", "ru"],
+        },
+      }),
+    );
 
     snapshot = await registry.recordTestSuccess(second, { testedLanguages: ["en"] });
     expect(snapshot.defaultModel).toEqual(first);
@@ -358,18 +441,23 @@ describe("LLM model compatibility lifecycle", () => {
     await registry.setDefault(first);
 
     await expect(registry.assertAvailable(first, "en")).resolves.toMatchObject(first);
-    await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({ reason: "language" });
+    await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({
+      reason: "language",
+    });
 
     let snapshot = await registry.setEnabled(first, false);
     expect(snapshot.defaultModel).toBeNull();
-    await expect(registry.assertAvailable(first, "en")).rejects.toMatchObject({ reason: "disabled" });
+    await expect(registry.assertAvailable(first, "en")).rejects.toMatchObject({
+      reason: "disabled",
+    });
 
     snapshot = await registry.setEnabled(first, true);
     expect(model(snapshot, first)?.enabled).toBe(true);
     expect(snapshot.defaultModel).toBeNull();
     await registry.setDefault(first);
-    await expect(registry.assertAvailable({ provider: "openai", model: "not-added" }, "en"))
-      .rejects.toMatchObject({ reason: "unregistered" });
+    await expect(
+      registry.assertAvailable({ provider: "openai", model: "not-added" }, "en"),
+    ).rejects.toMatchObject({ reason: "unregistered" });
   });
 
   it("preserves a passing language when another language fails", async () => {
@@ -393,7 +481,9 @@ describe("LLM model compatibility lifecycle", () => {
     });
     expect(snapshot.defaultModel).toEqual(first);
     await expect(registry.assertAvailable(first, "en")).resolves.toBeDefined();
-    await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({ reason: "language" });
+    await expect(registry.assertAvailable(first, "ru")).rejects.toMatchObject({
+      reason: "language",
+    });
 
     snapshot = await registry.recordTestSuccess(first, { testedLanguages: ["ru"] });
     expect(model(snapshot, first)?.test).toMatchObject({ testedLanguages: ["en", "ru"] });
@@ -411,7 +501,9 @@ describe("LLM model compatibility lifecycle", () => {
     let snapshot = await changedProbe.snapshot();
     expect(model(snapshot, first)).toMatchObject({ state: "stale", enabled: false });
     expect(snapshot.defaultModel).toBeNull();
-    await expect(changedProbe.assertAvailable(first, "en")).rejects.toMatchObject({ reason: "stale" });
+    await expect(changedProbe.assertAvailable(first, "en")).rejects.toMatchObject({
+      reason: "stale",
+    });
     await expect(changedProbe.setEnabled(first, true)).rejects.toMatchObject({ reason: "stale" });
 
     snapshot = await changedProbe.recordTestSuccess(first, { testedLanguages: ["ru"] });

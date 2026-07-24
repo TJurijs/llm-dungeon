@@ -23,13 +23,17 @@ export async function serveStaticAsset(
   pathname: string,
 ): Promise<void> {
   const asset = STATIC_ASSETS[pathname];
-  if (!asset) { sendJson(response, 404, { error: "Not found" }); return; }
+  if (!asset) {
+    sendJson(response, 404, { error: "Not found" });
+    return;
+  }
   const content = await readFile(path.join(webRoot, asset.name));
   response.writeHead(200, {
     "Content-Type": asset.type,
     "Cache-Control": "no-cache",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy":
+      "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
   });
   response.end(content);
 }

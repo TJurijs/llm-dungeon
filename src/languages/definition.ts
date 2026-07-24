@@ -29,7 +29,9 @@ export interface MechanicsCopy {
   readonly total: string;
   readonly difficulty: string;
   readonly comparisonConnector: string;
-  readonly outcomes: Readonly<Record<"exceptional_success" | "success" | "failure" | "severe_failure", string>>;
+  readonly outcomes: Readonly<
+    Record<"exceptional_success" | "success" | "failure" | "severe_failure", string>
+  >;
 }
 
 export interface CampaignLifecycleCopy {

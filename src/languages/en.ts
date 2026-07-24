@@ -2,10 +2,12 @@ import type { LanguageDefinition } from "./definition.js";
 
 export const ENGLISH: LanguageDefinition = {
   nativeName: "English",
-  instruction: "Write all narration, dialogue, summaries, names, descriptions, and player-facing text in English.",
+  instruction:
+    "Write all narration, dialogue, summaries, names, descriptions, and player-facing text in English.",
   setupDefaults: {
     premise: "A classical opening in a tavern, with immediate but optional possibilities.",
-    characterConcept: "Create a grounded adventurer with two useful traits and one complicating trait.",
+    characterConcept:
+      "Create a grounded adventurer with two useful traits and one complicating trait.",
   },
   mechanics: {
     noModifiers: "No modifiers",

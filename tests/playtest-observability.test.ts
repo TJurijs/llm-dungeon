@@ -39,8 +39,9 @@ import { PlaytestTelemetryProvider } from "../tools/playtest/harness/telemetry.j
 const AnswerSchema = z.object({ answer: z.string() }).strict();
 
 function executionProfile(): FrozenModelExecutionProfile {
-  const draft = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((candidate) =>
-    candidate.key.provider === "openai" && candidate.key.model === "gpt-5.6-terra");
+  const draft = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+    (candidate) => candidate.key.provider === "openai" && candidate.key.model === "gpt-5.6-terra",
+  );
   if (!draft) throw new Error("Missing OpenAI execution profile fixture");
   return freezeModelExecutionProfile({
     ...draft,
@@ -192,7 +193,9 @@ describe("playtest call observability", () => {
       scheduler: new PlaytestProviderScheduler(1, { openai: 1 }),
       callsPath: path.join(root, "calls", "candidate.jsonl"),
       diagnosticsDir: path.join(root, "diagnostics"),
-      onRecord: (record) => { records.push(record); },
+      onRecord: (record) => {
+        records.push(record);
+      },
     });
 
     await expect(provider.generateStructured(request())).resolves.toMatchObject({
@@ -253,35 +256,35 @@ describe("playtest call observability", () => {
     });
     provider.setPreCallStateSnapshot(`authoritative state containing ${secret}`);
 
-    await expect(provider.generateStructured({
-      ...request(),
-      system: `Judge without exposing ${secret}.`,
-    })).rejects.toThrow("malformed judge response");
+    await expect(
+      provider.generateStructured({
+        ...request(),
+        system: `Judge without exposing ${secret}.`,
+      }),
+    ).rejects.toThrow("malformed judge response");
 
     const callsPath = path.join(root, "calls", "judge.jsonl");
     const callsText = await readFile(callsPath, "utf8");
     expect(callsText).not.toContain(secret);
     const calls = PlaytestCallRecordSchema.array().parse(await readPlaytestJsonLines(callsPath));
-    expect(calls).toMatchObject([{
-      id: "job-observability-judge-00001",
-      actor: "judge",
-      phase: "final_judge",
-      success: false,
-      failureKind: "malformed_json",
-      failureOwner: "judge",
-      estimatedCostUsd: 0.023456,
-      inputTokens: 303,
-      outputTokens: 404,
-      retryBackoffMs: 91,
-      finishReason: "length",
-      error: "malformed judge response near credential [redacted]",
-    }]);
+    expect(calls).toMatchObject([
+      {
+        id: "job-observability-judge-00001",
+        actor: "judge",
+        phase: "final_judge",
+        success: false,
+        failureKind: "malformed_json",
+        failureOwner: "judge",
+        estimatedCostUsd: 0.023456,
+        inputTokens: 303,
+        outputTokens: 404,
+        retryBackoffMs: 91,
+        finishReason: "length",
+        error: "malformed judge response near credential [redacted]",
+      },
+    ]);
 
-    const diagnosticPath = path.join(
-      root,
-      "diagnostics",
-      "job-observability-judge-00001.json",
-    );
+    const diagnosticPath = path.join(root, "diagnostics", "job-observability-judge-00001.json");
     const diagnosticText = await readFile(diagnosticPath, "utf8");
     expect(diagnosticText).not.toContain(secret);
     const diagnostic = await readDiagnosticBundle(diagnosticPath);
@@ -323,9 +326,12 @@ function callRecord(input: {
     timestamp: "2026-07-19T12:00:00.000Z",
     jobId: "job-001",
     actor: input.actor,
-    phase: input.actor === "candidate"
-      ? "decision"
-      : input.actor === "player_driver" ? "player_action" : "final_judge",
+    phase:
+      input.actor === "candidate"
+        ? "decision"
+        : input.actor === "player_driver"
+          ? "player_action"
+          : "final_judge",
     sequence: 1,
     schemaName: `${input.actor}_schema`,
     provider: "openai",
@@ -345,12 +351,14 @@ function callRecord(input: {
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
     ...(input.repairKind ? { repairKind: input.repairKind } : {}),
-    ...(input.failureOwner ? {
-      failureKind: "malformed_json",
-      failureOwner: input.failureOwner,
-      failureFingerprint: "f".repeat(64),
-      error: `${input.actor} fixture failure`,
-    } : {}),
+    ...(input.failureOwner
+      ? {
+          failureKind: "malformed_json",
+          failureOwner: input.failureOwner,
+          failureFingerprint: "f".repeat(64),
+          error: `${input.actor} fixture failure`,
+        }
+      : {}),
   });
 }
 
@@ -398,106 +406,143 @@ describe("playtest reporting", () => {
       packageSnapshot: TUNING_PACKAGE,
       packageHash: "package-hash",
       totalEstimatedCostUsd: 1.375,
-      jobs: [{
-        id: "job-001",
-        package: config.package,
-        candidate,
-        language: "en",
-        repetition: 1,
-        latencyMode: "canonical",
-        status: "completed",
-        completedTurns: 1,
-        judge: config.judge,
-        technicalStatus: "clean",
-        qualityStatus: "unrated",
-        stopReason: "turn_limit",
-      }],
+      jobs: [
+        {
+          id: "job-001",
+          package: config.package,
+          candidate,
+          language: "en",
+          repetition: 1,
+          latencyMode: "canonical",
+          status: "completed",
+          completedTurns: 1,
+          judge: config.judge,
+          technicalStatus: "clean",
+          qualityStatus: "unrated",
+          stopReason: "turn_limit",
+        },
+      ],
     });
     await writeFile(path.join(runDir, "manifest.json"), `${JSON.stringify(manifest)}\n`, "utf8");
 
-    await appendPlaytestJsonLine(path.join(jobDir, "calls", "candidate.jsonl"), callRecord({
-      id: "candidate-1",
-      actor: "candidate",
-      success: true,
-      cost: 0.125,
-      inputTokens: 10,
-      outputTokens: 20,
-      costWaitMs: 2,
-      queueWaitMs: 5,
-      providerDurationMs: 100,
-      retryBackoffMs: 7,
-    }));
-    await appendPlaytestJsonLine(path.join(jobDir, "calls", "player-driver.jsonl"), callRecord({
-      id: "player-1",
-      actor: "player_driver",
-      success: false,
-      failureOwner: "player_driver",
-      cost: 0.5,
-      inputTokens: 30,
-      outputTokens: 40,
-      costWaitMs: 50,
-      queueWaitMs: 500,
-      providerDurationMs: 900,
-      retryBackoffMs: 1_000,
-      costBasis: "reserved_estimate",
-      repairKind: "transient",
-    }));
-    await appendPlaytestJsonLine(path.join(jobDir, "calls", "judge.jsonl"), callRecord({
-      id: "judge-1",
-      actor: "judge",
-      success: false,
-      failureOwner: "judge",
-      cost: 0.75,
-      inputTokens: 50,
-      outputTokens: 60,
-      costWaitMs: 70,
-      queueWaitMs: 700,
-      providerDurationMs: 1_900,
-      retryBackoffMs: 2_000,
-    }));
-    await appendPlaytestJsonLine(path.join(jobDir, "turns.jsonl"), PlaytestTurnRecordSchema.parse({
-      turn: 1,
-      action: "Inspect the fixture.",
-      narration: "The fixture remains stable.",
-      summary: "The fixture was inspected.",
-      playerVisibleDurationMs: 321,
-      driver: "scripted",
-      expectedCheckPolicy: "forbidden",
-      assignedNaturalRoll: 42,
-      operations: [],
-      status: "completed",
-      invariantStatus: "passed",
-    }));
-    await writeFile(path.join(jobDir, "technical.json"), `${JSON.stringify(
-      CandidateTechnicalSnapshotSchema.parse({
-        status: "unstable",
-        evidenceComplete: true,
-        turnsRequired: 1,
-        turnsCompleted: 1,
-        candidateCalls: 1,
-        candidateOwnedFailures: 0,
-        candidateOwnedFailedTurns: 0,
-        externalFailedTurns: 0,
-        schemaRepairs: 0,
-        transientRetries: 0,
-        domainRepairs: 0,
-        invariantFailures: 0,
-        deterministicCoveragePassed: false,
-        excludedFailureCounts: { player_driver: 1, judge: 1 },
-        reasons: ["coverage fixture failed"],
+    await appendPlaytestJsonLine(
+      path.join(jobDir, "calls", "candidate.jsonl"),
+      callRecord({
+        id: "candidate-1",
+        actor: "candidate",
+        success: true,
+        cost: 0.125,
+        inputTokens: 10,
+        outputTokens: 20,
+        costWaitMs: 2,
+        queueWaitMs: 5,
+        providerDurationMs: 100,
+        retryBackoffMs: 7,
       }),
-    )}\n`, "utf8");
-    await writeFile(path.join(jobDir, "coverage.json"), `${JSON.stringify({
-      deterministicPassed: false,
-      passed: 1,
-      failed: 1,
-      requiresJudge: 1,
-      entries: [
-        { requirementId: "passed-fixture", mode: "deterministic", status: "passed", evidence: "present" },
-        { requirementId: "failed-fixture", mode: "deterministic", status: "failed", evidence: "missing" },
-        { requirementId: "judge-fixture", mode: "judge", status: "requires_judge", evidence: "judge only" },
-      ],
-    })}\n`, "utf8");
+    );
+    await appendPlaytestJsonLine(
+      path.join(jobDir, "calls", "player-driver.jsonl"),
+      callRecord({
+        id: "player-1",
+        actor: "player_driver",
+        success: false,
+        failureOwner: "player_driver",
+        cost: 0.5,
+        inputTokens: 30,
+        outputTokens: 40,
+        costWaitMs: 50,
+        queueWaitMs: 500,
+        providerDurationMs: 900,
+        retryBackoffMs: 1_000,
+        costBasis: "reserved_estimate",
+        repairKind: "transient",
+      }),
+    );
+    await appendPlaytestJsonLine(
+      path.join(jobDir, "calls", "judge.jsonl"),
+      callRecord({
+        id: "judge-1",
+        actor: "judge",
+        success: false,
+        failureOwner: "judge",
+        cost: 0.75,
+        inputTokens: 50,
+        outputTokens: 60,
+        costWaitMs: 70,
+        queueWaitMs: 700,
+        providerDurationMs: 1_900,
+        retryBackoffMs: 2_000,
+      }),
+    );
+    await appendPlaytestJsonLine(
+      path.join(jobDir, "turns.jsonl"),
+      PlaytestTurnRecordSchema.parse({
+        turn: 1,
+        action: "Inspect the fixture.",
+        narration: "The fixture remains stable.",
+        summary: "The fixture was inspected.",
+        playerVisibleDurationMs: 321,
+        driver: "scripted",
+        expectedCheckPolicy: "forbidden",
+        assignedNaturalRoll: 42,
+        operations: [],
+        status: "completed",
+        invariantStatus: "passed",
+      }),
+    );
+    await writeFile(
+      path.join(jobDir, "technical.json"),
+      `${JSON.stringify(
+        CandidateTechnicalSnapshotSchema.parse({
+          status: "unstable",
+          evidenceComplete: true,
+          turnsRequired: 1,
+          turnsCompleted: 1,
+          candidateCalls: 1,
+          candidateOwnedFailures: 0,
+          candidateOwnedFailedTurns: 0,
+          externalFailedTurns: 0,
+          schemaRepairs: 0,
+          transientRetries: 0,
+          domainRepairs: 0,
+          invariantFailures: 0,
+          deterministicCoveragePassed: false,
+          excludedFailureCounts: { player_driver: 1, judge: 1 },
+          reasons: ["coverage fixture failed"],
+        }),
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(jobDir, "coverage.json"),
+      `${JSON.stringify({
+        deterministicPassed: false,
+        passed: 1,
+        failed: 1,
+        requiresJudge: 1,
+        entries: [
+          {
+            requirementId: "passed-fixture",
+            mode: "deterministic",
+            status: "passed",
+            evidence: "present",
+          },
+          {
+            requirementId: "failed-fixture",
+            mode: "deterministic",
+            status: "failed",
+            evidence: "missing",
+          },
+          {
+            requirementId: "judge-fixture",
+            mode: "judge",
+            status: "requires_judge",
+            evidence: "judge only",
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
 
     const report = await collectPlaytestReport(runDir);
     expect(report.jobs).toHaveLength(1);
@@ -550,7 +595,9 @@ describe("playtest reporting", () => {
     expect(report.jobs[0]!.candidate.costUsd).not.toBe(1.375);
 
     const markdown = renderPlaytestReport(report);
-    expect(markdown).toContain("Judge and player-driver behavior is excluded from candidate technical status.");
+    expect(markdown).toContain(
+      "Judge and player-driver behavior is excluded from candidate technical status.",
+    );
     expect(markdown).toContain("openai/gpt-5.6-terra via direct");
     expect(markdown).toContain("Candidate: 1 calls, 0 failures, $0.125000");
     expect(markdown).toContain("Player driver: 1 calls, 1 failures, $0.500000");
@@ -615,20 +662,22 @@ describe("playtest reporting", () => {
         packageSnapshot: TUNING_PACKAGE,
         packageHash: overrides.packageHash ?? "same-package-hash",
         totalEstimatedCostUsd: 0,
-        jobs: [{
-          id: `job-${runId}`,
-          package: config.package,
-          candidate,
-          language: "en",
-          repetition: 1,
-          latencyMode: "canonical",
-          status: "completed",
-          completedTurns: 0,
-          judge: config.judge,
-          technicalStatus: "clean",
-          qualityStatus: "unrated",
-          stopReason: "turn_limit",
-        }],
+        jobs: [
+          {
+            id: `job-${runId}`,
+            package: config.package,
+            candidate,
+            language: "en",
+            repetition: 1,
+            latencyMode: "canonical",
+            status: "completed",
+            completedTurns: 0,
+            judge: config.judge,
+            technicalStatus: "clean",
+            qualityStatus: "unrated",
+            stopReason: "turn_limit",
+          },
+        ],
       });
       await mkdir(path.join(runDir, "jobs", `job-${runId}`), { recursive: true });
       await writeFile(path.join(runDir, "manifest.json"), `${JSON.stringify(manifest)}\n`, "utf8");
@@ -643,8 +692,14 @@ describe("playtest reporting", () => {
     expect(comparison.markdown).not.toContain("different source revisions");
 
     const changedSeed = await writeRun("changed-seed", "candidate-c", { seed: "other-seed" });
-    await expect(comparePlaytestRuns(left, changedSeed)).rejects.toThrow("same package fingerprint");
-    const changedPackage = await writeRun("changed-package", "candidate-c", { packageHash: "other-package-hash" });
-    await expect(comparePlaytestRuns(left, changedPackage)).rejects.toThrow("same package fingerprint");
+    await expect(comparePlaytestRuns(left, changedSeed)).rejects.toThrow(
+      "same package fingerprint",
+    );
+    const changedPackage = await writeRun("changed-package", "candidate-c", {
+      packageHash: "other-package-hash",
+    });
+    await expect(comparePlaytestRuns(left, changedPackage)).rejects.toThrow(
+      "same package fingerprint",
+    );
   });
 });

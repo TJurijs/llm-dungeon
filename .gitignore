@@ -26,3 +26,4 @@ config/.provider-connections.lock.reclaim-*
 config/world.md
 config/worlds/
 *.log
+.claude/launch.json

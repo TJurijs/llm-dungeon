@@ -4,19 +4,25 @@ import { DEFAULT_LANGUAGE, LanguageCodeSchema } from "./language.js";
 export const SafeIdSchema = z
   .string()
   .regex(/^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$/, "must be a safe namespaced id")
-  .describe("A non-empty lowercase namespaced ID such as npc:mara-venn or location:crooked-crown; it must match ^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$");
+  .describe(
+    "A non-empty lowercase namespaced ID such as npc:mara-venn or location:crooked-crown; it must match ^[a-z][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$",
+  );
 
 const GeneratedIdHintSchema = z
   .string()
   .optional()
   .default("generated:auto")
-  .describe("Optional human-readable ID hint. The application always replaces this value with a unique safe namespaced ID.");
+  .describe(
+    "Optional human-readable ID hint. The application always replaces this value with a unique safe namespaced ID.",
+  );
 
 const ReferenceIdHintSchema = z
   .string()
   .trim()
   .min(1)
-  .describe("An existing state ID. The namespace may be omitted only when the application can restore it from one exact, unique, type-compatible match.");
+  .describe(
+    "An existing state ID. The namespace may be omitted only when the application can restore it from one exact, unique, type-compatible match.",
+  );
 
 export const FactSectionSchema = z.enum([
   "established",
@@ -62,8 +68,11 @@ export const EntitySchema = z.object({
   location: SafeIdSchema.optional(),
   tags: z.array(z.string().min(1)).default([]),
   updatedTurn: z.number().int().nonnegative(),
-  description: z.string()
-    .describe("Stable enduring appearance or nature only; never current placement, ownership, activity, mood, or temporary condition.")
+  description: z
+    .string()
+    .describe(
+      "Stable enduring appearance or nature only; never current placement, ownership, activity, mood, or temporary condition.",
+    )
     .default(""),
   traits: z.array(z.string().min(1)).default([]),
   conditions: z.array(z.string().min(1)).default([]),
@@ -151,7 +160,10 @@ const ChangeInventoryOperationSchema = z.object({
   type: z.literal("change_inventory"),
   ownerId: ReferenceIdHintSchema,
   itemId: ReferenceIdHintSchema,
-  quantityDelta: z.number().int().refine((value) => value !== 0),
+  quantityDelta: z
+    .number()
+    .int()
+    .refine((value) => value !== 0),
 });
 
 const TransferItemOperationSchema = z.object({
@@ -247,34 +259,37 @@ export const StateOperationSchema = z.discriminatedUnion("type", [
 
 export const ModifierSchema = z.object({
   label: z.string().min(1).describe("A concrete circumstance affecting this attempt."),
-  value: z.number().int().min(-30).max(30).describe(
-    "Positive values help the acting player character succeed; negative values hinder them. Never reverse this sign convention.",
-  ),
+  value: z
+    .number()
+    .int()
+    .min(-30)
+    .max(30)
+    .describe(
+      "Positive values help the acting player character succeed; negative values hinder them. Never reverse this sign convention.",
+    ),
 });
 
 const CheckSpecInputSchema = z.object({
-    name: z.string().min(1),
-    difficulty: z.number().int().min(5).max(95),
-    modifiers: z.array(ModifierSchema).max(5),
-    exceptionalSuccessStakes: z.string().min(1).optional(),
-    successStakes: z.string().min(1),
-    failureStakes: z.string().min(1),
-    severeFailureStakes: z.string().min(1).optional(),
-    failureCampaignStatus: z.enum(["none", "dead", "ended"]).default("none"),
-  });
+  name: z.string().min(1),
+  difficulty: z.number().int().min(5).max(95),
+  modifiers: z.array(ModifierSchema).max(5),
+  exceptionalSuccessStakes: z.string().min(1).optional(),
+  successStakes: z.string().min(1),
+  failureStakes: z.string().min(1),
+  severeFailureStakes: z.string().min(1).optional(),
+  failureCampaignStatus: z.enum(["none", "dead", "ended"]).default("none"),
+});
 
-export const CheckSpecSchema = CheckSpecInputSchema
-  .superRefine((check, ctx) => {
-    const total = check.modifiers.reduce((sum, modifier) => sum + modifier.value, 0);
-    if (total < -50 || total > 50) {
-      ctx.addIssue({ code: "custom", message: "combined modifiers must be between -50 and 50" });
-    }
-  })
-  .transform((check) => ({
-    ...check,
-    exceptionalSuccessStakes: check.exceptionalSuccessStakes ?? check.successStakes,
-    severeFailureStakes: check.severeFailureStakes ?? check.failureStakes,
-  }));
+export const CheckSpecSchema = CheckSpecInputSchema.superRefine((check, ctx) => {
+  const total = check.modifiers.reduce((sum, modifier) => sum + modifier.value, 0);
+  if (total < -50 || total > 50) {
+    ctx.addIssue({ code: "custom", message: "combined modifiers must be between -50 and 50" });
+  }
+}).transform((check) => ({
+  ...check,
+  exceptionalSuccessStakes: check.exceptionalSuccessStakes ?? check.successStakes,
+  severeFailureStakes: check.severeFailureStakes ?? check.failureStakes,
+}));
 
 export const ResolvedTurnSchema = z.object({
   narration: z.string().min(1),
@@ -292,9 +307,9 @@ const InitialEntitySchema = z.object({
   kind: EntityKindSchema,
   name: z.string().min(1),
   status: z.string().min(1).default("active"),
-  location: SafeIdSchema
-    .describe("Optional physical containment by a different included location ID. Never use the entity's own ID; omit it for a top-level location; location-parent chains must be acyclic.")
-    .optional(),
+  location: SafeIdSchema.describe(
+    "Optional physical containment by a different included location ID. Never use the entity's own ID; omit it for a top-level location; location-parent chains must be acyclic.",
+  ).optional(),
   tags: z.array(z.string().min(1)).default([]),
   description: z.string().default(""),
   establishedFacts: z.array(z.string().min(1)).default([]),
@@ -331,9 +346,11 @@ export const ProviderConfigSchema = z.object({
   endpoint: z.string().url().optional(),
 });
 
-export const QuestionAnswerSchema = z.object({
-  answer: z.string().trim().min(1).max(20_000),
-}).strict();
+export const QuestionAnswerSchema = z
+  .object({
+    answer: z.string().trim().min(1).max(20_000),
+  })
+  .strict();
 
 export type Entity = z.infer<typeof EntitySchema>;
 export type Fact = z.infer<typeof FactSchema>;

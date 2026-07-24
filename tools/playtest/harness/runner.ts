@@ -49,15 +49,8 @@ import {
   type PlaytestTurnRecord,
   type ScriptedTurn,
 } from "./contracts.js";
-import {
-  PlaytestCostLimitError,
-  PlaytestCostManager,
-  type PlaytestModelCost,
-} from "./cost.js";
-import {
-  reservationLedgerPathForCalls,
-  unsettledPlaytestCallCost,
-} from "./cost-ledger.js";
+import { PlaytestCostLimitError, PlaytestCostManager, type PlaytestModelCost } from "./cost.js";
+import { reservationLedgerPathForCalls, unsettledPlaytestCallCost } from "./cost-ledger.js";
 import { attributePlaytestFailure } from "./failure-attribution.js";
 import { appendPlaytestJsonLine, hashPlaytestValue, readPlaytestJsonLines } from "./files.js";
 import {
@@ -69,15 +62,16 @@ import {
   type PlaytestJudgePromptInput,
   type PlaytestJudgment,
 } from "./judge.js";
-import { playtestCodeVersion, readOptionalPlaytestManifest, readPlaytestManifest } from "./manifest.js";
+import {
+  playtestCodeVersion,
+  readOptionalPlaytestManifest,
+  readPlaytestManifest,
+} from "./manifest.js";
 import { getPlaytestPackage } from "./packages.js";
 import { rollPolicy } from "./random.js";
 import { generatePlaytestReport } from "./report.js";
 import { CampaignTurnScheduler, PlaytestProviderScheduler } from "./scheduler.js";
-import {
-  PlaytestDurationLimitError,
-  PlaytestTelemetryProvider,
-} from "./telemetry.js";
+import { PlaytestDurationLimitError, PlaytestTelemetryProvider } from "./telemetry.js";
 
 export interface PlaytestRunnerDependencies {
   profileFor(target: PlaytestModelTarget): Promise<FrozenModelExecutionProfile>;
@@ -106,60 +100,72 @@ export interface PlaytestRunResult {
   reportPath: string;
 }
 
-const PreparedTurnSchema = z.object({
-  schemaVersion: z.literal(1),
-  turn: z.number().int().positive(),
-  fixtureId: z.string().regex(/^[a-z][a-z0-9-]*$/).optional(),
-  action: z.string().min(1),
-  scriptedTurnId: z.string().optional(),
-  driver: PlaytestTurnRecordSchema.shape.driver,
-  profile: PlaytestTurnRecordSchema.shape.profile.optional(),
-  expectedCheckPolicy: PlaytestTurnRecordSchema.shape.expectedCheckPolicy,
-  assignedNaturalRoll: z.number().int().min(1).max(100),
-  contextObservation: PlaytestTurnRecordSchema.shape.contextObservation,
-  preparedAt: z.string().datetime(),
-}).strict();
+const PreparedTurnSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    turn: z.number().int().positive(),
+    fixtureId: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/)
+      .optional(),
+    action: z.string().min(1),
+    scriptedTurnId: z.string().optional(),
+    driver: PlaytestTurnRecordSchema.shape.driver,
+    profile: PlaytestTurnRecordSchema.shape.profile.optional(),
+    expectedCheckPolicy: PlaytestTurnRecordSchema.shape.expectedCheckPolicy,
+    assignedNaturalRoll: z.number().int().min(1).max(100),
+    contextObservation: PlaytestTurnRecordSchema.shape.contextObservation,
+    preparedAt: z.string().datetime(),
+  })
+  .strict();
 type PreparedTurn = z.infer<typeof PreparedTurnSchema>;
 
-const TerminalContinuationStateSchema = z.object({
-  schemaVersion: z.literal(1),
-  fixtureId: z.string().regex(/^[a-z][a-z0-9-]*$/),
-  afterTurn: z.number().int().positive(),
-  priorCampaignStatus: z.enum(["dead", "ended"]),
-  status: z.enum(["preparing", "active", "terminal"]),
-  openingNarration: z.string().min(1),
-}).strict();
+const TerminalContinuationStateSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    fixtureId: z.string().regex(/^[a-z][a-z0-9-]*$/),
+    afterTurn: z.number().int().positive(),
+    priorCampaignStatus: z.enum(["dead", "ended"]),
+    status: z.enum(["preparing", "active", "terminal"]),
+    openingNarration: z.string().min(1),
+  })
+  .strict();
 type TerminalContinuationState = z.infer<typeof TerminalContinuationStateSchema>;
 
-const JudgeTaskSchema = z.object({
-  id: z.string().regex(/^(checkpoint-[0-9]{3}|final)$/),
-  kind: z.enum(["checkpoint", "final"]),
-  fromTurn: z.number().int().positive(),
-  throughTurn: z.number().int().positive(),
-  status: z.enum(["pending", "running", "completed", "failed"]),
-  attempts: z.number().int().nonnegative(),
-  error: z.string().optional(),
-}).strict();
+const JudgeTaskSchema = z
+  .object({
+    id: z.string().regex(/^(checkpoint-[0-9]{3}|final)$/),
+    kind: z.enum(["checkpoint", "final"]),
+    fromTurn: z.number().int().positive(),
+    throughTurn: z.number().int().positive(),
+    status: z.enum(["pending", "running", "completed", "failed"]),
+    attempts: z.number().int().nonnegative(),
+    error: z.string().optional(),
+  })
+  .strict();
 const JudgeTasksSchema = z.array(JudgeTaskSchema);
 type JudgeTask = z.infer<typeof JudgeTaskSchema>;
 
-const ExecutionProfileSnapshotsSchema = z.object({
-  schemaVersion: z.literal(1),
-  profiles: z.array(FrozenModelExecutionProfileSchema).min(1),
-}).strict().superRefine((value, context) => {
-  const keys = new Set<string>();
-  for (const [index, profile] of value.profiles.entries()) {
-    const key = `${profile.key.provider}\u0000${profile.key.model}\u0000${profile.key.route}`;
-    if (keys.has(key)) {
-      context.addIssue({
-        code: "custom",
-        path: ["profiles", index],
-        message: "duplicate provider/model/route execution profile snapshot",
-      });
+const ExecutionProfileSnapshotsSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    profiles: z.array(FrozenModelExecutionProfileSchema).min(1),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const keys = new Set<string>();
+    for (const [index, profile] of value.profiles.entries()) {
+      const key = `${profile.key.provider}\u0000${profile.key.model}\u0000${profile.key.route}`;
+      if (keys.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["profiles", index],
+          message: "duplicate provider/model/route execution profile snapshot",
+        });
+      }
+      keys.add(key);
     }
-    keys.add(key);
-  }
-});
+  });
 type ExecutionProfileSnapshots = z.infer<typeof ExecutionProfileSnapshotsSchema>;
 
 function safeRunId(now: Date): string {
@@ -185,14 +191,17 @@ function jobId(index: number): string {
 function configuredTurns(config: PlaytestRunConfig, playtestPackage: PlaytestPackage): number {
   const turns = config.turns ?? playtestPackage.turns.default;
   if (turns < playtestPackage.turns.minimum || turns > playtestPackage.turns.maximum) {
-    throw new Error(`${playtestPackage.id} permits ${playtestPackage.turns.minimum}–${playtestPackage.turns.maximum} turns, received ${turns}`);
+    throw new Error(
+      `${playtestPackage.id} permits ${playtestPackage.turns.minimum}–${playtestPackage.turns.maximum} turns, received ${turns}`,
+    );
   }
   return turns;
 }
 
 function defaultCost(target: PlaytestModelTarget): PlaytestModelCost {
   const cost = target.cost ?? inferTokenPrice(target.config.provider, target.config.model);
-  if (!cost) throw new Error(`No built-in token price for ${target.config.provider}/${target.config.model}`);
+  if (!cost)
+    throw new Error(`No built-in token price for ${target.config.provider}/${target.config.model}`);
   return cost;
 }
 
@@ -218,7 +227,9 @@ async function readPreparedTurn(target: string): Promise<PreparedTurn | undefine
   }
 }
 
-async function readTerminalContinuationState(target: string): Promise<TerminalContinuationState | undefined> {
+async function readTerminalContinuationState(
+  target: string,
+): Promise<TerminalContinuationState | undefined> {
   try {
     return TerminalContinuationStateSchema.parse(JSON.parse(await readFile(target, "utf8")));
   } catch (error) {
@@ -251,7 +262,10 @@ function transcriptText(opening: string, turns: readonly PlaytestTurnRecord[]): 
       "",
       `Player: ${turn.action}`,
       ...(turn.check
-        ? ["", `Check: ${turn.check.spec.name}; d100 ${turn.check.roll}; total ${turn.check.total} vs ${turn.check.spec.difficulty}; ${turn.check.outcome}`]
+        ? [
+            "",
+            `Check: ${turn.check.spec.name}; d100 ${turn.check.roll}; total ${turn.check.total} vs ${turn.check.spec.difficulty}; ${turn.check.outcome}`,
+          ]
         : []),
       "",
       turn.narration ?? "",
@@ -269,27 +283,42 @@ function actionBranchMatches(
 ): boolean {
   const condition = branch.when;
   if (condition.kind === "always") return true;
-  if (condition.kind === "at_location") return loaded.manifest.currentLocationId === condition.locationId;
+  if (condition.kind === "at_location")
+    return loaded.manifest.currentLocationId === condition.locationId;
   if (condition.kind === "thread_status") {
-    return loaded.threads.some((thread) => thread.id === condition.threadId && thread.status === condition.status);
+    return loaded.threads.some(
+      (thread) => thread.id === condition.threadId && thread.status === condition.status,
+    );
   }
   if (condition.kind === "prior_check_outcome") {
-    return turns.find((turn) => turn.turn === condition.turn)?.check !== undefined
-      && condition.outcomes.includes(turns.find((turn) => turn.turn === condition.turn)!.check!.outcome);
+    return (
+      turns.find((turn) => turn.turn === condition.turn)?.check !== undefined &&
+      condition.outcomes.includes(
+        turns.find((turn) => turn.turn === condition.turn)!.check!.outcome,
+      )
+    );
   }
-  const quantity = loaded.entities.get(condition.ownerId)?.inventory
-    .find((entry) => entry.entityId === condition.itemId)?.quantity ?? 0;
+  const quantity =
+    loaded.entities
+      .get(condition.ownerId)
+      ?.inventory.find((entry) => entry.entityId === condition.itemId)?.quantity ?? 0;
   if (condition.kind === "inventory_contains") return quantity >= condition.minimumQuantity;
   return quantity === 0;
 }
 
 function isCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (error instanceof Error && error.message === "Playtest operation cancelled");
+  return (
+    signal.aborted || (error instanceof Error && error.message === "Playtest operation cancelled")
+  );
 }
 
 function nodeApplicationError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
-  return typeof code === "string" || (error instanceof Error && /filesystem|commit|lock|manifest|campaign store/i.test(error.message));
+  return (
+    typeof code === "string" ||
+    (error instanceof Error &&
+      /filesystem|commit|lock|manifest|campaign store/i.test(error.message))
+  );
 }
 
 async function allRecordedCost(runDir: string): Promise<number> {
@@ -307,10 +336,7 @@ async function allRecordedCost(runDir: string): Promise<number> {
       const callsPath = path.join(jobsDir, job, "calls", `${lane}.jsonl`);
       const calls = await callsAt(callsPath);
       total += calls.reduce((sum, call) => sum + call.estimatedCostUsd, 0);
-      total += await unsettledPlaytestCallCost(
-        reservationLedgerPathForCalls(callsPath),
-        calls,
-      );
+      total += await unsettledPlaytestCallCost(reservationLedgerPathForCalls(callsPath), calls);
     }
   }
   return Math.round(total * 1_000_000) / 1_000_000;
@@ -332,10 +358,7 @@ export class PlaytestRunner {
     this.controller.abort();
   }
 
-  async run(
-    rawConfig: PlaytestRunConfig,
-    requestedRunId?: string,
-  ): Promise<PlaytestRunResult> {
+  async run(rawConfig: PlaytestRunConfig, requestedRunId?: string): Promise<PlaytestRunResult> {
     this.controller = new AbortController();
     const config = PlaytestRunConfigSchema.parse(rawConfig);
     const playtestPackage = getPlaytestPackage(config.package.id, config.package.version);
@@ -426,25 +449,33 @@ export class PlaytestRunner {
       throw new Error(`${playtestPackage.id} requires one explicit fixed player model and profile`);
     }
     if (config.player && !playtestPackage.playerProfiles.includes(config.player.profile)) {
-      throw new Error(`Player profile ${config.player.profile} is not available in ${playtestPackage.id}`);
+      throw new Error(
+        `Player profile ${config.player.profile} is not available in ${playtestPackage.id}`,
+      );
     }
     if (config.scenarioSeed && playtestPackage.startingState.kind !== "generated") {
-      throw new Error(`--scenario-seed requires a package with a generated starting state; ${playtestPackage.id} uses a canonical one`);
+      throw new Error(
+        `--scenario-seed requires a package with a generated starting state; ${playtestPackage.id} uses a canonical one`,
+      );
     }
     if (playtestPackage.purpose === "certification" && config.judge.policy !== "final") {
       throw new Error("certification-v1 requires one separate final judge call");
     }
     if (playtestPackage.purpose === "certification" && config.repetitions !== 1) {
-      throw new Error("certification-v1 requires exactly one authoritative repetition per candidate and language");
-    }
-    if (config.judge.policy !== playtestPackage.judgePolicy.kind) {
       throw new Error(
-        `${playtestPackage.id} requires ${playtestPackage.judgePolicy.kind} judging`,
+        "certification-v1 requires exactly one authoritative repetition per candidate and language",
       );
     }
-    if (playtestPackage.judgePolicy.kind !== "none"
-      && config.judge.rubricVersion !== playtestPackage.judgePolicy.rubricVersion) {
-      throw new Error(`Judge rubric must remain fixed at v${playtestPackage.judgePolicy.rubricVersion} for ${playtestPackage.id}`);
+    if (config.judge.policy !== playtestPackage.judgePolicy.kind) {
+      throw new Error(`${playtestPackage.id} requires ${playtestPackage.judgePolicy.kind} judging`);
+    }
+    if (
+      playtestPackage.judgePolicy.kind !== "none" &&
+      config.judge.rubricVersion !== playtestPackage.judgePolicy.rubricVersion
+    ) {
+      throw new Error(
+        `Judge rubric must remain fixed at v${playtestPackage.judgePolicy.rubricVersion} for ${playtestPackage.id}`,
+      );
     }
     if (config.player) {
       for (const candidate of config.candidates) {
@@ -505,10 +536,12 @@ export class PlaytestRunner {
       });
       await atomicWriteJson(target, saved);
     }
-    const profiles = new Map(saved.profiles.map((profile) => [
-      `${profile.key.provider}\u0000${profile.key.model}\u0000${profile.key.route}`,
-      profile,
-    ]));
+    const profiles = new Map(
+      saved.profiles.map((profile) => [
+        `${profile.key.provider}\u0000${profile.key.model}\u0000${profile.key.route}`,
+        profile,
+      ]),
+    );
     const targets = [
       ...config.candidates,
       ...(config.player ? [config.player.target] : []),
@@ -521,13 +554,18 @@ export class PlaytestRunner {
   private async requireProfile(target: PlaytestModelTarget): Promise<FrozenModelExecutionProfile> {
     const profile = await this.dependencies.profileFor(target);
     if (!profile.frozen || profile.fingerprint !== target.executionProfileFingerprint) {
-      throw new Error(`Playtest target ${target.config.provider}/${target.config.model} does not match its frozen execution profile fingerprint`);
+      throw new Error(
+        `Playtest target ${target.config.provider}/${target.config.model} does not match its frozen execution profile fingerprint`,
+      );
     }
-    if (targetKey(target) !== targetKey({
-      config: { ...target.config, provider: profile.key.provider, model: profile.key.model },
-      route: profile.key.route,
-      executionProfileFingerprint: profile.fingerprint,
-    })) {
+    if (
+      targetKey(target) !==
+      targetKey({
+        config: { ...target.config, provider: profile.key.provider, model: profile.key.model },
+        route: profile.key.route,
+        executionProfileFingerprint: profile.fingerprint,
+      })
+    ) {
       throw new Error("Frozen execution profile targets a different provider/model/route");
     }
     return profile;
@@ -549,31 +587,39 @@ export class PlaytestRunner {
     });
     if (savedProfiles === undefined) {
       await atomicWriteJson(profileSnapshotPath, profileSnapshot);
-    } else if (JSON.stringify(ExecutionProfileSnapshotsSchema.parse(JSON.parse(savedProfiles)))
-      !== JSON.stringify(profileSnapshot)) {
+    } else if (
+      JSON.stringify(ExecutionProfileSnapshotsSchema.parse(JSON.parse(savedProfiles))) !==
+      JSON.stringify(profileSnapshot)
+    ) {
       throw new Error("Resume execution profile snapshots do not match the saved playtest run");
     }
     const manifestPath = path.join(runDir, "manifest.json");
     const existing = await readOptionalPlaytestManifest(manifestPath);
     const now = this.now().toISOString();
-    const manifest: PlaytestManifest = existing ?? PlaytestManifestSchema.parse({
-      schemaVersion: 2,
-      kind: "playtest",
-      engineVersion: PLAYTEST_ENGINE_VERSION,
-      runId,
-      startedAt: now,
-      updatedAt: now,
-      status: "running",
-      codeVersion: playtestCodeVersion(this.projectRoot),
-      config,
-      packageSnapshot: playtestPackage,
-      packageHash: hashPlaytestValue(playtestPackage),
-      totalEstimatedCostUsd: 0,
-      jobs: this.jobsFor(config, playtestPackage),
-    });
-    if (JSON.stringify(manifest.config) !== JSON.stringify(config)
-      || manifest.packageHash !== hashPlaytestValue(playtestPackage)) {
-      throw new Error("Resume configuration or package snapshot does not match the saved playtest run");
+    const manifest: PlaytestManifest =
+      existing ??
+      PlaytestManifestSchema.parse({
+        schemaVersion: 2,
+        kind: "playtest",
+        engineVersion: PLAYTEST_ENGINE_VERSION,
+        runId,
+        startedAt: now,
+        updatedAt: now,
+        status: "running",
+        codeVersion: playtestCodeVersion(this.projectRoot),
+        config,
+        packageSnapshot: playtestPackage,
+        packageHash: hashPlaytestValue(playtestPackage),
+        totalEstimatedCostUsd: 0,
+        jobs: this.jobsFor(config, playtestPackage),
+      });
+    if (
+      JSON.stringify(manifest.config) !== JSON.stringify(config) ||
+      manifest.packageHash !== hashPlaytestValue(playtestPackage)
+    ) {
+      throw new Error(
+        "Resume configuration or package snapshot does not match the saved playtest run",
+      );
     }
     for (const job of manifest.jobs) {
       if (job.status === "running" || job.status === "cancelled") {
@@ -592,7 +638,10 @@ export class PlaytestRunner {
       Math.min(config.maxCostUsd, playtestPackage.limits.maxCostUsd),
       historicalCost,
     );
-    const scheduler = new PlaytestProviderScheduler(config.globalWorkerLimit, config.providerConcurrency);
+    const scheduler = new PlaytestProviderScheduler(
+      config.globalWorkerLimit,
+      config.providerConcurrency,
+    );
     // Resume downtime does not consume the active execution-time ceiling.
     const startedAt = Date.now();
     const durationLimit = Math.min(
@@ -625,10 +674,11 @@ export class PlaytestRunner {
         await this.persistManifest(runDir, manifest);
       }
     };
-    const workerResults = await Promise.allSettled(Array.from(
-      { length: Math.min(config.globalWorkerLimit, Math.max(queue.length, 1)) },
-      () => worker(),
-    ));
+    const workerResults = await Promise.allSettled(
+      Array.from({ length: Math.min(config.globalWorkerLimit, Math.max(queue.length, 1)) }, () =>
+        worker(),
+      ),
+    );
     const workerRejection = workerResults.find((result) => result.status === "rejected");
     if (workerRejection?.status === "rejected") throw workerRejection.reason;
 
@@ -641,7 +691,16 @@ export class PlaytestRunner {
           judgmentCursor += 1;
           if (!job || this.controller.signal.aborted) return;
           try {
-            await this.runJudgments(manifest, job, runDir, scheduler, cost, false, profiles, deadlineAt);
+            await this.runJudgments(
+              manifest,
+              job,
+              runDir,
+              scheduler,
+              cost,
+              false,
+              profiles,
+              deadlineAt,
+            );
           } catch (error) {
             await this.markUnexpectedJudgmentFailure(manifest, job, runDir, error);
           }
@@ -651,10 +710,12 @@ export class PlaytestRunner {
           await this.persistManifest(runDir, manifest);
         }
       };
-      const judgeResults = await Promise.allSettled(Array.from(
-        { length: Math.min(config.globalWorkerLimit, Math.max(judgmentJobs.length, 1)) },
-        () => judgeWorker(),
-      ));
+      const judgeResults = await Promise.allSettled(
+        Array.from(
+          { length: Math.min(config.globalWorkerLimit, Math.max(judgmentJobs.length, 1)) },
+          () => judgeWorker(),
+        ),
+      );
       const judgeRejection = judgeResults.find((result) => result.status === "rejected");
       if (judgeRejection?.status === "rejected") throw judgeRejection.reason;
     }
@@ -682,7 +743,8 @@ export class PlaytestRunner {
             completedTurns: 0,
             ...(config.player ? { player: config.player } : {}),
             judge: config.judge,
-            qualityStatus: playtestPackage.purpose === "certification" ? "awaiting_judgment" : "unrated",
+            qualityStatus:
+              playtestPackage.purpose === "certification" ? "awaiting_judgment" : "unrated",
           });
         }
       }
@@ -704,9 +766,8 @@ export class PlaytestRunner {
     job.stopReason = "error";
     job.failureOwner = attribution.owner;
     job.error = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
-    job.qualityStatus = manifest.packageSnapshot.purpose === "certification"
-      ? "awaiting_judgment"
-      : "unrated";
+    job.qualityStatus =
+      manifest.packageSnapshot.purpose === "certification" ? "awaiting_judgment" : "unrated";
     const coverage = assessCoverage(manifest.packageSnapshot, []);
     const technical = buildCandidateTechnicalSnapshot({
       playtestPackage: manifest.packageSnapshot,
@@ -748,14 +809,13 @@ export class PlaytestRunner {
       if ((taskError as NodeJS.ErrnoException).code !== "ENOENT") throw taskError;
     }
     job.status = "awaiting_judgment";
-    job.qualityStatus = manifest.packageSnapshot.purpose === "certification"
-      ? "awaiting_judgment"
-      : "unrated";
+    job.qualityStatus =
+      manifest.packageSnapshot.purpose === "certification" ? "awaiting_judgment" : "unrated";
     job.failureOwner = "judge";
     job.error = message;
-    CandidateTechnicalSnapshotSchema.parse(JSON.parse(
-      await readFile(path.join(jobDir, "technical.json"), "utf8"),
-    ));
+    CandidateTechnicalSnapshotSchema.parse(
+      JSON.parse(await readFile(path.join(jobDir, "technical.json"), "utf8")),
+    );
   }
 
   private async runJob(
@@ -825,36 +885,53 @@ export class PlaytestRunner {
         }
         const setup = continuation.startingState.setups[job.language];
         const worldRules = continuation.startingState.worldRules[job.language];
-        if (!setup || !worldRules) throw new Error(`Terminal continuation has no ${job.language} fixture`);
+        if (!setup || !worldRules)
+          throw new Error(`Terminal continuation has no ${job.language} fixture`);
         opening = continuationState.openingNarration;
         if (!(await engine.hasCurrentGame())) {
           await engine.createGame({ setup, worldRules, language: job.language });
         }
         const warmupTurnsPath = path.join(jobDir, "fixtures", fixtureId, "warmup-turns.jsonl");
-        const warmupRecords = PlaytestTurnRecordSchema.array().parse(await readPlaytestJsonLines(warmupTurnsPath));
-        for (let warmupTurn = warmupRecords.length + 1; warmupTurn <= continuation.afterTurn; warmupTurn += 1) {
+        const warmupRecords = PlaytestTurnRecordSchema.array().parse(
+          await readPlaytestJsonLines(warmupTurnsPath),
+        );
+        for (
+          let warmupTurn = warmupRecords.length + 1;
+          warmupTurn <= continuation.afterTurn;
+          warmupTurn += 1
+        ) {
           const loadedWarmup = await store.load();
           if (loadedWarmup.manifest.status !== "active") {
             continuationState.status = "terminal";
-            await atomicWriteJson(continuationStatePath, TerminalContinuationStateSchema.parse(continuationState));
+            await atomicWriteJson(
+              continuationStatePath,
+              TerminalContinuationStateSchema.parse(continuationState),
+            );
             break;
           }
           const action = continuation.warmupActions[warmupTurn - 1]?.[job.language];
-          if (!action) throw new Error(`Terminal continuation warmup ${warmupTurn} has no ${job.language} action`);
+          if (!action)
+            throw new Error(
+              `Terminal continuation warmup ${warmupTurn} has no ${job.language} action`,
+            );
           assignedRoll = playtestPackage.scriptedTurns?.[warmupTurn - 1]?.naturalRoll ?? 50;
           const observation = await store.buildContextObservation();
           if (loadedWarmup.manifest.turn >= warmupTurn) {
-            const recovered = await this.reconstructCommittedTurn(store, PreparedTurnSchema.parse({
-              schemaVersion: 1,
-              turn: warmupTurn,
-              fixtureId,
-              action,
-              driver: "scripted",
-              expectedCheckPolicy: "context_dependent",
-              assignedNaturalRoll: assignedRoll,
-              contextObservation: observation,
-              preparedAt: this.now().toISOString(),
-            }), 0);
+            const recovered = await this.reconstructCommittedTurn(
+              store,
+              PreparedTurnSchema.parse({
+                schemaVersion: 1,
+                turn: warmupTurn,
+                fixtureId,
+                action,
+                driver: "scripted",
+                expectedCheckPolicy: "context_dependent",
+                assignedNaturalRoll: assignedRoll,
+                contextObservation: observation,
+                preparedAt: this.now().toISOString(),
+              }),
+              0,
+            );
             warmupRecords.push(recovered);
             await appendPlaytestJsonLine(warmupTurnsPath, recovered);
             continue;
@@ -885,21 +962,28 @@ export class PlaytestRunner {
           await appendPlaytestJsonLine(warmupTurnsPath, record);
           if (result.state.status !== "active") {
             continuationState.status = "terminal";
-            await atomicWriteJson(continuationStatePath, TerminalContinuationStateSchema.parse(continuationState));
+            await atomicWriteJson(
+              continuationStatePath,
+              TerminalContinuationStateSchema.parse(continuationState),
+            );
             break;
           }
         }
         if (continuationState.status !== "terminal") {
           continuationState.status = "active";
-          await atomicWriteJson(continuationStatePath, TerminalContinuationStateSchema.parse(continuationState));
+          await atomicWriteJson(
+            continuationStatePath,
+            TerminalContinuationStateSchema.parse(continuationState),
+          );
         }
       } else if (!(await engine.hasCurrentGame())) {
         const seed = manifest.config.scenarioSeed
           ? await loadScenarioSeed(this.projectRoot, manifest.config.scenarioSeed, job.language)
           : undefined;
-        const worldRules = playtestPackage.startingState.kind === "canonical"
-          ? playtestPackage.startingState.worldRules[job.language]
-          : (seed?.worldRules ?? await this.worldRules(job.language));
+        const worldRules =
+          playtestPackage.startingState.kind === "canonical"
+            ? playtestPackage.startingState.worldRules[job.language]
+            : (seed?.worldRules ?? (await this.worldRules(job.language)));
         if (!worldRules) throw new Error(`Playtest package has no ${job.language} world rules`);
         if (playtestPackage.startingState.kind === "canonical") {
           const setup = playtestPackage.startingState.setups[job.language];
@@ -908,16 +992,22 @@ export class PlaytestRunner {
           await engine.createGame({ setup, worldRules, language: job.language });
         } else {
           const premise = seed?.premise ?? playtestPackage.startingState.premise[job.language];
-          const baseCharacter = seed?.character ?? playtestPackage.startingState.character[job.language];
-          if (!premise || !baseCharacter) throw new Error(`Generated package has no ${job.language} setup text`);
+          const baseCharacter =
+            seed?.character ?? playtestPackage.startingState.character[job.language];
+          if (!premise || !baseCharacter)
+            throw new Error(`Generated package has no ${job.language} setup text`);
           const selectedProfile = job.player?.profile
             ? PLAYER_PROFILES.find((item) => item.id === job.player?.profile)
             : undefined;
-          candidate.setPreCallStateSnapshot(JSON.stringify({ premise, character: baseCharacter, language: job.language }));
+          candidate.setPreCallStateSnapshot(
+            JSON.stringify({ premise, character: baseCharacter, language: job.language }),
+          );
           const generated = await engine.generateSetupWithMetadata({
             worldRules,
             premise,
-            character: selectedProfile ? `${baseCharacter}\nPlayer behavior: ${selectedProfile.instruction}` : baseCharacter,
+            character: selectedProfile
+              ? `${baseCharacter}\nPlayer behavior: ${selectedProfile.instruction}`
+              : baseCharacter,
             language: job.language,
           });
           opening = generated.setup.openingNarration;
@@ -930,7 +1020,9 @@ export class PlaytestRunner {
           });
         }
       } else {
-        opening = (await engine.campaignLogSnapshot()).turns.find((turn) => turn.turn === 0)?.narration ?? "Opening unavailable";
+        opening =
+          (await engine.campaignLogSnapshot()).turns.find((turn) => turn.turn === 0)?.narration ??
+          "Opening unavailable";
       }
       const persistedOpening = await readOptionalText(openingPath);
       if (persistedOpening) opening = persistedOpening;
@@ -939,7 +1031,9 @@ export class PlaytestRunner {
         await atomicWriteText(stateFile(jobDir, 0), await store.buildCanonicalStateContext());
       }
 
-      const turnRecords = PlaytestTurnRecordSchema.array().parse(await readPlaytestJsonLines(turnsPath));
+      const turnRecords = PlaytestTurnRecordSchema.array().parse(
+        await readPlaytestJsonLines(turnsPath),
+      );
       const priorFailure = turnRecords.findLast((turn) => turn.status === "failed");
       if (priorFailure) {
         terminalOwner = priorFailure.failureOwner ?? "inconclusive";
@@ -950,8 +1044,9 @@ export class PlaytestRunner {
         job.error = priorFailure.error ?? "A previously recorded turn failure ended this job";
       }
       const recoveredPrepared = await readPreparedTurn(progressPath);
-      const preparedConsumesSeededRoll = playtestPackage.rollPolicy.kind !== "scripted"
-        && recoveredPrepared?.turn === turnRecords.length + 1;
+      const preparedConsumesSeededRoll =
+        playtestPackage.rollPolicy.kind !== "scripted" &&
+        recoveredPrepared?.turn === turnRecords.length + 1;
       const randomRoll = this.rollForJob(
         manifest,
         job,
@@ -962,7 +1057,9 @@ export class PlaytestRunner {
         if (this.controller.signal.aborted) throw new Error("Playtest operation cancelled");
         if (Date.now() >= deadlineAt) throw new PlaytestDurationLimitError();
         if (!cost.canCall()) throw new PlaytestCostLimitError();
-        const failedCalls = (await callsAt(candidateCallsPath)).filter((call) => !call.success).length;
+        const failedCalls = (await callsAt(candidateCallsPath)).filter(
+          (call) => !call.success,
+        ).length;
         if (failedCalls > playtestPackage.limits.maxFailures) {
           throw new Error("Playtest package candidate failure limit reached");
         }
@@ -1009,7 +1106,9 @@ export class PlaytestRunner {
           continue;
         }
         if (loadedBefore.manifest.turn > prepared.turn) {
-          throw new Error(`Campaign advanced to turn ${loadedBefore.manifest.turn} beyond prepared turn ${prepared.turn}`);
+          throw new Error(
+            `Campaign advanced to turn ${loadedBefore.manifest.turn} beyond prepared turn ${prepared.turn}`,
+          );
         }
         candidate.setPreCallStateSnapshot(await store.buildCanonicalStateContext());
         this.progress(manifest, job, "playing", totalTurns, `Submitting turn ${turn}`);
@@ -1018,7 +1117,11 @@ export class PlaytestRunner {
         const pending = await engine.getPendingTurn();
         if (pending?.kind === "commit") {
           await engine.recoverPendingCommit();
-          const recovered = await this.reconstructCommittedTurn(store, prepared, Date.now() - visibleStarted);
+          const recovered = await this.reconstructCommittedTurn(
+            store,
+            prepared,
+            Date.now() - visibleStarted,
+          );
           turnRecords.push(recovered);
           await appendPlaytestJsonLine(turnsPath, recovered);
           await this.afterTurn(job, jobDir, opening, turnRecords, store, manifest, totalTurns);
@@ -1028,7 +1131,12 @@ export class PlaytestRunner {
         else {
           result = await this.turnScheduler.run(job.id, () => engine.play(prepared.action));
         }
-        const record = await this.completedTurnRecord(prepared, result, Date.now() - visibleStarted, store);
+        const record = await this.completedTurnRecord(
+          prepared,
+          result,
+          Date.now() - visibleStarted,
+          store,
+        );
         turnRecords.push(record);
         await appendPlaytestJsonLine(turnsPath, record);
         await this.afterTurn(job, jobDir, opening, turnRecords, store, manifest, totalTurns);
@@ -1038,7 +1146,8 @@ export class PlaytestRunner {
           if (!continuationState && continuation?.afterTurn === turn && turn < totalTurns) {
             const setup = continuation.startingState.setups[job.language];
             const worldRules = continuation.startingState.worldRules[job.language];
-            if (!setup || !worldRules) throw new Error(`Terminal continuation has no ${job.language} fixture`);
+            if (!setup || !worldRules)
+              throw new Error(`Terminal continuation has no ${job.language} fixture`);
             fixtureId = `coverage-after-${String(turn).padStart(3, "0")}`;
             continuationState = TerminalContinuationStateSchema.parse({
               schemaVersion: 1,
@@ -1057,7 +1166,10 @@ export class PlaytestRunner {
             const warmupRecords: PlaytestTurnRecord[] = [];
             for (let warmupTurn = 1; warmupTurn <= continuation.afterTurn; warmupTurn += 1) {
               const action = continuation.warmupActions[warmupTurn - 1]?.[job.language];
-              if (!action) throw new Error(`Terminal continuation warmup ${warmupTurn} has no ${job.language} action`);
+              if (!action)
+                throw new Error(
+                  `Terminal continuation warmup ${warmupTurn} has no ${job.language} action`,
+                );
               assignedRoll = playtestPackage.scriptedTurns?.[warmupTurn - 1]?.naturalRoll ?? 50;
               const observation = await store.buildContextObservation();
               candidate.setPreCallStateSnapshot(await store.buildCanonicalStateContext());
@@ -1086,10 +1198,13 @@ export class PlaytestRunner {
                 break;
               }
             }
-            await atomicWriteJson(continuationStatePath, TerminalContinuationStateSchema.parse({
-              ...continuationState,
-              status: continuationState.status === "terminal" ? "terminal" : "active",
-            }));
+            await atomicWriteJson(
+              continuationStatePath,
+              TerminalContinuationStateSchema.parse({
+                ...continuationState,
+                status: continuationState.status === "terminal" ? "terminal" : "active",
+              }),
+            );
             if (continuationState.status !== "terminal") {
               continuationState.status = "active";
               delete job.stopReason;
@@ -1117,17 +1232,21 @@ export class PlaytestRunner {
         terminalOwner = "inconclusive";
         evidenceComplete = false;
       } else {
-        const newCandidateCalls = (await callsAt(candidateCallsPath)).slice(activeCallFloor.candidate);
+        const newCandidateCalls = (await callsAt(candidateCallsPath)).slice(
+          activeCallFloor.candidate,
+        );
         const newPlayerCalls = (await callsAt(playerCallsPath)).slice(activeCallFloor.player);
         const lastCall = [...newCandidateCalls, ...newPlayerCalls]
-          .sort((left, right) => left.timestamp.localeCompare(right.timestamp)).at(-1);
-        terminalOwner = (!lastCall?.success ? lastCall?.failureOwner : undefined)
-          ?? (error instanceof TransactionValidationError
+          .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+          .at(-1);
+        terminalOwner =
+          (!lastCall?.success ? lastCall?.failureOwner : undefined) ??
+          (error instanceof TransactionValidationError
             ? "candidate_model"
             : attributePlaytestFailure(error, {
-              lane: "candidate",
-              stage: nodeApplicationError(error) ? "application" : "domain_validation",
-            }).owner);
+                lane: "candidate",
+                stage: nodeApplicationError(error) ? "application" : "domain_validation",
+              }).owner);
         evidenceComplete = terminalOwner === "candidate_model";
         job.status = terminalOwner === "candidate_model" ? "failed" : "inconclusive";
         job.stopReason = "error";
@@ -1160,13 +1279,12 @@ export class PlaytestRunner {
     }
 
     const turns = PlaytestTurnRecordSchema.array().parse(await readPlaytestJsonLines(turnsPath));
-    const calls = [
-      ...await callsAt(candidateCallsPath),
-      ...await callsAt(playerCallsPath),
-    ];
+    const calls = [...(await callsAt(candidateCallsPath)), ...(await callsAt(playerCallsPath))];
     const legitimateTerminal = job.stopReason === "legitimate_terminal";
     const coverage = assessCoverage(playtestPackage, turns, {
-      ...(legitimateTerminal && turns.length > 0 ? { legitimateTerminalTurn: turns.at(-1)!.turn } : {}),
+      ...(legitimateTerminal && turns.length > 0
+        ? { legitimateTerminalTurn: turns.at(-1)!.turn }
+        : {}),
     });
     await atomicWriteJson(path.join(jobDir, "coverage.json"), coverage);
     await atomicWriteJson(path.join(jobDir, "mechanical-audit.json"), buildMechanicalAudit(turns));
@@ -1187,11 +1305,18 @@ export class PlaytestRunner {
       job.qualityStatus = "awaiting_judgment";
       await this.recordCertificationIfCurrent(manifest, job, technical);
     }
-    this.progress(manifest, job, "assessing", totalTurns, `Technical status frozen: ${technical.status}`);
+    this.progress(
+      manifest,
+      job,
+      "assessing",
+      totalTurns,
+      `Technical status frozen: ${technical.status}`,
+    );
 
-    const gameplayFinished = job.stopReason === "turn_limit"
-      || job.stopReason === "legitimate_terminal"
-      || job.stopReason === "campaign_ended";
+    const gameplayFinished =
+      job.stopReason === "turn_limit" ||
+      job.stopReason === "legitimate_terminal" ||
+      job.stopReason === "campaign_ended";
     if (gameplayFinished && manifest.config.judge.policy !== "none") {
       await this.ensureJudgeTasks(jobDir, manifest.config, job.completedTurns);
       job.status = "awaiting_judgment";
@@ -1213,20 +1338,21 @@ export class PlaytestRunner {
       return rollPolicy({ kind: "secure_random" }, usedTurns);
     }
     if (playtestPackage.rollPolicy.kind === "seeded_random") {
-      const baseSeed = manifest.config.seed
-        ?? `${playtestPackage.rollPolicy.seedNamespace}:${manifest.runId}`;
-      const seed = [
-        baseSeed,
-        job.id,
-        job.language,
-        job.repetition,
-      ].join(":");
+      const baseSeed =
+        manifest.config.seed ?? `${playtestPackage.rollPolicy.seedNamespace}:${manifest.runId}`;
+      const seed = [baseSeed, job.id, job.language, job.repetition].join(":");
       return rollPolicy({ kind: "seeded_random", seed }, usedTurns);
     }
-    return () => { throw new Error("Scripted turns use their declared per-turn roll"); };
+    return () => {
+      throw new Error("Scripted turns use their declared per-turn roll");
+    };
   }
 
-  private assignedRoll(playtestPackage: PlaytestPackage, turn: number, randomRoll: () => number): number {
+  private assignedRoll(
+    playtestPackage: PlaytestPackage,
+    turn: number,
+    randomRoll: () => number,
+  ): number {
     if (playtestPackage.rollPolicy.kind !== "scripted") return randomRoll();
     const scripted = playtestPackage.scriptedTurns?.find((candidate) => candidate.turn === turn);
     if (!scripted) throw new Error(`Scripted package is missing turn ${turn}`);
@@ -1256,29 +1382,41 @@ export class PlaytestRunner {
     if (playtestPackage.turnDriver.kind === "scripted") {
       const scripted = playtestPackage.scriptedTurns?.find((candidate) => candidate.turn === turn);
       if (!scripted) throw new Error(`Scripted package is missing turn ${turn}`);
-      const branch = scripted.branches.find((candidate) => actionBranchMatches(candidate, loaded, turns));
+      const branch = scripted.branches.find((candidate) =>
+        actionBranchMatches(candidate, loaded, turns),
+      );
       action = branch?.action[job.language] ?? "";
-      if (!action) throw new Error(`Scripted turn ${turn} has no applicable ${job.language} action`);
+      if (!action)
+        throw new Error(`Scripted turn ${turn} has no applicable ${job.language} action`);
       driver = "scripted";
       scriptedTurnId = scripted.id;
       expectedCheckPolicy = scripted.checkPolicy;
     } else {
-      const injection = playtestPackage.turnDriver.kind === "hybrid"
-        && playtestPackage.turnDriver.injectMissingCoverageAtCheckpoints
-        ? playtestPackage.checkpointInjections?.find((candidate) => {
-          if (candidate.checkpointTurn !== turn) return false;
-          const coverageById = new Map(
-            assessCoverage(playtestPackage, turns).entries.map((entry) => [entry.requirementId, entry.status]),
-          );
-          return candidate.coverageRequirementIds.some((id) => coverageById.get(id) !== "passed");
-        })
-        : undefined;
+      const injection =
+        playtestPackage.turnDriver.kind === "hybrid" &&
+        playtestPackage.turnDriver.injectMissingCoverageAtCheckpoints
+          ? playtestPackage.checkpointInjections?.find((candidate) => {
+              if (candidate.checkpointTurn !== turn) return false;
+              const coverageById = new Map(
+                assessCoverage(playtestPackage, turns).entries.map((entry) => [
+                  entry.requirementId,
+                  entry.status,
+                ]),
+              );
+              return candidate.coverageRequirementIds.some(
+                (id) => coverageById.get(id) !== "passed",
+              );
+            })
+          : undefined;
       if (injection) {
         action = injection.action[job.language] ?? "";
         driver = "hybrid_injected";
       } else {
-        if (!job.player) throw new Error("Model-driven playtest is missing its fixed player configuration");
-        const profileDefinition = PLAYER_PROFILES.find((candidate) => candidate.id === job.player?.profile);
+        if (!job.player)
+          throw new Error("Model-driven playtest is missing its fixed player configuration");
+        const profileDefinition = PLAYER_PROFILES.find(
+          (candidate) => candidate.id === job.player?.profile,
+        );
         if (!profileDefinition) throw new Error(`Unknown player profile ${job.player.profile}`);
         const playerProfile = this.profileFromSnapshots(job.player.target, profiles);
         const priorCalls = await callsAt(callsPath);
@@ -1364,7 +1502,9 @@ export class PlaytestRunner {
   ): Promise<PlaytestTurnRecord> {
     const loaded = await store.load();
     if (loaded.manifest.turn !== prepared.turn) {
-      throw new Error(`Recovered campaign is at turn ${loaded.manifest.turn}, expected ${prepared.turn}`);
+      throw new Error(
+        `Recovered campaign is at turn ${loaded.manifest.turn}, expected ${prepared.turn}`,
+      );
     }
     const log = await readFile(
       path.join(store.currentDir, "turns", `${String(prepared.turn).padStart(6, "0")}.md`),
@@ -1407,7 +1547,11 @@ export class PlaytestRunner {
     this.progress(manifest, job, "playing", totalTurns, `Committed turn ${latest.turn}`);
   }
 
-  private async ensureJudgeTasks(jobDir: string, config: PlaytestRunConfig, completedTurns: number): Promise<void> {
+  private async ensureJudgeTasks(
+    jobDir: string,
+    config: PlaytestRunConfig,
+    completedTurns: number,
+  ): Promise<void> {
     const target = path.join(jobDir, "judge-tasks.json");
     let tasks: JudgeTask[] = [];
     try {
@@ -1430,7 +1574,14 @@ export class PlaytestRunner {
         }
       }
       if (config.judge.policy !== "none" && completedTurns > 0) {
-        tasks.push({ id: "final", kind: "final", fromTurn: 1, throughTurn: completedTurns, status: "pending", attempts: 0 });
+        tasks.push({
+          id: "final",
+          kind: "final",
+          fromTurn: 1,
+          throughTurn: completedTurns,
+          status: "pending",
+          attempts: 0,
+        });
       }
       await atomicWriteJson(target, JudgeTasksSchema.parse(tasks));
     }
@@ -1449,7 +1600,9 @@ export class PlaytestRunner {
     if (job.judge?.policy === "none" || !job.judge?.target) return;
     const jobDir = path.join(runDir, "jobs", job.id);
     const tasksPath = path.join(jobDir, "judge-tasks.json");
-    const allTurns = PlaytestTurnRecordSchema.array().parse(await readPlaytestJsonLines(path.join(jobDir, "turns.jsonl")));
+    const allTurns = PlaytestTurnRecordSchema.array().parse(
+      await readPlaytestJsonLines(path.join(jobDir, "turns.jsonl")),
+    );
     const completedTurns = allTurns.filter((turn) => turn.status === "completed").length;
     if (completedTurns > 0) {
       await this.ensureJudgeTasks(jobDir, manifest.config, completedTurns);
@@ -1473,29 +1626,32 @@ export class PlaytestRunner {
     // Completed judgments may still need their assessment/catalog commit
     // reconciled after an interrupted or temporarily blocked atomic write.
     // Reuse the immutable judgment files without making another provider call.
-    let technical = CandidateTechnicalSnapshotSchema.parse(JSON.parse(
-      await readFile(path.join(jobDir, "technical.json"), "utf8"),
-    ));
+    let technical = CandidateTechnicalSnapshotSchema.parse(
+      JSON.parse(await readFile(path.join(jobDir, "technical.json"), "utf8")),
+    );
     const requiredTurns = configuredTurns(manifest.config, manifest.packageSnapshot);
-    if (completedTurns >= requiredTurns
-      && allTurns.every((turn) => turn.status === "completed")) {
+    if (completedTurns >= requiredTurns && allTurns.every((turn) => turn.status === "completed")) {
       const coverage = assessCoverage(manifest.packageSnapshot, allTurns);
       const calls = [
-        ...await callsAt(path.join(jobDir, "calls", "candidate.jsonl")),
-        ...await callsAt(path.join(jobDir, "calls", "player-driver.jsonl")),
+        ...(await callsAt(path.join(jobDir, "calls", "candidate.jsonl"))),
+        ...(await callsAt(path.join(jobDir, "calls", "player-driver.jsonl"))),
       ];
       const candidateProfile = this.profileFromSnapshots(job.candidate, profiles);
       technical = buildCandidateTechnicalSnapshot({
         playtestPackage: manifest.packageSnapshot,
         adapterStatus: "calibrated",
-        executionProfileCurrent: candidateProfile.fingerprint === job.candidate.executionProfileFingerprint,
+        executionProfileCurrent:
+          candidateProfile.fingerprint === job.candidate.executionProfileFingerprint,
         turns: allTurns,
         calls,
         coverage,
         evidenceComplete: true,
       });
       await atomicWriteJson(path.join(jobDir, "coverage.json"), coverage);
-      await atomicWriteJson(path.join(jobDir, "mechanical-audit.json"), buildMechanicalAudit(allTurns));
+      await atomicWriteJson(
+        path.join(jobDir, "mechanical-audit.json"),
+        buildMechanicalAudit(allTurns),
+      );
       await atomicWriteJson(path.join(jobDir, "technical.json"), technical);
       job.technicalStatus = technical.status;
       job.completedTurns = completedTurns;
@@ -1511,17 +1667,23 @@ export class PlaytestRunner {
       task.attempts += 1;
       delete task.error;
       await atomicWriteJson(tasksPath, JudgeTasksSchema.parse(tasks));
-      const intervalTurns = allTurns.filter((turn) => turn.turn >= task.fromTurn && turn.turn <= task.throughTurn);
-      const intervalRequirements = manifest.packageSnapshot.coverageRequirements.filter((requirement) => {
+      const intervalTurns = allTurns.filter(
+        (turn) => turn.turn >= task.fromTurn && turn.turn <= task.throughTurn,
+      );
+      const intervalRequirements = manifest.packageSnapshot.coverageRequirements.filter(
+        (requirement) => {
           if (requirement.mode === "judge") {
-            return requirement.turn === undefined
-              || (requirement.turn >= task.fromTurn && requirement.turn <= task.throughTurn);
+            return (
+              requirement.turn === undefined ||
+              (requirement.turn >= task.fromTurn && requirement.turn <= task.throughTurn)
+            );
           }
           const rule = requirement.rule;
           return "turn" in rule
             ? rule.turn >= task.fromTurn && rule.turn <= task.throughTurn
             : true;
-        });
+        },
+      );
       const judgePackage = {
         ...manifest.packageSnapshot,
         coverageRequirements: intervalRequirements,
@@ -1557,7 +1719,13 @@ export class PlaytestRunner {
         deadlineAt,
       });
       judge.setPreCallStateSnapshot(input.finalState);
-      this.progress(manifest, job, "judging", configuredTurns(manifest.config, manifest.packageSnapshot), `Independent ${task.kind} judgment ${task.id}`);
+      this.progress(
+        manifest,
+        job,
+        "judging",
+        configuredTurns(manifest.config, manifest.packageSnapshot),
+        `Independent ${task.kind} judgment ${task.id}`,
+      );
       let durationBlocked = false;
       try {
         const result = await generateStructured(judge, {
@@ -1573,7 +1741,12 @@ export class PlaytestRunner {
         await atomicWriteJson(path.join(jobDir, "judgments", `${task.id}.json`), result.data);
         await atomicWriteText(
           path.join(jobDir, "judgments", `${task.id}.md`),
-          renderPlaytestJudgment(manifest.packageSnapshot.id, result.data, result.provider, result.model),
+          renderPlaytestJudgment(
+            manifest.packageSnapshot.id,
+            result.data,
+            result.provider,
+            result.model,
+          ),
         );
       } catch (error) {
         if (error instanceof PlaytestDurationLimitError) {
@@ -1593,24 +1766,25 @@ export class PlaytestRunner {
     const finalTask = tasks.find((task) => task.kind === "final");
     let finalJudgment: PlaytestJudgment | undefined;
     if (finalTask?.status === "completed") {
-      finalJudgment = PlaytestJudgmentSchema.parse(JSON.parse(
-        await readFile(path.join(jobDir, "judgments", "final.json"), "utf8"),
-      ));
+      finalJudgment = PlaytestJudgmentSchema.parse(
+        JSON.parse(await readFile(path.join(jobDir, "judgments", "final.json"), "utf8")),
+      );
     }
     const assessment = assessPlaytest(
       manifest.packageSnapshot.purpose,
       technical,
       finalJudgment
         ? { status: "completed", judgment: finalJudgment }
-        : finalTask?.status === "failed" ? { status: "failed" } : { status: "not_run" },
+        : finalTask?.status === "failed"
+          ? { status: "failed" }
+          : { status: "not_run" },
       job.qualityStatus,
     );
     job.technicalStatus = technical.status;
     job.qualityStatus = assessment.qualityStatus;
     const allTasksCompleted = tasks.every((task) => task.status === "completed");
-    job.status = finalTask?.status === "completed" && allTasksCompleted
-      ? "completed"
-      : "awaiting_judgment";
+    job.status =
+      finalTask?.status === "completed" && allTasksCompleted ? "completed" : "awaiting_judgment";
     if (allTasksCompleted) {
       if (job.failureOwner === "judge") delete job.failureOwner;
       delete job.error;
@@ -1629,8 +1803,10 @@ export class PlaytestRunner {
     try {
       await this.recordCertification(manifest, job, technical);
     } catch (error) {
-      if (error instanceof Error
-        && error.message === "Certification requires the currently frozen calibrated execution profile") {
+      if (
+        error instanceof Error &&
+        error.message === "Certification requires the currently frozen calibrated execution profile"
+      ) {
         return;
       }
       const code = (error as NodeJS.ErrnoException).code;
@@ -1645,7 +1821,8 @@ export class PlaytestRunner {
     technical: CandidateTechnicalSnapshot,
   ): Promise<void> {
     if (manifest.packageSnapshot.id !== "certification-v1") return;
-    const catalog = this.dependencies.assessmentCatalog ?? new ModelAssessmentCatalog(this.projectRoot);
+    const catalog =
+      this.dependencies.assessmentCatalog ?? new ModelAssessmentCatalog(this.projectRoot);
     await catalog.recordCertification({
       provider: job.candidate.config.provider,
       model: job.candidate.config.model,
@@ -1660,7 +1837,9 @@ export class PlaytestRunner {
       candidateMetricsHash: hashPlaytestValue(technical),
       evidence: {
         source: "certification",
-        reference: path.join("playtests", "runs", manifest.runId, "jobs", job.id).replaceAll("\\", "/"),
+        reference: path
+          .join("playtests", "runs", manifest.runId, "jobs", job.id)
+          .replaceAll("\\", "/"),
         packageId: manifest.packageSnapshot.id,
         packageVersion: String(manifest.packageSnapshot.version),
         executionProfileFingerprint: job.candidate.executionProfileFingerprint,
@@ -1682,7 +1861,8 @@ export class PlaytestRunner {
   }
 
   private finishManifest(manifest: PlaytestManifest, cost: number): void {
-    const cancelled = this.controller.signal.aborted || manifest.jobs.some((job) => job.status === "cancelled");
+    const cancelled =
+      this.controller.signal.aborted || manifest.jobs.some((job) => job.status === "cancelled");
     manifest.status = cancelled
       ? "cancelled"
       : manifest.jobs.some((job) => job.stopReason === "cost_limit")
@@ -1698,7 +1878,8 @@ export class PlaytestRunner {
   private async persistManifest(runDir: string, manifest: PlaytestManifest): Promise<void> {
     const snapshot = PlaytestManifestSchema.parse(structuredClone(manifest));
     this.manifestWrites = this.manifestWrites.then(() =>
-      atomicWriteJson(path.join(runDir, "manifest.json"), snapshot));
+      atomicWriteJson(path.join(runDir, "manifest.json"), snapshot),
+    );
     await this.manifestWrites;
   }
 

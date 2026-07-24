@@ -3,11 +3,7 @@ import { z } from "zod";
 import { GenerationFailure } from "../src/llm/failures.js";
 import { StructuredClient } from "../src/llm/structured-generation.js";
 import { attachStructuredFailure } from "../src/llm/structured-error.js";
-import type {
-  LlmProvider,
-  StructuredRequest,
-  StructuredResult,
-} from "../src/types.js";
+import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 
 const AnswerSchema = z.object({ answer: z.string() });
 
@@ -75,12 +71,14 @@ describe("StructuredClient", () => {
     expect(attempts[1]?.prompt).toContain("Audit every sibling object in the same array");
     expect(attempts[1]?.prompt).toContain("do not repeat the previous response unchanged");
     expect(attempts[2]?.prompt).toBe(attempts[1]?.prompt);
-    expect(attempts.map((attempt) => ({
-      phase: attempt.generationPhase,
-      repairOf: attempt.repairOfPhase,
-      kind: attempt.attemptKind,
-      backoff: attempt.retryBackoffMs,
-    }))).toEqual([
+    expect(
+      attempts.map((attempt) => ({
+        phase: attempt.generationPhase,
+        repairOf: attempt.repairOfPhase,
+        kind: attempt.attemptKind,
+        backoff: attempt.retryBackoffMs,
+      })),
+    ).toEqual([
       { phase: "decision", repairOf: undefined, kind: "initial", backoff: 0 },
       { phase: "repair", repairOf: "decision", kind: "schema_repair", backoff: 0 },
       { phase: "repair", repairOf: "decision", kind: "transient_retry", backoff: 2 },

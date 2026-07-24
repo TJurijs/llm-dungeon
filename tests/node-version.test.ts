@@ -9,8 +9,9 @@ describe("Node.js startup version", () => {
   });
 
   it("returns a direct diagnostic for old or malformed versions", () => {
-    expect(unsupportedNodeMessage("18.20.5"))
-      .toBe("llm-dungeon requires Node.js 22 or newer. Current version: 18.20.5.");
+    expect(unsupportedNodeMessage("18.20.5")).toBe(
+      "llm-dungeon requires Node.js 22 or newer. Current version: 18.20.5.",
+    );
     expect(unsupportedNodeMessage("unknown")).toContain("Current version: unknown");
   });
 });

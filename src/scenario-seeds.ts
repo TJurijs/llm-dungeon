@@ -24,7 +24,10 @@ const SEED_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 const SEED_LANG_PATTERN = /^[a-z]{2}$/;
 
 function titleFromId(id: string): string {
-  return id.split("-").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  return id
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function scenarioSeedsRoot(root: string): string {
@@ -52,8 +55,11 @@ async function seedLanguageDirs(idDir: string): Promise<string[]> {
   }
   const languages: string[] = [];
   for (const entry of entries) {
-    if (entry.isDirectory() && SEED_LANG_PATTERN.test(entry.name)
-      && await pathExists(path.join(idDir, entry.name, "world.md"))) {
+    if (
+      entry.isDirectory() &&
+      SEED_LANG_PATTERN.test(entry.name) &&
+      (await pathExists(path.join(idDir, entry.name, "world.md")))
+    ) {
       languages.push(entry.name);
     }
   }
@@ -84,11 +90,16 @@ export async function listScenarioSeeds(root: string): Promise<ScenarioSeedSumma
  * Loads one seed in the requested language, falling back to the default language
  * and then to any available language. Throws a "was not found" error for an unknown id.
  */
-export async function loadScenarioSeed(root: string, id: string, language: string): Promise<ScenarioSeed> {
+export async function loadScenarioSeed(
+  root: string,
+  id: string,
+  language: string,
+): Promise<ScenarioSeed> {
   if (!SEED_ID_PATTERN.test(id)) throw new Error(`Invalid scenario seed id: ${id}`);
   const idDir = path.join(scenarioSeedsRoot(root), id);
   const available = await seedLanguageDirs(idDir);
-  const resolved = [language, DEFAULT_LANGUAGE].find((candidate) => available.includes(candidate)) ?? available[0];
+  const resolved =
+    [language, DEFAULT_LANGUAGE].find((candidate) => available.includes(candidate)) ?? available[0];
   if (resolved === undefined) throw new Error(`Scenario seed was not found: ${id}`);
   const dir = path.join(idDir, resolved);
   try {
@@ -106,7 +117,8 @@ export async function loadScenarioSeed(root: string, id: string, language: strin
       language: resolved,
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Scenario seed was not found: ${id}`);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error(`Scenario seed was not found: ${id}`);
     throw error;
   }
 }

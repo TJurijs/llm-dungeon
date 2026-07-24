@@ -2,10 +2,13 @@ import type { LanguageDefinition } from "./definition.js";
 
 export const RUSSIAN: LanguageDefinition = {
   nativeName: "Русский",
-  instruction: "Write new narration, dialogue, summaries, names, descriptions, and player-facing text in natural Russian. Preserve established proper nouns exactly. Keep machine IDs and operation type values unchanged.",
+  instruction:
+    "Write new narration, dialogue, summaries, names, descriptions, and player-facing text in natural Russian. Preserve established proper nouns exactly. Keep machine IDs and operation type values unchanged.",
   setupDefaults: {
-    premise: "Классическое начало в таверне, сразу предлагающее несколько необязательных возможностей.",
-    characterConcept: "Создай приземлённого искателя приключений с двумя полезными чертами и одной осложняющей чертой.",
+    premise:
+      "Классическое начало в таверне, сразу предлагающее несколько необязательных возможностей.",
+    characterConcept:
+      "Создай приземлённого искателя приключений с двумя полезными чертами и одной осложняющей чертой.",
   },
   mechanics: {
     noModifiers: "Нет модификаторов",

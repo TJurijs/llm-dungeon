@@ -55,10 +55,14 @@ export function legacyWorldProfilePath(root: string): string {
  * 3. the native shipped profile;
  * 4. an untouched legacy stock profile only if no native asset exists.
  */
-export async function resolveWorldProfile(root: string, language: LanguageCode): Promise<ResolvedWorldProfile> {
+export async function resolveWorldProfile(
+  root: string,
+  language: LanguageCode,
+): Promise<ResolvedWorldProfile> {
   const localizedPath = localizedWorldProfilePath(root, language);
   const localized = await readOptional(localizedPath);
-  if (localized !== undefined) return { markdown: localized, path: localizedPath, source: "localized_override" };
+  if (localized !== undefined)
+    return { markdown: localized, path: localizedPath, source: "localized_override" };
 
   const legacyPath = legacyWorldProfilePath(root);
   const legacy = await readOptional(legacyPath);
@@ -67,14 +71,19 @@ export async function resolveWorldProfile(root: string, language: LanguageCode):
 
   const defaultPath = defaultWorldProfilePath(root, language);
   const nativeDefault = await readOptional(defaultPath);
-  if (nativeDefault !== undefined) return { markdown: nativeDefault, path: defaultPath, source: "default" };
+  if (nativeDefault !== undefined)
+    return { markdown: nativeDefault, path: defaultPath, source: "default" };
 
   if (legacy !== undefined) return { markdown: legacy, path: legacyPath, source: "default" };
   throw new Error(`No world profile is available for language ${language}`);
 }
 
 /** Save creative guidance without mutating shipped defaults or legacy files. */
-export async function saveWorldProfile(root: string, language: LanguageCode, markdown: string): Promise<string> {
+export async function saveWorldProfile(
+  root: string,
+  language: LanguageCode,
+  markdown: string,
+): Promise<string> {
   const target = localizedWorldProfilePath(root, language);
   await mkdir(path.dirname(target), { recursive: true });
   await atomicWriteText(target, markdown);

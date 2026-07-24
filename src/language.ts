@@ -35,7 +35,9 @@ export function campaignSetupDefaults(language: LanguageCode): CampaignSetupDefa
 
 export async function loadAppConfig(root: string): Promise<AppConfig> {
   try {
-    return AppConfigSchema.parse(JSON.parse(await readFile(path.join(root, "config", "app.json"), "utf8")));
+    return AppConfigSchema.parse(
+      JSON.parse(await readFile(path.join(root, "config", "app.json"), "utf8")),
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { language: DEFAULT_LANGUAGE };
     throw error;

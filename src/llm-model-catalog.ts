@@ -44,102 +44,107 @@ export const SUPPORTED_LLM_PROVIDER_DEFINITIONS = [
 ] as const satisfies readonly SupportedLlmProviderDefinition[];
 
 const ModelIdSchema = z.string().trim().min(1).max(300);
-export const ModelSelectionSchema = z.object({
-  provider: LlmProviderIdSchema,
-  model: ModelIdSchema,
-}).strict();
+export const ModelSelectionSchema = z
+  .object({
+    provider: LlmProviderIdSchema,
+    model: ModelIdSchema,
+  })
+  .strict();
 export type ModelSelection = z.infer<typeof ModelSelectionSchema>;
 
-export const ModelCompatibilityStateSchema = z.enum([
-  "untested",
-  "compatible",
-  "failed",
-  "stale",
-]);
+export const ModelCompatibilityStateSchema = z.enum(["untested", "compatible", "failed", "stale"]);
 export type ModelCompatibilityState = z.infer<typeof ModelCompatibilityStateSchema>;
 
-const ModelTestMetadataSchema = z.object({
-  testedAt: z.string().datetime({ offset: true }),
-  protocolVersion: z.number().int().nonnegative(),
-  testFingerprint: z.string().trim().min(1).max(500),
-  testedLanguages: z.array(LanguageCodeSchema),
-  failedLanguages: z.array(LanguageCodeSchema).optional(),
-  failureSummary: z.string().trim().min(1).max(500).optional(),
-}).strict();
+const ModelTestMetadataSchema = z
+  .object({
+    testedAt: z.string().datetime({ offset: true }),
+    protocolVersion: z.number().int().nonnegative(),
+    testFingerprint: z.string().trim().min(1).max(500),
+    testedLanguages: z.array(LanguageCodeSchema),
+    failedLanguages: z.array(LanguageCodeSchema).optional(),
+    failureSummary: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
 export type ModelTestMetadata = z.infer<typeof ModelTestMetadataSchema>;
 
 const PersistedModelSchema = ModelSelectionSchema.extend({
   state: ModelCompatibilityStateSchema,
   enabled: z.boolean(),
   test: ModelTestMetadataSchema.optional(),
-}).strict().superRefine((entry, context) => {
-  const preEnabledRecommendation = entry.state === "untested"
-    && entry.provider === RECOMMENDED_MODEL_SELECTION.provider
-    && entry.model === RECOMMENDED_MODEL_SELECTION.model;
-  if (entry.enabled && entry.state !== "compatible" && !preEnabledRecommendation) {
-    context.addIssue({
-      code: "custom",
-      path: ["enabled"],
-      message: "only compatible models or the untested recommended model may be enabled",
-    });
-  }
-  if (entry.state !== "untested" && entry.test === undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["test"],
-      message: "tested and stale models require test metadata",
-    });
-  }
-  if (entry.state === "untested" && entry.test !== undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["test"],
-      message: "untested models cannot have test metadata",
-    });
-  }
-  if (entry.state === "failed" && entry.test?.failureSummary === undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["test", "failureSummary"],
-      message: "failed models require a safe failure summary",
-    });
-  }
-  if (entry.state === "compatible" && entry.test?.testedLanguages.length === 0) {
-    context.addIssue({
-      code: "custom",
-      path: ["test", "testedLanguages"],
-      message: "compatible models require at least one tested language",
-    });
-  }
-  const passed = new Set(entry.test?.testedLanguages ?? []);
-  if (entry.test?.failedLanguages?.some((language) => passed.has(language))) {
-    context.addIssue({
-      code: "custom",
-      path: ["test", "failedLanguages"],
-      message: "a language cannot be both passed and failed",
-    });
-  }
-});
-type PersistedModel = z.infer<typeof PersistedModelSchema>;
-
-const PersistedCatalogSchema = z.object({
-  version: z.literal(LLM_MODEL_CATALOG_VERSION),
-  defaultModel: ModelSelectionSchema.nullable(),
-  models: z.array(PersistedModelSchema),
-}).strict().superRefine((catalog, context) => {
-  const seen = new Set<string>();
-  for (const [index, model] of catalog.models.entries()) {
-    const key = selectionKey(model);
-    if (seen.has(key)) {
+})
+  .strict()
+  .superRefine((entry, context) => {
+    const preEnabledRecommendation =
+      entry.state === "untested" &&
+      entry.provider === RECOMMENDED_MODEL_SELECTION.provider &&
+      entry.model === RECOMMENDED_MODEL_SELECTION.model;
+    if (entry.enabled && entry.state !== "compatible" && !preEnabledRecommendation) {
       context.addIssue({
         code: "custom",
-        path: ["models", index],
-        message: `duplicate model selection ${key}`,
+        path: ["enabled"],
+        message: "only compatible models or the untested recommended model may be enabled",
       });
     }
-    seen.add(key);
-  }
-});
+    if (entry.state !== "untested" && entry.test === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["test"],
+        message: "tested and stale models require test metadata",
+      });
+    }
+    if (entry.state === "untested" && entry.test !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["test"],
+        message: "untested models cannot have test metadata",
+      });
+    }
+    if (entry.state === "failed" && entry.test?.failureSummary === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["test", "failureSummary"],
+        message: "failed models require a safe failure summary",
+      });
+    }
+    if (entry.state === "compatible" && entry.test?.testedLanguages.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["test", "testedLanguages"],
+        message: "compatible models require at least one tested language",
+      });
+    }
+    const passed = new Set(entry.test?.testedLanguages ?? []);
+    if (entry.test?.failedLanguages?.some((language) => passed.has(language))) {
+      context.addIssue({
+        code: "custom",
+        path: ["test", "failedLanguages"],
+        message: "a language cannot be both passed and failed",
+      });
+    }
+  });
+type PersistedModel = z.infer<typeof PersistedModelSchema>;
+
+const PersistedCatalogSchema = z
+  .object({
+    version: z.literal(LLM_MODEL_CATALOG_VERSION),
+    defaultModel: ModelSelectionSchema.nullable(),
+    models: z.array(PersistedModelSchema),
+  })
+  .strict()
+  .superRefine((catalog, context) => {
+    const seen = new Set<string>();
+    for (const [index, model] of catalog.models.entries()) {
+      const key = selectionKey(model);
+      if (seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["models", index],
+          message: `duplicate model selection ${key}`,
+        });
+      }
+      seen.add(key);
+    }
+  });
 type PersistedCatalog = z.infer<typeof PersistedCatalogSchema>;
 
 /**
@@ -160,17 +165,25 @@ const ShippedModelTestDataSchema = ModelSelectionSchema.extend({
   note: z.string().optional(),
 }).strict();
 
-const CuratedModelDataSchema = z.object({
-  version: z.literal(LLM_MODEL_CATALOG_VERSION),
-  recommended: ModelSelectionSchema,
-  providers: z.array(z.object({
-    id: LlmProviderIdSchema,
-    recommended: z.boolean(),
-    candidateModels: z.array(ModelIdSchema).min(1),
-  }).strict()).min(1),
-  retiredModels: z.array(ModelSelectionSchema),
-  shippedTests: z.array(ShippedModelTestDataSchema),
-}).strict();
+const CuratedModelDataSchema = z
+  .object({
+    version: z.literal(LLM_MODEL_CATALOG_VERSION),
+    recommended: ModelSelectionSchema,
+    providers: z
+      .array(
+        z
+          .object({
+            id: LlmProviderIdSchema,
+            recommended: z.boolean(),
+            candidateModels: z.array(ModelIdSchema).min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+    retiredModels: z.array(ModelSelectionSchema),
+    shippedTests: z.array(ShippedModelTestDataSchema),
+  })
+  .strict();
 
 const CURATED_MODEL_DATA = CuratedModelDataSchema.parse(
   JSON.parse(readFileSync(CURATED_MODEL_DATA_URL, "utf8")),
@@ -192,9 +205,13 @@ export const PUBLIC_LLM_PROVIDER_DEFINITIONS: readonly LlmProviderDefinition[] =
     };
   });
 
-if (!PUBLIC_LLM_PROVIDER_DEFINITIONS.some((provider) =>
-  provider.id === RECOMMENDED_MODEL_SELECTION.provider
-  && provider.candidateModels.includes(RECOMMENDED_MODEL_SELECTION.model))) {
+if (
+  !PUBLIC_LLM_PROVIDER_DEFINITIONS.some(
+    (provider) =>
+      provider.id === RECOMMENDED_MODEL_SELECTION.provider &&
+      provider.candidateModels.includes(RECOMMENDED_MODEL_SELECTION.model),
+  )
+) {
   throw new Error("The recommended model must be a curated candidate of a public provider");
 }
 
@@ -242,6 +259,20 @@ export interface TestFailureInput {
   failureSummary: string;
 }
 
+export interface TestRecordingOptions {
+  /**
+   * Fail instead of recreating a custom model removed while a provider probe
+   * was in flight. Callers that begin probes for unregistered IDs should
+   * register them before making the provider call.
+   */
+  requireRegistered?: boolean;
+}
+
+export interface RegisteredModelLease {
+  readonly selection: ModelSelection;
+  assertAvailable(language: LanguageCode): void;
+}
+
 export class ModelUnavailableError extends Error {
   constructor(
     readonly selection: ModelSelection,
@@ -282,9 +313,12 @@ function shippedModel(
   testFingerprint: string,
 ): PersistedModel | undefined {
   const test = SHIPPED_MODEL_TESTS[selectionKey(selection)];
-  if (test === undefined
-    || test.protocolVersion !== protocolVersion
-    || test.testFingerprint !== testFingerprint) return undefined;
+  if (
+    test === undefined ||
+    test.protocolVersion !== protocolVersion ||
+    test.testFingerprint !== testFingerprint
+  )
+    return undefined;
   return {
     ...selection,
     state: "compatible",
@@ -302,14 +336,21 @@ function normalizeLanguages(languages: readonly LanguageCode[]): LanguageCode[] 
 }
 
 function safeFailureSummary(value: string): string {
-  const summary = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500).trim();
+  const summary = value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500)
+    .trim();
   if (!summary) throw new Error("A safe failure summary is required");
   return summary;
 }
 
 function isRecommended(selection: ModelSelection): boolean {
-  return selection.provider === RECOMMENDED_MODEL_SELECTION.provider
-    && selection.model === RECOMMENDED_MODEL_SELECTION.model;
+  return (
+    selection.provider === RECOMMENDED_MODEL_SELECTION.provider &&
+    selection.model === RECOMMENDED_MODEL_SELECTION.model
+  );
 }
 
 function untestedModel(selection: ModelSelection): PersistedModel {
@@ -321,16 +362,18 @@ function isCurrentTest(
   protocolVersion: number,
   testFingerprint: string,
 ): boolean {
-  return model.test?.protocolVersion === protocolVersion
-    && model.test.testFingerprint === testFingerprint;
+  return (
+    model.test?.protocolVersion === protocolVersion &&
+    model.test.testFingerprint === testFingerprint
+  );
 }
 
 function isValidDefault(catalog: PersistedCatalog, selection: ModelSelection | null): boolean {
   if (selection === null) return false;
   const model = catalog.models.find((candidate) => sameSelection(candidate, selection));
-  return model?.enabled === true && (
-    model.state === "compatible"
-    || (model.state === "untested" && isRecommended(model))
+  return (
+    model?.enabled === true &&
+    (model.state === "compatible" || (model.state === "untested" && isRecommended(model)))
   );
 }
 
@@ -342,9 +385,10 @@ function canonicalize(
 ): PersistedCatalog {
   const models = new Map<string, PersistedModel>();
   for (const model of input.models) {
-    const stale = model.state !== "untested"
-      && model.state !== "stale"
-      && !isCurrentTest(model, protocolVersion, testFingerprint);
+    const stale =
+      model.state !== "untested" &&
+      model.state !== "stale" &&
+      !isCurrentTest(model, protocolVersion, testFingerprint);
     const normalized = stale ? { ...model, state: "stale" as const, enabled: false } : model;
     models.set(selectionKey(normalized), normalized);
   }
@@ -359,9 +403,14 @@ function canonicalize(
   const ordered: PersistedModel[] = [];
   for (const definition of SUPPORTED_LLM_PROVIDER_DEFINITIONS) {
     const providerModels = [...models.values()].filter((model) => model.provider === definition.id);
-    const publicDefinition = PUBLIC_LLM_PROVIDER_DEFINITIONS.find((candidate) => candidate.id === definition.id);
+    const publicDefinition = PUBLIC_LLM_PROVIDER_DEFINITIONS.find(
+      (candidate) => candidate.id === definition.id,
+    );
     const candidateOrder = new Map<string, number>(
-      (publicDefinition?.candidateModels ?? []).map((model, index): [string, number] => [model, index]),
+      (publicDefinition?.candidateModels ?? []).map((model, index): [string, number] => [
+        model,
+        index,
+      ]),
     );
     providerModels.sort((left, right) => {
       const leftOrder = candidateOrder.get(left.model) ?? Number.MAX_SAFE_INTEGER;
@@ -381,10 +430,12 @@ function canonicalize(
 }
 
 function codeOwnedCandidates(): ModelSelection[] {
-  return PUBLIC_LLM_PROVIDER_DEFINITIONS.flatMap((provider) => provider.candidateModels.map((model) => ({
-    provider: provider.id,
-    model,
-  })));
+  return PUBLIC_LLM_PROVIDER_DEFINITIONS.flatMap((provider) =>
+    provider.candidateModels.map((model) => ({
+      provider: provider.id,
+      model,
+    })),
+  );
 }
 
 function snapshotsEqual(left: PersistedCatalog, right: PersistedCatalog): boolean {
@@ -399,16 +450,22 @@ export class LlmModelCatalog {
   private readonly legacySelection: ModelSelection | undefined;
   private readonly now: () => Date;
 
-  constructor(readonly root: string, options: LlmModelCatalogOptions) {
+  constructor(
+    readonly root: string,
+    options: LlmModelCatalogOptions,
+  ) {
     this.filePath = path.join(root, "config", "llm-models.json");
     this.lockPath = path.join(root, "config", ".llm-models.lock");
     this.testFingerprint = z.string().trim().min(1).max(500).parse(options.testFingerprint);
-    this.protocolVersion = z.number().int().nonnegative().parse(
-      options.protocolVersion ?? GAMEPLAY_PROTOCOL_VERSION,
-    );
-    this.legacySelection = options.legacySelection === undefined
-      ? undefined
-      : ModelSelectionSchema.parse(options.legacySelection);
+    this.protocolVersion = z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(options.protocolVersion ?? GAMEPLAY_PROTOCOL_VERSION);
+    this.legacySelection =
+      options.legacySelection === undefined
+        ? undefined
+        : ModelSelectionSchema.parse(options.legacySelection);
     this.now = options.now ?? (() => new Date());
   }
 
@@ -432,12 +489,15 @@ export class LlmModelCatalog {
   async recordTestSuccess(
     selection: ModelSelection,
     input: TestSuccessInput,
+    options: TestRecordingOptions = {},
   ): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
     const testedLanguages = normalizeLanguages(input.testedLanguages);
     if (testedLanguages.length === 0) throw new Error("At least one tested language is required");
     return this.mutate((catalog) => {
-      const model = this.ensureModel(catalog, parsed);
+      const model = options.requireRegistered
+        ? this.requireModel(catalog, parsed)
+        : this.ensureModel(catalog, parsed);
       const current = isCurrentTest(model, this.protocolVersion, this.testFingerprint)
         ? model.test
         : undefined;
@@ -467,23 +527,30 @@ export class LlmModelCatalog {
   async recordTestFailure(
     selection: ModelSelection,
     input: TestFailureInput,
+    options: TestRecordingOptions = {},
   ): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
     const failedLanguages = normalizeLanguages(input.failedLanguages ?? []);
     const failureSummary = safeFailureSummary(input.failureSummary);
     return this.mutate((catalog) => {
-      const model = this.ensureModel(catalog, parsed);
+      const model = options.requireRegistered
+        ? this.requireModel(catalog, parsed)
+        : this.ensureModel(catalog, parsed);
       const current = isCurrentTest(model, this.protocolVersion, this.testFingerprint)
         ? model.test
         : undefined;
-      const testedLanguages = failedLanguages.length === 0
-        ? []
-        : normalizeLanguages(
-          (current?.testedLanguages ?? []).filter((language) => !failedLanguages.includes(language)),
-        );
-      const allFailedLanguages = failedLanguages.length === 0
-        ? []
-        : normalizeLanguages([...(current?.failedLanguages ?? []), ...failedLanguages]);
+      const testedLanguages =
+        failedLanguages.length === 0
+          ? []
+          : normalizeLanguages(
+              (current?.testedLanguages ?? []).filter(
+                (language) => !failedLanguages.includes(language),
+              ),
+            );
+      const allFailedLanguages =
+        failedLanguages.length === 0
+          ? []
+          : normalizeLanguages([...(current?.failedLanguages ?? []), ...failedLanguages]);
       model.state = testedLanguages.length === 0 ? "failed" : "compatible";
       if (model.state === "failed") model.enabled = false;
       model.test = {
@@ -494,13 +561,17 @@ export class LlmModelCatalog {
         ...(allFailedLanguages.length === 0 ? {} : { failedLanguages: allFailedLanguages }),
         failureSummary,
       };
-      if (model.state === "failed" && sameSelection(catalog.defaultModel, parsed)) catalog.defaultModel = null;
+      if (model.state === "failed" && sameSelection(catalog.defaultModel, parsed))
+        catalog.defaultModel = null;
     });
   }
 
-  async removeModel(selection: ModelSelection): Promise<LlmModelCatalogSnapshot> {
+  async removeModel(
+    selection: ModelSelection,
+    assertUnused?: () => Promise<void>,
+  ): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
-    return this.mutate((catalog) => {
+    return this.mutate(async (catalog) => {
       if (codeOwnedCandidates().some((candidate) => sameSelection(candidate, parsed))) {
         throw new Error(`Known model ${parsed.provider}/${parsed.model} cannot be removed`);
       }
@@ -509,6 +580,7 @@ export class LlmModelCatalog {
       }
       const index = catalog.models.findIndex((model) => sameSelection(model, parsed));
       if (index < 0) throw new Error(`Model ${parsed.provider}/${parsed.model} was not found`);
+      await assertUnused?.();
       catalog.models.splice(index, 1);
     });
   }
@@ -516,9 +588,13 @@ export class LlmModelCatalog {
   async setEnabled(selection: ModelSelection, enabled: boolean): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
     return this.mutate((catalog) => {
-      const model = this.ensureModel(catalog, parsed);
+      const model = this.requireModel(catalog, parsed);
       if (enabled && model.state !== "compatible") {
-        throw new ModelUnavailableError(parsed, model.state, `Model ${parsed.model} is ${model.state}, not compatible`);
+        throw new ModelUnavailableError(
+          parsed,
+          model.state,
+          `Model ${parsed.model} is ${model.state}, not compatible`,
+        );
       }
       model.enabled = enabled;
       if (!enabled && sameSelection(catalog.defaultModel, parsed)) catalog.defaultModel = null;
@@ -528,9 +604,13 @@ export class LlmModelCatalog {
   async setDefault(selection: ModelSelection): Promise<LlmModelCatalogSnapshot> {
     const parsed = ModelSelectionSchema.parse(selection);
     return this.mutate((catalog) => {
-      const model = this.ensureModel(catalog, parsed);
+      const model = this.requireModel(catalog, parsed);
       if (model.state !== "compatible") {
-        throw new ModelUnavailableError(parsed, model.state, `Model ${parsed.model} is ${model.state}, not compatible`);
+        throw new ModelUnavailableError(
+          parsed,
+          model.state,
+          `Model ${parsed.model} is ${model.state}, not compatible`,
+        );
       }
       if (!model.enabled) {
         throw new ModelUnavailableError(parsed, "disabled", `Model ${parsed.model} is disabled`);
@@ -539,36 +619,95 @@ export class LlmModelCatalog {
     });
   }
 
-  async assertAvailable(selection: ModelSelection, language: LanguageCode): Promise<CatalogModel> {
+  async withRegisteredModel<T>(
+    selection: ModelSelection,
+    operation: (lease: RegisteredModelLease) => Promise<T>,
+  ): Promise<T> {
+    const parsed = ModelSelectionSchema.parse(selection);
+    return this.withModel(parsed, (model) =>
+      operation({
+        selection: parsed,
+        assertAvailable: (language) =>
+          this.requireAvailableModel(model, parsed, LanguageCodeSchema.parse(language)),
+      }),
+    );
+  }
+
+  async withAvailableModel<T>(
+    selection: ModelSelection,
+    language: LanguageCode,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     const parsed = ModelSelectionSchema.parse(selection);
     const parsedLanguage = LanguageCodeSchema.parse(language);
+    return this.withRegisteredModel(parsed, (lease) => {
+      lease.assertAvailable(parsedLanguage);
+      return operation();
+    });
+  }
+
+  async assertRegistered(selection: ModelSelection): Promise<CatalogModel> {
+    const parsed = ModelSelectionSchema.parse(selection);
     const snapshot = await this.snapshot();
     const model = snapshot.providers
       .find((provider) => provider.id === parsed.provider)
       ?.models.find((candidate) => sameSelection(candidate, parsed));
     if (model === undefined) {
-      throw new ModelUnavailableError(parsed, "unregistered", `Model ${parsed.provider}/${parsed.model} is not registered`);
-    }
-    if (model.state !== "compatible") {
-      throw new ModelUnavailableError(parsed, model.state, `Model ${parsed.model} is ${model.state}, not compatible`);
-    }
-    if (!model.enabled) {
-      throw new ModelUnavailableError(parsed, "disabled", `Model ${parsed.model} is disabled`);
-    }
-    if (!model.test?.testedLanguages.includes(parsedLanguage)) {
       throw new ModelUnavailableError(
         parsed,
-        "language",
-        `Model ${parsed.model} has not passed compatibility testing for ${parsedLanguage}`,
+        "unregistered",
+        `Model ${parsed.provider}/${parsed.model} is not registered`,
       );
     }
     return model;
   }
 
-  private async mutate(change: (catalog: PersistedCatalog) => void): Promise<LlmModelCatalogSnapshot> {
+  async assertAvailable(selection: ModelSelection, language: LanguageCode): Promise<CatalogModel> {
+    const parsed = ModelSelectionSchema.parse(selection);
+    const parsedLanguage = LanguageCodeSchema.parse(language);
+    const model = await this.assertRegistered(parsed);
+    this.requireAvailableModel(model, parsed, parsedLanguage);
+    return model;
+  }
+
+  private requireAvailableModel(
+    model: {
+      state: CatalogModel["state"];
+      enabled: boolean;
+      test?: CatalogModel["test"] | undefined;
+    },
+    selection: ModelSelection,
+    language: LanguageCode,
+  ): void {
+    if (model.state !== "compatible") {
+      throw new ModelUnavailableError(
+        selection,
+        model.state,
+        `Model ${selection.model} is ${model.state}, not compatible`,
+      );
+    }
+    if (!model.enabled) {
+      throw new ModelUnavailableError(
+        selection,
+        "disabled",
+        `Model ${selection.model} is disabled`,
+      );
+    }
+    if (!model.test?.testedLanguages.includes(language)) {
+      throw new ModelUnavailableError(
+        selection,
+        "language",
+        `Model ${selection.model} has not passed compatibility testing for ${language}`,
+      );
+    }
+  }
+
+  private async mutate(
+    change: (catalog: PersistedCatalog) => void | Promise<void>,
+  ): Promise<LlmModelCatalogSnapshot> {
     return this.exclusive(async () => {
       const { catalog } = await this.load();
-      change(catalog);
+      await change(catalog);
       const canonical = canonicalize(
         PersistedCatalogSchema.parse(catalog),
         this.additions(),
@@ -577,6 +716,18 @@ export class LlmModelCatalog {
       );
       await this.write(canonical);
       return this.toSnapshot(canonical);
+    });
+  }
+
+  private async withModel<T>(
+    selection: ModelSelection,
+    operation: (model: PersistedModel) => Promise<T>,
+  ): Promise<T> {
+    return this.exclusive(async () => {
+      const { catalog, changed } = await this.load();
+      if (changed) await this.write(catalog);
+      const model = this.requireModel(catalog, selection);
+      return operation(model);
     });
   }
 
@@ -606,7 +757,9 @@ export class LlmModelCatalog {
     return [
       ...codeOwnedCandidates(),
       ...(this.legacySelection === undefined ? [] : [this.legacySelection]),
-      ...(additionalLegacySelection === undefined ? [] : [ModelSelectionSchema.parse(additionalLegacySelection)]),
+      ...(additionalLegacySelection === undefined
+        ? []
+        : [ModelSelectionSchema.parse(additionalLegacySelection)]),
     ];
   }
 
@@ -615,6 +768,18 @@ export class LlmModelCatalog {
     if (model === undefined) {
       model = untestedModel(selection);
       catalog.models.push(model);
+    }
+    return model;
+  }
+
+  private requireModel(catalog: PersistedCatalog, selection: ModelSelection): PersistedModel {
+    const model = catalog.models.find((candidate) => sameSelection(candidate, selection));
+    if (model === undefined) {
+      throw new ModelUnavailableError(
+        selection,
+        "unregistered",
+        `Model ${selection.provider}/${selection.model} is not registered`,
+      );
     }
     return model;
   }
@@ -648,8 +813,10 @@ export class LlmModelCatalog {
             .map((model) => ({
               provider: model.provider,
               model: model.model,
-              candidate: (publicDefinition?.candidateModels as readonly string[] | undefined)
-                ?.includes(model.model) ?? false,
+              candidate:
+                (publicDefinition?.candidateModels as readonly string[] | undefined)?.includes(
+                  model.model,
+                ) ?? false,
               state: model.state,
               enabled: model.enabled,
               ...(model.test === undefined ? {} : { test: model.test }),

@@ -12,15 +12,15 @@ function metadataText(value: string): string {
 }
 
 function storyText(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function quote(value: string): string {
   const clean = storyText(value).replace(/\r\n/g, "\n").trim();
-  return clean.split("\n").map((line) => `> ${line || " "}`).join("\n");
+  return clean
+    .split("\n")
+    .map((line) => `> ${line || " "}`)
+    .join("\n");
 }
 
 function renderTurn(state: GameState, entry: PlayerVisibleTurn): string {
@@ -59,17 +59,21 @@ export function renderCampaignMarkdown(snapshot: CampaignLogSnapshot): string {
     `- **${copy.updated}:** ${state.updatedAt}`,
   ].join("\n");
   const body = turns.map((entry) => renderTurn(state, entry)).join("\n\n---\n\n");
-  const header = [`# ${metadataText(state.title)}`, `> ${copy.documentLabel}`, metadata].join("\n\n");
+  const header = [`# ${metadataText(state.title)}`, `> ${copy.documentLabel}`, metadata].join(
+    "\n\n",
+  );
   return [header, body].filter(Boolean).join("\n\n") + "\n";
 }
 
 export function campaignMarkdownFilename(title: string): string {
-  const safeTitle = Array.from(title
-    .normalize("NFKC")
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
-    .replace(/\s+/g, " ")
-    .replace(/[. ]+$/g, "")
-    .trim())
+  const safeTitle = Array.from(
+    title
+      .normalize("NFKC")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/\s+/g, " ")
+      .replace(/[. ]+$/g, "")
+      .trim(),
+  )
     .slice(0, 80)
     .join("");
   return `${safeTitle || "llm-dungeon-campaign"}.md`;

@@ -21,20 +21,13 @@ import {
   type PlaytestModelCost,
   PlaytestCostManager,
 } from "./cost.js";
-import {
-  appendPlaytestJsonLine,
-  hashPlaytestValue,
-  readPlaytestJsonLines,
-} from "./files.js";
+import { appendPlaytestJsonLine, hashPlaytestValue, readPlaytestJsonLines } from "./files.js";
 import {
   FailureAttributionSchema,
   attributePlaytestFailure,
   type FailureAttribution,
 } from "./failure-attribution.js";
-import {
-  PlaytestProviderScheduler,
-  scheduledCallTimingFor,
-} from "./scheduler.js";
+import { PlaytestProviderScheduler, scheduledCallTimingFor } from "./scheduler.js";
 
 export const DIAGNOSTIC_BUNDLE_VERSION = 2 as const;
 export const FOCUSED_REPLAY_MANIFEST_VERSION = 2 as const;
@@ -47,15 +40,17 @@ const ReplayAttemptKindSchema = z.enum([
   "domain_repair",
 ]);
 
-const LegacyPersistedReplayRequestSchema = z.object({
-  schemaName: z.string().min(1),
-  system: z.string(),
-  prompt: z.string(),
-  jsonSchema: z.record(z.string(), z.unknown()),
-  protocolVersion: z.number().int().nonnegative().optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  maxOutputTokens: z.number().int().positive(),
-}).strict();
+const LegacyPersistedReplayRequestSchema = z
+  .object({
+    schemaName: z.string().min(1),
+    system: z.string(),
+    prompt: z.string(),
+    jsonSchema: z.record(z.string(), z.unknown()),
+    protocolVersion: z.number().int().nonnegative().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    maxOutputTokens: z.number().int().positive(),
+  })
+  .strict();
 
 const PersistedReplayRequestSchema = LegacyPersistedReplayRequestSchema.extend({
   outputTokenCeiling: z.number().int().positive().optional(),
@@ -65,43 +60,49 @@ const PersistedReplayRequestSchema = LegacyPersistedReplayRequestSchema.extend({
   retryBackoffMs: z.number().int().nonnegative().optional(),
 }).strict();
 
-const DiagnosticFailureSchema = z.object({
-  attribution: FailureAttributionSchema,
-  kind: z.string().min(1),
-  message: z.string().min(1).max(2_000),
-}).strict();
+const DiagnosticFailureSchema = z
+  .object({
+    attribution: FailureAttributionSchema,
+    kind: z.string().min(1),
+    message: z.string().min(1).max(2_000),
+  })
+  .strict();
 
-const LegacyDiagnosticBundleSchema = z.object({
-  schemaVersion: z.literal(1),
-  createdAt: z.string().datetime({ offset: true }),
-  expectedPhase: GenerationPhaseSchema,
-  provider: z.string().min(1),
-  model: z.string().min(1),
-  route: z.string().min(1),
-  executionProfile: FrozenModelExecutionProfileSchema,
-  preCallStateSnapshot: z.string(),
-  request: LegacyPersistedReplayRequestSchema,
-  promptHash: z.string().regex(/^[a-f0-9]{64}$/),
-  schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
-  responseMetadata: z.record(z.string(), z.unknown()).default({}),
-  failure: DiagnosticFailureSchema,
-}).strict();
+const LegacyDiagnosticBundleSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    createdAt: z.string().datetime({ offset: true }),
+    expectedPhase: GenerationPhaseSchema,
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    route: z.string().min(1),
+    executionProfile: FrozenModelExecutionProfileSchema,
+    preCallStateSnapshot: z.string(),
+    request: LegacyPersistedReplayRequestSchema,
+    promptHash: z.string().regex(/^[a-f0-9]{64}$/),
+    schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
+    responseMetadata: z.record(z.string(), z.unknown()).default({}),
+    failure: DiagnosticFailureSchema,
+  })
+  .strict();
 
-export const DiagnosticBundleSchema = z.object({
-  schemaVersion: z.literal(DIAGNOSTIC_BUNDLE_VERSION),
-  createdAt: z.string().datetime({ offset: true }),
-  expectedPhase: GenerationPhaseSchema,
-  provider: z.string().min(1),
-  model: z.string().min(1),
-  route: z.string().min(1),
-  executionProfile: FrozenModelExecutionProfileSchema,
-  preCallStateSnapshot: z.string(),
-  request: PersistedReplayRequestSchema,
-  promptHash: z.string().regex(/^[a-f0-9]{64}$/),
-  schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
-  responseMetadata: z.record(z.string(), z.unknown()).default({}),
-  failure: DiagnosticFailureSchema,
-}).strict();
+export const DiagnosticBundleSchema = z
+  .object({
+    schemaVersion: z.literal(DIAGNOSTIC_BUNDLE_VERSION),
+    createdAt: z.string().datetime({ offset: true }),
+    expectedPhase: GenerationPhaseSchema,
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    route: z.string().min(1),
+    executionProfile: FrozenModelExecutionProfileSchema,
+    preCallStateSnapshot: z.string(),
+    request: PersistedReplayRequestSchema,
+    promptHash: z.string().regex(/^[a-f0-9]{64}$/),
+    schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
+    responseMetadata: z.record(z.string(), z.unknown()).default({}),
+    failure: DiagnosticFailureSchema,
+  })
+  .strict();
 export type DiagnosticBundle = z.infer<typeof DiagnosticBundleSchema>;
 
 function redactString(value: string, secrets: readonly string[]): string {
@@ -116,8 +117,12 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") return redactString(value, secrets);
   if (Array.isArray(value)) return value.map((item) => redactValue(item, secrets));
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .map(([key, item]) => [key, redactValue(item, secrets)]));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      redactValue(item, secrets),
+    ]),
+  );
 }
 
 export interface CreateDiagnosticBundleInput {
@@ -137,26 +142,48 @@ export interface CreateDiagnosticBundleInput {
 export function createDiagnosticBundle(input: CreateDiagnosticBundleInput): DiagnosticBundle {
   const profile = FrozenModelExecutionProfileSchema.parse(input.profile);
   const secrets = input.secrets ?? [];
-  const jsonSchema = input.request.jsonSchema
-    ?? z.toJSONSchema(input.request.wireSchema ?? input.request.schema, { target: "draft-7" }) as Record<string, unknown>;
-  const request = PersistedReplayRequestSchema.parse(redactValue({
-    schemaName: input.request.schemaName,
-    system: input.request.system,
-    prompt: input.request.prompt,
-    jsonSchema,
-    ...(input.request.protocolVersion === undefined ? {} : { protocolVersion: input.request.protocolVersion }),
-    ...(input.request.temperature === undefined ? {} : { temperature: input.request.temperature }),
-    maxOutputTokens: input.request.maxOutputTokens ?? profile.outputBudgets[
-      input.expectedPhase === "locked_resolution" ? "lockedResolution" : input.expectedPhase
-    ],
-    ...(input.request.outputTokenCeiling === undefined
-      ? {}
-      : { outputTokenCeiling: input.request.outputTokenCeiling }),
-    ...(input.request.generationPhase === undefined ? {} : { generationPhase: input.request.generationPhase }),
-    ...(input.request.repairOfPhase === undefined ? {} : { repairOfPhase: input.request.repairOfPhase }),
-    ...(input.request.attemptKind === undefined ? {} : { attemptKind: input.request.attemptKind }),
-    ...(input.request.retryBackoffMs === undefined ? {} : { retryBackoffMs: input.request.retryBackoffMs }),
-  }, secrets));
+  const jsonSchema =
+    input.request.jsonSchema ??
+    (z.toJSONSchema(input.request.wireSchema ?? input.request.schema, {
+      target: "draft-7",
+    }) as Record<string, unknown>);
+  const request = PersistedReplayRequestSchema.parse(
+    redactValue(
+      {
+        schemaName: input.request.schemaName,
+        system: input.request.system,
+        prompt: input.request.prompt,
+        jsonSchema,
+        ...(input.request.protocolVersion === undefined
+          ? {}
+          : { protocolVersion: input.request.protocolVersion }),
+        ...(input.request.temperature === undefined
+          ? {}
+          : { temperature: input.request.temperature }),
+        maxOutputTokens:
+          input.request.maxOutputTokens ??
+          profile.outputBudgets[
+            input.expectedPhase === "locked_resolution" ? "lockedResolution" : input.expectedPhase
+          ],
+        ...(input.request.outputTokenCeiling === undefined
+          ? {}
+          : { outputTokenCeiling: input.request.outputTokenCeiling }),
+        ...(input.request.generationPhase === undefined
+          ? {}
+          : { generationPhase: input.request.generationPhase }),
+        ...(input.request.repairOfPhase === undefined
+          ? {}
+          : { repairOfPhase: input.request.repairOfPhase }),
+        ...(input.request.attemptKind === undefined
+          ? {}
+          : { attemptKind: input.request.attemptKind }),
+        ...(input.request.retryBackoffMs === undefined
+          ? {}
+          : { retryBackoffMs: input.request.retryBackoffMs }),
+      },
+      secrets,
+    ),
+  );
   const createdAt = (input.now ?? new Date()).toISOString();
   return DiagnosticBundleSchema.parse({
     schemaVersion: DIAGNOSTIC_BUNDLE_VERSION,
@@ -179,12 +206,18 @@ export function createDiagnosticBundle(input: CreateDiagnosticBundleInput): Diag
   });
 }
 
-export async function writeDiagnosticBundle(target: string, bundle: DiagnosticBundle): Promise<void> {
+export async function writeDiagnosticBundle(
+  target: string,
+  bundle: DiagnosticBundle,
+): Promise<void> {
   await atomicWriteJson(target, DiagnosticBundleSchema.parse(bundle));
 }
 
 function migrateDiagnosticBundle(value: unknown): DiagnosticBundle {
-  const version = z.object({ schemaVersion: z.number().int() }).passthrough().parse(value).schemaVersion;
+  const version = z
+    .object({ schemaVersion: z.number().int() })
+    .passthrough()
+    .parse(value).schemaVersion;
   if (version === DIAGNOSTIC_BUNDLE_VERSION) return DiagnosticBundleSchema.parse(value);
   const legacy = LegacyDiagnosticBundleSchema.parse(value);
   return DiagnosticBundleSchema.parse({
@@ -233,63 +266,91 @@ const ReplayVariantStatusSchema = z.enum([
   "cost_limit",
   "interrupted",
 ]);
-const ReplayOutcomeSchema = z.enum(["success", "failure", "cancelled", "cost_limit", "interrupted"]);
+const ReplayOutcomeSchema = z.enum([
+  "success",
+  "failure",
+  "cancelled",
+  "cost_limit",
+  "interrupted",
+]);
 
-export const FocusedReplayRecordSchema = z.object({
-  variantIndex: z.number().int().nonnegative(),
-  profileHash: z.string().regex(/^[a-f0-9]{64}$/),
-  timestamp: z.string().datetime({ offset: true }),
-  outcome: ReplayOutcomeSchema,
-  success: z.boolean(),
-  durationMs: z.number().int().nonnegative(),
-  queueWaitMs: z.number().int().nonnegative(),
-  providerCallMs: z.number().int().nonnegative(),
-  estimatedCostUsd: z.number().nonnegative(),
-  costBasis: z.enum(["reported_usage", "reserved_estimate", "no_call", "unknown"]),
-  attribution: FailureAttributionSchema.optional(),
-  error: z.string().min(1).max(2_000).optional(),
-}).strict().superRefine((record, context) => {
-  if (record.success !== (record.outcome === "success")) {
-    context.addIssue({ code: "custom", path: ["success"], message: "success must match replay outcome" });
-  }
-  if (!record.success && !record.attribution) {
-    context.addIssue({ code: "custom", path: ["attribution"], message: "non-success replay records require attribution" });
-  }
-});
+export const FocusedReplayRecordSchema = z
+  .object({
+    variantIndex: z.number().int().nonnegative(),
+    profileHash: z.string().regex(/^[a-f0-9]{64}$/),
+    timestamp: z.string().datetime({ offset: true }),
+    outcome: ReplayOutcomeSchema,
+    success: z.boolean(),
+    durationMs: z.number().int().nonnegative(),
+    queueWaitMs: z.number().int().nonnegative(),
+    providerCallMs: z.number().int().nonnegative(),
+    estimatedCostUsd: z.number().nonnegative(),
+    costBasis: z.enum(["reported_usage", "reserved_estimate", "no_call", "unknown"]),
+    attribution: FailureAttributionSchema.optional(),
+    error: z.string().min(1).max(2_000).optional(),
+  })
+  .strict()
+  .superRefine((record, context) => {
+    if (record.success !== (record.outcome === "success")) {
+      context.addIssue({
+        code: "custom",
+        path: ["success"],
+        message: "success must match replay outcome",
+      });
+    }
+    if (!record.success && !record.attribution) {
+      context.addIssue({
+        code: "custom",
+        path: ["attribution"],
+        message: "non-success replay records require attribution",
+      });
+    }
+  });
 export type FocusedReplayRecord = z.infer<typeof FocusedReplayRecordSchema>;
 
-export const FocusedReplayManifestSchema = z.object({
-  schemaVersion: z.literal(FOCUSED_REPLAY_MANIFEST_VERSION),
-  kind: z.literal("focused_replay"),
-  replayId: FocusedReplayIdSchema,
-  startedAt: z.string().datetime({ offset: true }),
-  updatedAt: z.string().datetime({ offset: true }),
-  completedAt: z.string().datetime({ offset: true }).optional(),
-  status: z.enum([
-    "running",
-    "completed",
-    "completed_with_failures",
-    "cancelled",
-    "cost_limit",
-    "interrupted",
-  ]),
-  diagnosticBundleHash: z.string().regex(/^[a-f0-9]{64}$/),
-  provider: z.string().min(1),
-  model: z.string().min(1),
-  route: z.string().min(1),
-  maxCostUsd: z.number().positive(),
-  price: z.object({
-    inputPerMillion: z.number().nonnegative(),
-    outputPerMillion: z.number().nonnegative(),
-  }).strict(),
-  totalEstimatedCostUsd: z.number().nonnegative(),
-  variants: z.array(z.object({
-    index: z.number().int().nonnegative(),
-    profile: ModelExecutionProfileDraftSchema,
-    profileHash: z.string().regex(/^[a-f0-9]{64}$/),
-    status: ReplayVariantStatusSchema,
-  }).strict()).min(1).max(8),
-}).strict();
+export const FocusedReplayManifestSchema = z
+  .object({
+    schemaVersion: z.literal(FOCUSED_REPLAY_MANIFEST_VERSION),
+    kind: z.literal("focused_replay"),
+    replayId: FocusedReplayIdSchema,
+    startedAt: z.string().datetime({ offset: true }),
+    updatedAt: z.string().datetime({ offset: true }),
+    completedAt: z.string().datetime({ offset: true }).optional(),
+    status: z.enum([
+      "running",
+      "completed",
+      "completed_with_failures",
+      "cancelled",
+      "cost_limit",
+      "interrupted",
+    ]),
+    diagnosticBundleHash: z.string().regex(/^[a-f0-9]{64}$/),
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    route: z.string().min(1),
+    maxCostUsd: z.number().positive(),
+    price: z
+      .object({
+        inputPerMillion: z.number().nonnegative(),
+        outputPerMillion: z.number().nonnegative(),
+      })
+      .strict(),
+    totalEstimatedCostUsd: z.number().nonnegative(),
+    variants: z
+      .array(
+        z
+          .object({
+            index: z.number().int().nonnegative(),
+            profile: ModelExecutionProfileDraftSchema,
+            profileHash: z.string().regex(/^[a-f0-9]{64}$/),
+            status: ReplayVariantStatusSchema,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+  })
+  .strict();
 export type FocusedReplayManifest = z.infer<typeof FocusedReplayManifestSchema>;
 
 export interface FocusedReplayResult extends FocusedReplayRecord {
@@ -339,7 +400,10 @@ function resultFromRecord(
 }
 
 function safeError(error: unknown, secrets: readonly string[]): string {
-  return redactString(error instanceof Error ? error.message : String(error), secrets).slice(0, 2_000);
+  return redactString(error instanceof Error ? error.message : String(error), secrets).slice(
+    0,
+    2_000,
+  );
 }
 
 function replayBoundaryAttribution(failureKind: string, reason: string): FailureAttribution {
@@ -353,8 +417,12 @@ function replayBoundaryAttribution(failureKind: string, reason: string): Failure
 }
 
 function assertCostInputs(options: FocusedReplayRunOptions): void {
-  if (!Number.isFinite(options.price.inputPerMillion) || options.price.inputPerMillion < 0
-    || !Number.isFinite(options.price.outputPerMillion) || options.price.outputPerMillion < 0) {
+  if (
+    !Number.isFinite(options.price.inputPerMillion) ||
+    options.price.inputPerMillion < 0 ||
+    !Number.isFinite(options.price.outputPerMillion) ||
+    options.price.outputPerMillion < 0
+  ) {
     throw new Error("Focused replay token prices must be finite and nonnegative");
   }
 }
@@ -380,10 +448,14 @@ export class FocusedReplayRunner {
     const baseline = draftOf(parsed.executionProfile);
     const profiles = variants.map((rawVariant) => {
       const profile = ModelExecutionProfileDraftSchema.parse(rawVariant);
-      if (profile.key.provider !== parsed.provider
-        || profile.key.model !== parsed.model
-        || profile.key.route !== parsed.route) {
-        throw new Error("Focused replay variants must match the diagnostic provider, model, and route");
+      if (
+        profile.key.provider !== parsed.provider ||
+        profile.key.model !== parsed.model ||
+        profile.key.route !== parsed.route
+      ) {
+        throw new Error(
+          "Focused replay variants must match the diagnostic provider, model, and route",
+        );
       }
       if (JSON.stringify(profile) !== JSON.stringify(baseline)) {
         assertSingleCalibrationVariableChange(baseline, profile);
@@ -409,7 +481,10 @@ export class FocusedReplayRunner {
     const manifestPath = path.join(directory, "manifest.json");
     const resultsPath = path.join(directory, "attempts.jsonl");
     await mkdir(directory, { recursive: true });
-    const releaseLock = await acquireFileLock(path.join(directory, ".replay.lock"), `Focused replay ${replayId}`);
+    const releaseLock = await acquireFileLock(
+      path.join(directory, ".replay.lock"),
+      `Focused replay ${replayId}`,
+    );
     try {
       const bundleHash = hashPlaytestValue(parsed);
       let manifest = await readReplayManifest(manifestPath);
@@ -423,256 +498,292 @@ export class FocusedReplayRunner {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         await writeDiagnosticBundle(replayBundlePath, parsed);
       }
-    if (manifest) {
-      if (manifest.diagnosticBundleHash !== bundleHash
-        || manifest.maxCostUsd !== options.costManager.ceilingUsd
-        || JSON.stringify(manifest.price) !== JSON.stringify(options.price)
-        || JSON.stringify(manifest.variants.map((variant) => variant.profileHash)) !== JSON.stringify(profileHashes)) {
-        throw new Error("Focused replay ID already belongs to different evidence, variants, pricing, or cost ceiling");
-      }
-      if (options.costManager.spentUsd !== manifest.totalEstimatedCostUsd) {
-        throw new Error("Resuming focused replay requires a dedicated cost manager restored to manifest spend");
-      }
-    } else {
-      if (options.costManager.spentUsd !== 0) {
-        throw new Error("A new focused replay requires a dedicated zero-spend cost manager");
-      }
-      const timestamp = now().toISOString();
-      manifest = FocusedReplayManifestSchema.parse({
-        schemaVersion: FOCUSED_REPLAY_MANIFEST_VERSION,
-        kind: "focused_replay",
-        replayId,
-        startedAt: timestamp,
-        updatedAt: timestamp,
-        status: "running",
-        diagnosticBundleHash: bundleHash,
-        provider: parsed.provider,
-        model: parsed.model,
-        route: parsed.route,
-        maxCostUsd: options.costManager.ceilingUsd,
-        price: options.price,
-        totalEstimatedCostUsd: 0,
-        variants: profiles.map((profile, index) => ({
-          index,
-          profile,
-          profileHash: profileHashes[index]!,
-          status: "pending",
-        })),
-      });
-      await atomicWriteJson(manifestPath, manifest);
-    }
-
-    const persisted = FocusedReplayRecordSchema.array().parse(await readPlaytestJsonLines(resultsPath));
-    const latest = new Map<number, FocusedReplayRecord>();
-    for (const record of persisted) latest.set(record.variantIndex, record);
-    let interrupted = false;
-    for (const variant of manifest.variants) {
-      const record = latest.get(variant.index);
-      if (record) {
-        if (record.profileHash !== variant.profileHash) {
-          throw new Error(`Focused replay record ${variant.index} does not match its profile`);
+      if (manifest) {
+        if (
+          manifest.diagnosticBundleHash !== bundleHash ||
+          manifest.maxCostUsd !== options.costManager.ceilingUsd ||
+          JSON.stringify(manifest.price) !== JSON.stringify(options.price) ||
+          JSON.stringify(manifest.variants.map((variant) => variant.profileHash)) !==
+            JSON.stringify(profileHashes)
+        ) {
+          throw new Error(
+            "Focused replay ID already belongs to different evidence, variants, pricing, or cost ceiling",
+          );
         }
-        variant.status = record.outcome === "success" ? "succeeded"
-          : record.outcome === "failure" ? "failed"
-            : record.outcome;
-      } else if (variant.status === "running") {
+        if (options.costManager.spentUsd !== manifest.totalEstimatedCostUsd) {
+          throw new Error(
+            "Resuming focused replay requires a dedicated cost manager restored to manifest spend",
+          );
+        }
+      } else {
+        if (options.costManager.spentUsd !== 0) {
+          throw new Error("A new focused replay requires a dedicated zero-spend cost manager");
+        }
         const timestamp = now().toISOString();
-        const interruptedRecord = FocusedReplayRecordSchema.parse({
-          variantIndex: variant.index,
-          profileHash: variant.profileHash,
-          timestamp,
-          outcome: "interrupted",
-          success: false,
-          durationMs: 0,
-          queueWaitMs: 0,
-          providerCallMs: 0,
-          estimatedCostUsd: 0,
-          costBasis: "unknown",
-          attribution: replayBoundaryAttribution("interrupted", "unrecorded_replay_call"),
-          error: "Replay stopped with an in-flight or unrecorded call; cost is unknown and this replay ID will not call again",
+        manifest = FocusedReplayManifestSchema.parse({
+          schemaVersion: FOCUSED_REPLAY_MANIFEST_VERSION,
+          kind: "focused_replay",
+          replayId,
+          startedAt: timestamp,
+          updatedAt: timestamp,
+          status: "running",
+          diagnosticBundleHash: bundleHash,
+          provider: parsed.provider,
+          model: parsed.model,
+          route: parsed.route,
+          maxCostUsd: options.costManager.ceilingUsd,
+          price: options.price,
+          totalEstimatedCostUsd: 0,
+          variants: profiles.map((profile, index) => ({
+            index,
+            profile,
+            profileHash: profileHashes[index]!,
+            status: "pending",
+          })),
         });
-        await appendPlaytestJsonLine(resultsPath, interruptedRecord);
-        latest.set(variant.index, interruptedRecord);
-        variant.status = "interrupted";
-        interrupted = true;
-      }
-    }
-    if (interrupted) {
-      manifest.status = "interrupted";
-      manifest.updatedAt = now().toISOString();
-      manifest.completedAt = manifest.updatedAt;
-      await atomicWriteJson(manifestPath, manifest);
-    }
-
-    const inMemoryResponses = new Map<number, unknown>();
-    if (!interrupted && manifest.status === "running") {
-      for (const variant of manifest.variants) {
-        if (latest.has(variant.index)) continue;
-        if (options.signal?.aborted) {
-          manifest.status = "cancelled";
-          break;
-        }
-        variant.status = "running";
-        manifest.updatedAt = now().toISOString();
         await atomicWriteJson(manifestPath, manifest);
+      }
 
-        const profile = profiles[variant.index]!;
-        const provider = providers[variant.index]!;
-        const replayRequest: StructuredRequest<T> = {
-          schemaName: parsed.request.schemaName,
-          schema: codec.schema,
-          ...(codec.wireSchema ? { wireSchema: codec.wireSchema } : {}),
-          jsonSchema: parsed.request.jsonSchema,
-          ...(codec.decodeResponse ? { decodeResponse: codec.decodeResponse } : {}),
-          ...(parsed.request.protocolVersion === undefined ? {} : { protocolVersion: parsed.request.protocolVersion }),
-          system: parsed.request.system,
-          prompt: parsed.request.prompt,
-          ...(parsed.request.temperature === undefined ? {} : { temperature: parsed.request.temperature }),
-          maxOutputTokens: parsed.request.maxOutputTokens,
-          ...(parsed.request.outputTokenCeiling === undefined
-            ? {}
-            : { outputTokenCeiling: parsed.request.outputTokenCeiling }),
-          ...(parsed.request.generationPhase === undefined ? {} : { generationPhase: parsed.request.generationPhase }),
-          ...(parsed.request.repairOfPhase === undefined ? {} : { repairOfPhase: parsed.request.repairOfPhase }),
-          ...(parsed.request.attemptKind === undefined ? {} : { attemptKind: parsed.request.attemptKind }),
-          ...(parsed.request.retryBackoffMs === undefined ? {} : { retryBackoffMs: parsed.request.retryBackoffMs }),
-        };
-        const reservationEstimate = estimatePlaytestReservation(
-          {
-            ...replayRequest,
-            maxOutputTokens: Math.min(
-              outputBudgetForPhase(
-                profile,
-                parsed.request.generationPhase ?? "decision",
-                parsed.request.repairOfPhase,
-              ),
-              parsed.request.outputTokenCeiling ?? Number.MAX_SAFE_INTEGER,
-            ),
-          } as StructuredRequest<unknown>,
-          options.price,
-        );
-        let reservation: symbol;
-        try {
-          reservation = await options.costManager.acquire(reservationEstimate);
-        } catch (error) {
-          if (!(error instanceof PlaytestCostLimitError)) throw error;
-          const record = FocusedReplayRecordSchema.parse({
+      const persisted = FocusedReplayRecordSchema.array().parse(
+        await readPlaytestJsonLines(resultsPath),
+      );
+      const latest = new Map<number, FocusedReplayRecord>();
+      for (const record of persisted) latest.set(record.variantIndex, record);
+      let interrupted = false;
+      for (const variant of manifest.variants) {
+        const record = latest.get(variant.index);
+        if (record) {
+          if (record.profileHash !== variant.profileHash) {
+            throw new Error(`Focused replay record ${variant.index} does not match its profile`);
+          }
+          variant.status =
+            record.outcome === "success"
+              ? "succeeded"
+              : record.outcome === "failure"
+                ? "failed"
+                : record.outcome;
+        } else if (variant.status === "running") {
+          const timestamp = now().toISOString();
+          const interruptedRecord = FocusedReplayRecordSchema.parse({
             variantIndex: variant.index,
             profileHash: variant.profileHash,
-            timestamp: now().toISOString(),
-            outcome: "cost_limit",
+            timestamp,
+            outcome: "interrupted",
             success: false,
             durationMs: 0,
             queueWaitMs: 0,
             providerCallMs: 0,
             estimatedCostUsd: 0,
-            costBasis: "no_call",
-            attribution: replayBoundaryAttribution("cost_limit", "hard_cost_ceiling"),
-            error: error.message,
+            costBasis: "unknown",
+            attribution: replayBoundaryAttribution("interrupted", "unrecorded_replay_call"),
+            error:
+              "Replay stopped with an in-flight or unrecorded call; cost is unknown and this replay ID will not call again",
           });
-          await appendPlaytestJsonLine(resultsPath, record);
-          latest.set(variant.index, record);
-          variant.status = "cost_limit";
-          manifest.status = "cost_limit";
-          break;
+          await appendPlaytestJsonLine(resultsPath, interruptedRecord);
+          latest.set(variant.index, interruptedRecord);
+          variant.status = "interrupted";
+          interrupted = true;
         }
-        if (options.signal?.aborted) {
-          options.costManager.release(reservation);
-          variant.status = "cancelled";
-          manifest.status = "cancelled";
-          break;
-        }
-
-        const startedAt = Date.now();
-        let providerCallStarted = false;
-        try {
-          const scheduled = await options.scheduler.schedule(parsed.provider, async () => {
-            providerCallStarted = true;
-            return provider.generateStructured(replayRequest);
-          }, options.signal);
-          const result = scheduled.value;
-          const hasUsage = result.usage?.billedCostUsd !== undefined
-            || result.usage?.inputTokens !== undefined
-            || result.usage?.outputTokens !== undefined;
-          const cost = estimatePlaytestCost(result.usage, options.price, reservationEstimate);
-          options.costManager.commit(reservation, cost);
-          const record = FocusedReplayRecordSchema.parse({
-            variantIndex: variant.index,
-            profileHash: variant.profileHash,
-            timestamp: now().toISOString(),
-            outcome: "success",
-            success: true,
-            durationMs: Date.now() - startedAt,
-            queueWaitMs: scheduled.queueWaitMs,
-            providerCallMs: scheduled.providerCallMs,
-            estimatedCostUsd: cost,
-            costBasis: hasUsage ? "reported_usage" : "reserved_estimate",
-          });
-          await appendPlaytestJsonLine(resultsPath, record);
-          latest.set(variant.index, record);
-          inMemoryResponses.set(variant.index, result.data);
-          variant.status = "succeeded";
-        } catch (error) {
-          const timing = scheduledCallTimingFor(error) ?? { queueWaitMs: 0, providerCallMs: 0 };
-          if (!providerCallStarted) {
-            options.costManager.release(reservation);
-          } else {
-            const usage = structuredFailureDetails(error)?.usage;
-            options.costManager.commit(
-              reservation,
-              estimatePlaytestCost(usage, options.price, reservationEstimate),
-            );
-          }
-          const cancelled = options.signal?.aborted === true && !providerCallStarted;
-          const attribution = cancelled
-            ? replayBoundaryAttribution("cancelled", "cancelled_before_provider_call")
-            : attributePlaytestFailure(error, { lane: "calibration", stage: "provider_call" });
-          const cost = providerCallStarted
-            ? estimatePlaytestCost(structuredFailureDetails(error)?.usage, options.price, reservationEstimate)
-            : 0;
-          const record = FocusedReplayRecordSchema.parse({
-            variantIndex: variant.index,
-            profileHash: variant.profileHash,
-            timestamp: now().toISOString(),
-            outcome: cancelled ? "cancelled" : "failure",
-            success: false,
-            durationMs: Date.now() - startedAt,
-            queueWaitMs: timing.queueWaitMs,
-            providerCallMs: timing.providerCallMs,
-            estimatedCostUsd: cost,
-            costBasis: providerCallStarted ? "reserved_estimate" : "no_call",
-            attribution,
-            error: safeError(error, options.secrets ?? []),
-          });
-          await appendPlaytestJsonLine(resultsPath, record);
-          latest.set(variant.index, record);
-          variant.status = cancelled ? "cancelled" : "failed";
-          if (cancelled) manifest.status = "cancelled";
-        }
-        manifest.totalEstimatedCostUsd = options.costManager.spentUsd;
-        manifest.updatedAt = now().toISOString();
-        await atomicWriteJson(manifestPath, manifest);
-        if (manifest.status !== "running") break;
       }
-    }
+      if (interrupted) {
+        manifest.status = "interrupted";
+        manifest.updatedAt = now().toISOString();
+        manifest.completedAt = manifest.updatedAt;
+        await atomicWriteJson(manifestPath, manifest);
+      }
 
-    if (manifest.status === "running") {
-      manifest.status = manifest.variants.some((variant) => variant.status === "failed")
-        ? "completed_with_failures"
-        : "completed";
-    }
-    manifest.completedAt ??= now().toISOString();
-    manifest.totalEstimatedCostUsd = options.costManager.spentUsd;
-    manifest.updatedAt = now().toISOString();
-    await atomicWriteJson(manifestPath, manifest);
+      const inMemoryResponses = new Map<number, unknown>();
+      if (!interrupted && manifest.status === "running") {
+        for (const variant of manifest.variants) {
+          if (latest.has(variant.index)) continue;
+          if (options.signal?.aborted) {
+            manifest.status = "cancelled";
+            break;
+          }
+          variant.status = "running";
+          manifest.updatedAt = now().toISOString();
+          await atomicWriteJson(manifestPath, manifest);
 
-    const results = [...latest.values()]
-      .sort((left, right) => left.variantIndex - right.variantIndex)
-      .map((record) => resultFromRecord(
-        record,
-        profiles[record.variantIndex]!,
-        inMemoryResponses.get(record.variantIndex),
-      ));
+          const profile = profiles[variant.index]!;
+          const provider = providers[variant.index]!;
+          const replayRequest: StructuredRequest<T> = {
+            schemaName: parsed.request.schemaName,
+            schema: codec.schema,
+            ...(codec.wireSchema ? { wireSchema: codec.wireSchema } : {}),
+            jsonSchema: parsed.request.jsonSchema,
+            ...(codec.decodeResponse ? { decodeResponse: codec.decodeResponse } : {}),
+            ...(parsed.request.protocolVersion === undefined
+              ? {}
+              : { protocolVersion: parsed.request.protocolVersion }),
+            system: parsed.request.system,
+            prompt: parsed.request.prompt,
+            ...(parsed.request.temperature === undefined
+              ? {}
+              : { temperature: parsed.request.temperature }),
+            maxOutputTokens: parsed.request.maxOutputTokens,
+            ...(parsed.request.outputTokenCeiling === undefined
+              ? {}
+              : { outputTokenCeiling: parsed.request.outputTokenCeiling }),
+            ...(parsed.request.generationPhase === undefined
+              ? {}
+              : { generationPhase: parsed.request.generationPhase }),
+            ...(parsed.request.repairOfPhase === undefined
+              ? {}
+              : { repairOfPhase: parsed.request.repairOfPhase }),
+            ...(parsed.request.attemptKind === undefined
+              ? {}
+              : { attemptKind: parsed.request.attemptKind }),
+            ...(parsed.request.retryBackoffMs === undefined
+              ? {}
+              : { retryBackoffMs: parsed.request.retryBackoffMs }),
+          };
+          const reservationEstimate = estimatePlaytestReservation(
+            {
+              ...replayRequest,
+              maxOutputTokens: Math.min(
+                outputBudgetForPhase(
+                  profile,
+                  parsed.request.generationPhase ?? "decision",
+                  parsed.request.repairOfPhase,
+                ),
+                parsed.request.outputTokenCeiling ?? Number.MAX_SAFE_INTEGER,
+              ),
+            } as StructuredRequest<unknown>,
+            options.price,
+          );
+          let reservation: symbol;
+          try {
+            reservation = await options.costManager.acquire(reservationEstimate);
+          } catch (error) {
+            if (!(error instanceof PlaytestCostLimitError)) throw error;
+            const record = FocusedReplayRecordSchema.parse({
+              variantIndex: variant.index,
+              profileHash: variant.profileHash,
+              timestamp: now().toISOString(),
+              outcome: "cost_limit",
+              success: false,
+              durationMs: 0,
+              queueWaitMs: 0,
+              providerCallMs: 0,
+              estimatedCostUsd: 0,
+              costBasis: "no_call",
+              attribution: replayBoundaryAttribution("cost_limit", "hard_cost_ceiling"),
+              error: error.message,
+            });
+            await appendPlaytestJsonLine(resultsPath, record);
+            latest.set(variant.index, record);
+            variant.status = "cost_limit";
+            manifest.status = "cost_limit";
+            break;
+          }
+          if (options.signal?.aborted) {
+            options.costManager.release(reservation);
+            variant.status = "cancelled";
+            manifest.status = "cancelled";
+            break;
+          }
+
+          const startedAt = Date.now();
+          let providerCallStarted = false;
+          try {
+            const scheduled = await options.scheduler.schedule(
+              parsed.provider,
+              async () => {
+                providerCallStarted = true;
+                return provider.generateStructured(replayRequest);
+              },
+              options.signal,
+            );
+            const result = scheduled.value;
+            const hasUsage =
+              result.usage?.billedCostUsd !== undefined ||
+              result.usage?.inputTokens !== undefined ||
+              result.usage?.outputTokens !== undefined;
+            const cost = estimatePlaytestCost(result.usage, options.price, reservationEstimate);
+            options.costManager.commit(reservation, cost);
+            const record = FocusedReplayRecordSchema.parse({
+              variantIndex: variant.index,
+              profileHash: variant.profileHash,
+              timestamp: now().toISOString(),
+              outcome: "success",
+              success: true,
+              durationMs: Date.now() - startedAt,
+              queueWaitMs: scheduled.queueWaitMs,
+              providerCallMs: scheduled.providerCallMs,
+              estimatedCostUsd: cost,
+              costBasis: hasUsage ? "reported_usage" : "reserved_estimate",
+            });
+            await appendPlaytestJsonLine(resultsPath, record);
+            latest.set(variant.index, record);
+            inMemoryResponses.set(variant.index, result.data);
+            variant.status = "succeeded";
+          } catch (error) {
+            const timing = scheduledCallTimingFor(error) ?? { queueWaitMs: 0, providerCallMs: 0 };
+            if (!providerCallStarted) {
+              options.costManager.release(reservation);
+            } else {
+              const usage = structuredFailureDetails(error)?.usage;
+              options.costManager.commit(
+                reservation,
+                estimatePlaytestCost(usage, options.price, reservationEstimate),
+              );
+            }
+            const cancelled = options.signal?.aborted === true && !providerCallStarted;
+            const attribution = cancelled
+              ? replayBoundaryAttribution("cancelled", "cancelled_before_provider_call")
+              : attributePlaytestFailure(error, { lane: "calibration", stage: "provider_call" });
+            const cost = providerCallStarted
+              ? estimatePlaytestCost(
+                  structuredFailureDetails(error)?.usage,
+                  options.price,
+                  reservationEstimate,
+                )
+              : 0;
+            const record = FocusedReplayRecordSchema.parse({
+              variantIndex: variant.index,
+              profileHash: variant.profileHash,
+              timestamp: now().toISOString(),
+              outcome: cancelled ? "cancelled" : "failure",
+              success: false,
+              durationMs: Date.now() - startedAt,
+              queueWaitMs: timing.queueWaitMs,
+              providerCallMs: timing.providerCallMs,
+              estimatedCostUsd: cost,
+              costBasis: providerCallStarted ? "reserved_estimate" : "no_call",
+              attribution,
+              error: safeError(error, options.secrets ?? []),
+            });
+            await appendPlaytestJsonLine(resultsPath, record);
+            latest.set(variant.index, record);
+            variant.status = cancelled ? "cancelled" : "failed";
+            if (cancelled) manifest.status = "cancelled";
+          }
+          manifest.totalEstimatedCostUsd = options.costManager.spentUsd;
+          manifest.updatedAt = now().toISOString();
+          await atomicWriteJson(manifestPath, manifest);
+          if (manifest.status !== "running") break;
+        }
+      }
+
+      if (manifest.status === "running") {
+        manifest.status = manifest.variants.some((variant) => variant.status === "failed")
+          ? "completed_with_failures"
+          : "completed";
+      }
+      manifest.completedAt ??= now().toISOString();
+      manifest.totalEstimatedCostUsd = options.costManager.spentUsd;
+      manifest.updatedAt = now().toISOString();
+      await atomicWriteJson(manifestPath, manifest);
+
+      const results = [...latest.values()]
+        .sort((left, right) => left.variantIndex - right.variantIndex)
+        .map((record) =>
+          resultFromRecord(
+            record,
+            profiles[record.variantIndex]!,
+            inMemoryResponses.get(record.variantIndex),
+          ),
+        );
       return {
         replayId,
         directory,

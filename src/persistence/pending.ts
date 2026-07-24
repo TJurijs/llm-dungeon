@@ -31,20 +31,60 @@ export const PendingAppealSchema = z.object({
 
 export const PendingRequestSchema = z.union([PendingGameplayActionSchema, PendingAppealSchema]);
 
-const PendingCommitSchema = z.object({
+const PendingCommitBaseSchema = z.object({
   kind: z.literal("commit"),
-  writes: z.record(z.string().min(1), z.string()).refine(
-    (writes) => Object.prototype.hasOwnProperty.call(writes, "manifest.json"),
-    "A pending commit must include manifest.json",
-  ),
+  writes: z
+    .record(z.string().min(1), z.string())
+    .refine(
+      (writes) => Object.prototype.hasOwnProperty.call(writes, "manifest.json"),
+      "A pending commit must include manifest.json",
+    ),
   campaignId: SafeIdSchema,
   expectedPreviousTurn: z.number().int().nonnegative(),
   targetTurn: z.number().int().positive(),
   preManifestHash: z.string().regex(/^[a-f0-9]{64}$/i, "must be a SHA-256 hash"),
-}).refine(
-  (commit) => commit.targetTurn === commit.expectedPreviousTurn + 1,
-  { path: ["targetTurn"], message: "must immediately follow expectedPreviousTurn" },
-);
+});
+
+const LegacyPendingCommitSchema = PendingCommitBaseSchema.extend({
+  formatVersion: z.never().optional(),
+  preimages: z.never().optional(),
+}).refine((commit) => commit.targetTurn === commit.expectedPreviousTurn + 1, {
+  path: ["targetTurn"],
+  message: "must immediately follow expectedPreviousTurn",
+});
+
+export const CURRENT_PENDING_COMMIT_FORMAT_VERSION = 2 as const;
+
+const CurrentPendingCommitSchema = PendingCommitBaseSchema.extend({
+  formatVersion: z.literal(CURRENT_PENDING_COMMIT_FORMAT_VERSION),
+  preimages: z.record(z.string().min(1), z.string().nullable()),
+}).superRefine((commit, context) => {
+  if (commit.targetTurn !== commit.expectedPreviousTurn + 1) {
+    context.addIssue({
+      code: "custom",
+      path: ["targetTurn"],
+      message: "must immediately follow expectedPreviousTurn",
+    });
+  }
+  const writePaths = Object.keys(commit.writes).sort();
+  const preimagePaths = Object.keys(commit.preimages).sort();
+  if (JSON.stringify(preimagePaths) !== JSON.stringify(writePaths)) {
+    context.addIssue({
+      code: "custom",
+      path: ["preimages"],
+      message: "must contain exactly one preimage for every planned write",
+    });
+  }
+  if (commit.preimages["manifest.json"] === null) {
+    context.addIssue({
+      code: "custom",
+      path: ["preimages", "manifest.json"],
+      message: "must preserve the existing manifest",
+    });
+  }
+});
+
+export const PendingCommitSchema = z.union([CurrentPendingCommitSchema, LegacyPendingCommitSchema]);
 
 export const PendingTurnSchema = z.union([PendingRequestSchema, PendingCommitSchema]);
 

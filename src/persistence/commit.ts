@@ -1,17 +1,28 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { assertCampaignStateConsistency } from "../domain/state-consistency.js";
+import { isDeepStrictEqual } from "node:util";
+import { assertAppealOperations } from "../domain/appeal.js";
+import { assertDeterministicConsistency } from "../domain/operation-consistency.js";
+import {
+  assertCampaignStateConsistency,
+  inventoryCycleEdges,
+  normalizeLegacyLooseItemOwnership,
+} from "../domain/state-consistency.js";
+import { applyOperations } from "../domain/transaction-application.js";
 import {
   ManifestSchema,
+  type ChronicleEvent,
   type Entity,
   type GameState,
+  type Thread,
 } from "../schemas.js";
 import {
   parseChronicle,
   parseEntity,
   parseThreads,
   entityFilename,
+  renderEntity,
   validatePreparedTurnLog,
 } from "./markdown.js";
 import type { PendingCommit } from "./pending.js";
@@ -22,17 +33,18 @@ export function contentHash(content: string): string {
 }
 
 function commitTarget(currentDir: string, relative: string): string {
-  const supported = relative === "manifest.json"
-    || relative === "threads.md"
-    || relative === "chronicle.md"
-    || /^entities\/[^/\\]+\.md$/.test(relative)
-    || /^turns\/\d{6}\.md$/.test(relative);
+  const supported =
+    relative === "manifest.json" ||
+    relative === "threads.md" ||
+    relative === "chronicle.md" ||
+    /^entities\/[^/\\]+\.md$/.test(relative) ||
+    /^turns\/\d{6}\.md$/.test(relative);
   if (
-    !supported
-    || relative.includes("\0")
-    || path.posix.normalize(relative) !== relative
-    || path.isAbsolute(relative)
-    || path.win32.isAbsolute(relative)
+    !supported ||
+    relative.includes("\0") ||
+    path.posix.normalize(relative) !== relative ||
+    path.isAbsolute(relative) ||
+    path.win32.isAbsolute(relative)
   ) {
     throw new Error(`Unsafe or unsupported path in pending commit: ${relative}`);
   }
@@ -44,11 +56,38 @@ function commitTarget(currentDir: string, relative: string): string {
   return target;
 }
 
+/**
+ * Capture the exact pre-turn contents for every planned target. New pending
+ * commits retain these preimages so recovery can reconstruct the authoritative
+ * base state after any subset of non-manifest writes has already landed.
+ */
+export async function capturePendingCommitPreimages(
+  currentDir: string,
+  writes: Record<string, string>,
+): Promise<Record<string, string | null>> {
+  const preimages: Record<string, string | null> = {};
+  for (const relative of Object.keys(writes).sort()) {
+    const target = commitTarget(currentDir, relative);
+    preimages[relative] = (await pathExists(target)) ? await readFile(target, "utf8") : null;
+  }
+  return preimages;
+}
+
+interface DurableSnapshot {
+  manifest: GameState;
+  entities: Map<string, Entity>;
+  threads: Thread[];
+  chronicle: ChronicleEvent[];
+}
+
+type CurrentPendingCommit = Extract<PendingCommit, { formatVersion: 2 }>;
+
 async function validateProjectedSnapshot(
   currentDir: string,
   writes: Record<string, string>,
   targetManifest: GameState,
-): Promise<void> {
+  allowedInventoryCycleEdges?: ReadonlySet<string>,
+): Promise<DurableSnapshot> {
   const entityDir = path.join(currentDir, "entities");
   const existingEntityDocuments = new Map<string, string>();
   const entityDocuments = new Map<string, string>();
@@ -70,34 +109,48 @@ async function validateProjectedSnapshot(
   }
 
   const entities = new Map<string, Entity>();
-  for (const [name, content] of [...entityDocuments.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [name, content] of [...entityDocuments.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
     const entity = parseEntity(content, plannedEntityFiles.has(name));
     if (plannedEntityFiles.has(name)) {
       const existingContent = existingEntityDocuments.get(name);
       if (!existingContent) {
         if (name !== entityFilename(entity.id)) {
-          throw new Error(`New entity ${entity.id} must use generated filename ${entityFilename(entity.id)}`);
+          throw new Error(
+            `New entity ${entity.id} must use generated filename ${entityFilename(entity.id)}`,
+          );
         }
       } else {
         const existing = parseEntity(existingContent);
         if (entity.id !== existing.id) {
-          throw new Error(`Planned entity write ${name} cannot change durable ID ${existing.id} to ${entity.id}`);
+          throw new Error(
+            `Planned entity write ${name} cannot change durable ID ${existing.id} to ${entity.id}`,
+          );
         }
         if (entity.kind !== existing.kind) {
-          throw new Error(`Planned entity write ${name} cannot change immutable kind for ${existing.id}`);
+          throw new Error(
+            `Planned entity write ${name} cannot change immutable kind for ${existing.id}`,
+          );
         }
         if (entity.description !== existing.description) {
-          throw new Error(`Planned entity write ${name} cannot rewrite immutable description for ${existing.id}`);
+          throw new Error(
+            `Planned entity write ${name} cannot rewrite immutable description for ${existing.id}`,
+          );
         }
         for (const trait of existing.traits) {
           if (!entity.traits.includes(trait)) {
             throw new Error(`Planned entity write ${name} drops established trait ${trait}`);
           }
         }
-        const relationshipTargets = new Set(entity.relationships.map((relationship) => relationship.targetId));
+        const relationshipTargets = new Set(
+          entity.relationships.map((relationship) => relationship.targetId),
+        );
         for (const relationship of existing.relationships) {
           if (!relationshipTargets.has(relationship.targetId)) {
-            throw new Error(`Planned entity write ${name} drops relationship to ${relationship.targetId}`);
+            throw new Error(
+              `Planned entity write ${name} drops relationship to ${relationship.targetId}`,
+            );
           }
         }
         const facts = new Map(entity.facts.map((fact) => [fact.id, fact]));
@@ -107,7 +160,9 @@ async function validateProjectedSnapshot(
             throw new Error(`Planned entity write ${name} drops durable fact ${fact.id}`);
           }
           if (retained.section !== fact.section || retained.text !== fact.text) {
-            throw new Error(`Planned entity write ${name} rewrites durable fact history ${fact.id}`);
+            throw new Error(
+              `Planned entity write ${name} rewrites durable fact history ${fact.id}`,
+            );
           }
           if (!fact.active && retained.active) {
             throw new Error(`Planned entity write ${name} reactivates superseded fact ${fact.id}`);
@@ -129,7 +184,8 @@ async function validateProjectedSnapshot(
     const plannedById = new Map(threads.map((thread) => [thread.id, thread]));
     for (const existing of currentThreads) {
       const planned = plannedById.get(existing.id);
-      if (!planned) throw new Error(`Planned threads document drops existing thread ${existing.id}`);
+      if (!planned)
+        throw new Error(`Planned threads document drops existing thread ${existing.id}`);
       if (planned.title !== existing.title) {
         throw new Error(`Planned threads document changes immutable title for ${existing.id}`);
       }
@@ -139,23 +195,163 @@ async function validateProjectedSnapshot(
     }
   }
 
-  const currentChronicle = parseChronicle(await readFile(path.join(currentDir, "chronicle.md"), "utf8"));
+  const currentChronicle = parseChronicle(
+    await readFile(path.join(currentDir, "chronicle.md"), "utf8"),
+  );
   const chronicle = Object.prototype.hasOwnProperty.call(writes, "chronicle.md")
     ? parseChronicle(writes["chronicle.md"]!, true)
     : currentChronicle;
   if (Object.prototype.hasOwnProperty.call(writes, "chronicle.md")) {
     for (const [index, existing] of currentChronicle.entries()) {
       const planned = chronicle[index];
-      if (!planned
-        || planned.id !== existing.id
-        || planned.text !== existing.text
-        || planned.turn !== existing.turn) {
+      if (
+        !planned ||
+        planned.id !== existing.id ||
+        planned.text !== existing.text ||
+        planned.turn !== existing.turn
+      ) {
         throw new Error(`Planned chronicle document does not preserve event ${existing.id}`);
       }
     }
   }
 
-  assertCampaignStateConsistency(targetManifest, entities, threads, chronicle);
+  normalizeLegacyLooseItemOwnership(entities);
+  assertCampaignStateConsistency(targetManifest, entities, threads, chronicle, {
+    allowedInventoryCycleEdges: allowedInventoryCycleEdges ?? inventoryCycleEdges(entities),
+  });
+  return { manifest: targetManifest, entities, threads, chronicle };
+}
+
+async function currentContent(target: string): Promise<string | null> {
+  if (!(await pathExists(target))) return null;
+  return readFile(target, "utf8");
+}
+
+async function validateCommitBoundaryFiles(
+  currentDir: string,
+  commit: PendingCommit,
+): Promise<void> {
+  if (commit.formatVersion !== 2) return;
+  for (const [relative, targetContent] of Object.entries(commit.writes)) {
+    const before = commit.preimages[relative]!;
+    const current = await currentContent(commitTarget(currentDir, relative));
+    if (current !== before && current !== targetContent) {
+      throw new Error(
+        `Pending commit target ${relative} matches neither its pre-state nor projected write`,
+      );
+    }
+  }
+}
+
+async function loadPreimageSnapshot(
+  currentDir: string,
+  commit: CurrentPendingCommit,
+): Promise<DurableSnapshot> {
+  const manifestText = commit.preimages["manifest.json"];
+  if (manifestText === null || manifestText === undefined) {
+    throw new Error("Pending commit pre-state is missing its manifest");
+  }
+  if (contentHash(manifestText) !== commit.preManifestHash) {
+    throw new Error("Pending commit pre-state manifest hash does not match");
+  }
+  const manifest = ManifestSchema.parse(JSON.parse(manifestText));
+  if (manifest.campaignId !== commit.campaignId || manifest.turn !== commit.expectedPreviousTurn) {
+    throw new Error("Pending commit pre-state manifest does not match its recovery metadata");
+  }
+
+  const entityDir = path.join(currentDir, "entities");
+  const entityNames = new Set((await readdir(entityDir)).filter((name) => name.endsWith(".md")));
+  for (const relative of Object.keys(commit.preimages)) {
+    if (relative.startsWith("entities/")) {
+      entityNames.add(relative.slice("entities/".length));
+    }
+  }
+  const entities = new Map<string, Entity>();
+  for (const name of [...entityNames].sort()) {
+    const relative = `entities/${name}`;
+    const content = Object.prototype.hasOwnProperty.call(commit.preimages, relative)
+      ? commit.preimages[relative]
+      : await readFile(path.join(entityDir, name), "utf8");
+    if (content === null || content === undefined) continue;
+    const entity = parseEntity(content);
+    if (entities.has(entity.id)) {
+      throw new Error(`Pending commit pre-state contains duplicate entity ID ${entity.id}`);
+    }
+    entities.set(entity.id, entity);
+  }
+
+  const preimageDocument = async (relative: "threads.md" | "chronicle.md"): Promise<string> => {
+    if (Object.prototype.hasOwnProperty.call(commit.preimages, relative)) {
+      const content = commit.preimages[relative];
+      if (content === null || content === undefined) {
+        throw new Error(`Pending commit pre-state is missing ${relative}`);
+      }
+      return content;
+    }
+    return readFile(path.join(currentDir, relative), "utf8");
+  };
+  const threads = parseThreads(await preimageDocument("threads.md"));
+  const chronicle = parseChronicle(await preimageDocument("chronicle.md"));
+  normalizeLegacyLooseItemOwnership(entities);
+  assertCampaignStateConsistency(manifest, entities, threads, chronicle, {
+    allowedInventoryCycleEdges: inventoryCycleEdges(entities),
+  });
+  return { manifest, entities, threads, chronicle };
+}
+
+function snapshotEntities(entities: Map<string, Entity>): Array<[string, Entity]> {
+  return [...entities.entries()]
+    .map(([id, entity]) => [id, parseEntity(renderEntity(entity))] as [string, Entity])
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function assertSnapshotsEqual(expected: DurableSnapshot, actual: DurableSnapshot): void {
+  const comparisons: Array<[string, unknown, unknown]> = [
+    ["manifest", expected.manifest, actual.manifest],
+    ["entities", snapshotEntities(expected.entities), snapshotEntities(actual.entities)],
+    ["threads", expected.threads, actual.threads],
+    ["chronicle", expected.chronicle, actual.chronicle],
+  ];
+  for (const [label, expectedValue, actualValue] of comparisons) {
+    if (!isDeepStrictEqual(expectedValue, actualValue)) {
+      throw new Error(`Pending commit operation ledger does not produce its projected ${label}`);
+    }
+  }
+}
+
+function validateOperationBinding(
+  commit: PendingCommit,
+  ledger: ReturnType<typeof validatePreparedTurnLog>,
+  projected: DurableSnapshot,
+  base: DurableSnapshot | undefined,
+): void {
+  // Legacy pending commits did not retain enough pre-state to replay after a
+  // partial write. They remain recoverable through the established structural
+  // validation path; every newly prepared commit carries preimages.
+  if (commit.formatVersion !== 2 || !base) return;
+  if (ledger.kind === "appeal") assertAppealOperations(ledger.operations, base.entities);
+  assertDeterministicConsistency(ledger.operations, base.entities);
+  const replayed: DurableSnapshot = {
+    manifest: structuredClone(base.manifest),
+    entities: new Map(
+      [...base.entities.entries()].map(([id, entity]) => [id, structuredClone(entity)]),
+    ),
+    threads: structuredClone(base.threads),
+    chronicle: structuredClone(base.chronicle),
+  };
+  replayed.manifest.turn = commit.targetTurn;
+  applyOperations(
+    ledger.operations,
+    commit.targetTurn,
+    replayed.manifest,
+    replayed.entities,
+    replayed.threads,
+    replayed.chronicle,
+    { allowedInventoryCycleEdges: inventoryCycleEdges(base.entities) },
+  );
+  // updatedAt is commit metadata rather than a state operation.
+  replayed.manifest.updatedAt = projected.manifest.updatedAt;
+  assertSnapshotsEqual(projected, replayed);
 }
 
 interface ValidatedCommitPlan {
@@ -165,10 +361,14 @@ interface ValidatedCommitPlan {
   targetManifestText: string;
 }
 
-async function validateCommitPlan(currentDir: string, commit: PendingCommit): Promise<ValidatedCommitPlan> {
+async function validateCommitPlan(
+  currentDir: string,
+  commit: PendingCommit,
+): Promise<ValidatedCommitPlan> {
   const targets = new Map(
     Object.keys(commit.writes).map((relative) => [relative, commitTarget(currentDir, relative)]),
   );
+  await validateCommitBoundaryFiles(currentDir, commit);
   const targetTurnPath = `turns/${String(commit.targetTurn).padStart(6, "0")}.md`;
   const turnPaths = Object.keys(commit.writes).filter((relative) => relative.startsWith("turns/"));
   if (!Object.prototype.hasOwnProperty.call(commit.writes, targetTurnPath)) {
@@ -180,7 +380,11 @@ async function validateCommitPlan(currentDir: string, commit: PendingCommit): Pr
 
   const targetManifestText = commit.writes["manifest.json"]!;
   const targetManifestInput: unknown = JSON.parse(targetManifestText);
-  if (!targetManifestInput || typeof targetManifestInput !== "object" || Array.isArray(targetManifestInput)) {
+  if (
+    !targetManifestInput ||
+    typeof targetManifestInput !== "object" ||
+    Array.isArray(targetManifestInput)
+  ) {
     throw new Error("Pending commit target manifest must be an object");
   }
   for (const key of [
@@ -202,7 +406,10 @@ async function validateCommitPlan(currentDir: string, commit: PendingCommit): Pr
     }
   }
   const targetManifest = ManifestSchema.parse(targetManifestInput);
-  if (targetManifest.campaignId !== commit.campaignId || targetManifest.turn !== commit.targetTurn) {
+  if (
+    targetManifest.campaignId !== commit.campaignId ||
+    targetManifest.turn !== commit.targetTurn
+  ) {
     throw new Error("Pending commit target manifest does not match its recovery metadata");
   }
 
@@ -224,16 +431,23 @@ async function validateCommitPlan(currentDir: string, commit: PendingCommit): Pr
   if (currentManifest.campaignId !== commit.campaignId) {
     throw new Error("Pending commit belongs to another campaign");
   }
-  if (targetManifest.schemaVersion !== currentManifest.schemaVersion
-    || targetManifest.campaignId !== currentManifest.campaignId
-    || targetManifest.title !== currentManifest.title
-    || targetManifest.playerId !== currentManifest.playerId
-    || targetManifest.language !== currentManifest.language
-    || targetManifest.createdAt !== currentManifest.createdAt) {
+  if (
+    targetManifest.schemaVersion !== currentManifest.schemaVersion ||
+    targetManifest.campaignId !== currentManifest.campaignId ||
+    targetManifest.title !== currentManifest.title ||
+    targetManifest.playerId !== currentManifest.playerId ||
+    targetManifest.language !== currentManifest.language ||
+    targetManifest.createdAt !== currentManifest.createdAt
+  ) {
     throw new Error("Pending commit changes immutable campaign manifest fields");
   }
-  if (currentManifest.turn !== commit.expectedPreviousTurn && currentManifest.turn !== commit.targetTurn) {
-    throw new Error(`Pending commit expected turn ${commit.expectedPreviousTurn} or ${commit.targetTurn}, found ${currentManifest.turn}`);
+  if (
+    currentManifest.turn !== commit.expectedPreviousTurn &&
+    currentManifest.turn !== commit.targetTurn
+  ) {
+    throw new Error(
+      `Pending commit expected turn ${commit.expectedPreviousTurn} or ${commit.targetTurn}, found ${currentManifest.turn}`,
+    );
   }
   if (currentManifest.turn === commit.expectedPreviousTurn) {
     if (currentManifest.status !== "active") {
@@ -243,15 +457,25 @@ async function validateCommitPlan(currentDir: string, commit: PendingCommit): Pr
       throw new Error("Pending commit cannot rewind elapsed campaign time");
     }
   }
-  if (currentManifest.turn === commit.expectedPreviousTurn
-    && contentHash(currentManifestText) !== commit.preManifestHash) {
+  if (
+    currentManifest.turn === commit.expectedPreviousTurn &&
+    contentHash(currentManifestText) !== commit.preManifestHash
+  ) {
     throw new Error("Pending commit pre-state manifest hash does not match");
   }
 
   // Overlay every planned payload in memory and validate the resulting complete
   // campaign before the first authoritative write. This catches individually
   // malformed documents as well as valid documents whose references conflict.
-  await validateProjectedSnapshot(currentDir, commit.writes, targetManifest);
+  const base =
+    commit.formatVersion === 2 ? await loadPreimageSnapshot(currentDir, commit) : undefined;
+  const projected = await validateProjectedSnapshot(
+    currentDir,
+    commit.writes,
+    targetManifest,
+    base ? inventoryCycleEdges(base.entities) : undefined,
+  );
+  validateOperationBinding(commit, targetTurnLedger, projected, base);
 
   return { targets, currentManifest, currentManifestText, targetManifestText };
 }
@@ -265,10 +489,18 @@ async function assertCommittedWritesMatch(
     if (!(await pathExists(target))) {
       throw new Error(`Committed campaign is missing planned write ${relative}`);
     }
-    if (await readFile(target, "utf8") !== expected) {
+    if ((await readFile(target, "utf8")) !== expected) {
       throw new Error(`Committed campaign differs from planned write ${relative}`);
     }
   }
+}
+
+/** Validate a complete commit plan before its durable recovery record exists. */
+export async function preflightPendingCommit(
+  currentDir: string,
+  commit: PendingCommit,
+): Promise<void> {
+  await validateCommitPlan(currentDir, commit);
 }
 
 /** Execute a fully preflighted pending commit, with the manifest written last. */

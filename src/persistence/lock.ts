@@ -16,9 +16,7 @@ interface LockSnapshot {
 }
 
 type LockSnapshotResult =
-  | { kind: "missing" }
-  | { kind: "unstable" }
-  | { kind: "present"; snapshot: LockSnapshot };
+  { kind: "missing" } | { kind: "unstable" } | { kind: "present"; snapshot: LockSnapshot };
 
 function isTransientWindowsLockError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
@@ -50,11 +48,13 @@ function parseLockOwner(contents: Buffer): LockOwner | undefined {
 }
 
 function sameFileVersion(left: Stats, right: Stats): boolean {
-  return left.dev === right.dev
-    && left.ino === right.ino
-    && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
 }
 
 async function readLockSnapshot(target: string): Promise<LockSnapshotResult> {
@@ -81,7 +81,11 @@ async function readLockSnapshot(target: string): Promise<LockSnapshotResult> {
   return {
     kind: "present",
     snapshot: {
-      fingerprint: createHash("sha256").update(fileIdentity).update("\0").update(contents).digest("hex"),
+      fingerprint: createHash("sha256")
+        .update(fileIdentity)
+        .update("\0")
+        .update(contents)
+        .digest("hex"),
       modifiedAt: after.mtimeMs,
       owner: parseLockOwner(contents),
     },
@@ -101,11 +105,14 @@ async function claimStaleSnapshot(target: string, fingerprint: string): Promise<
     try {
       const handle = await open(claimPath, "wx", 0o600);
       try {
-        await handle.writeFile(`${JSON.stringify({
-          pid: process.pid,
-          token: randomUUID(),
-          createdAt: new Date().toISOString(),
-        })}\n`, "utf8");
+        await handle.writeFile(
+          `${JSON.stringify({
+            pid: process.pid,
+            token: randomUUID(),
+            createdAt: new Date().toISOString(),
+          })}\n`,
+          "utf8",
+        );
       } finally {
         await handle.close();
       }
@@ -125,11 +132,12 @@ async function removeStaleLock(target: string): Promise<boolean> {
   const observed = await readLockSnapshot(target);
   if (observed.kind === "missing") return true;
   if (observed.kind === "unstable" || !snapshotIsStale(observed.snapshot)) return false;
-  if (!await claimStaleSnapshot(target, observed.snapshot.fingerprint)) return false;
+  if (!(await claimStaleSnapshot(target, observed.snapshot.fingerprint))) return false;
 
   const current = await readLockSnapshot(target);
   if (current.kind === "missing") return true;
-  if (current.kind === "unstable" || current.snapshot.fingerprint !== observed.snapshot.fingerprint) return false;
+  if (current.kind === "unstable" || current.snapshot.fingerprint !== observed.snapshot.fingerprint)
+    return false;
   try {
     await unlink(target);
     return true;
@@ -159,7 +167,10 @@ async function acquireFileLockWithRetry(
     try {
       return await acquireFileLock(target, label);
     } catch (error) {
-      if (!/locked by another running process/i.test(String((error as Error).message)) || Date.now() >= deadline) {
+      if (
+        !/locked by another running process/i.test(String((error as Error).message)) ||
+        Date.now() >= deadline
+      ) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, retryMs));
@@ -182,12 +193,22 @@ export async function withSerializedFileLock<T>(
   const queueKey = path.resolve(target);
   const previous = serializedProcessQueues.get(queueKey) ?? Promise.resolve();
   let releaseQueue!: () => void;
-  const current = new Promise<void>((resolve) => { releaseQueue = resolve; });
-  const tail = previous.then(() => current, () => current);
+  const current = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const tail = previous.then(
+    () => current,
+    () => current,
+  );
   serializedProcessQueues.set(queueKey, tail);
   await previous.catch(() => undefined);
   try {
-    const release = await acquireFileLockWithRetry(target, label, options.waitMs ?? 5_000, options.retryMs ?? 25);
+    const release = await acquireFileLockWithRetry(
+      target,
+      label,
+      options.waitMs ?? 5_000,
+      options.retryMs ?? 25,
+    );
     try {
       return await operation();
     } finally {
@@ -207,7 +228,10 @@ export async function acquireFileLock(target: string, label: string): Promise<()
     try {
       const handle = await open(target, "wx", 0o600);
       try {
-        await handle.writeFile(`${JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() })}\n`, "utf8");
+        await handle.writeFile(
+          `${JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() })}\n`,
+          "utf8",
+        );
       } finally {
         await handle.close();
       }
@@ -219,12 +243,13 @@ export async function acquireFileLock(target: string, label: string): Promise<()
           if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
           throw error;
         }
-        if (current.token !== token) throw new Error(`${label} lock ownership changed unexpectedly`);
+        if (current.token !== token)
+          throw new Error(`${label} lock ownership changed unexpectedly`);
         await unlink(target);
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (attempt === 0 && await removeStaleLock(target)) continue;
+      if (attempt === 0 && (await removeStaleLock(target))) continue;
       throw new Error(`${label} is locked by another running process`);
     }
   }

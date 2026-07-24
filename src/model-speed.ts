@@ -185,7 +185,10 @@ export function modelSpeedRating(provider: string, modelId: string): ModelSpeedR
   return MODEL_SPEED[openRouterModelId(provider, modelId)];
 }
 
-export function modelSpeedEstimate(provider: string, modelId: string): ModelSpeedEstimate | undefined {
+export function modelSpeedEstimate(
+  provider: string,
+  modelId: string,
+): ModelSpeedEstimate | undefined {
   const estimate = MODEL_SPEED_ESTIMATES[openRouterModelId(provider, modelId)];
   return estimate === undefined ? undefined : { ...estimate };
 }

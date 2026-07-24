@@ -1,8 +1,5 @@
 import { assertDeterministicConsistency } from "./operation-consistency.js";
-import {
-  mapOperationReferences,
-  visitOperationReferences,
-} from "./operation-references.js";
+import { mapOperationReferences, visitOperationReferences } from "./operation-references.js";
 import { rejectDomainChange } from "./validation-error.js";
 import {
   StateOperationSchema,
@@ -21,8 +18,13 @@ function assignGeneratedIds(
   chronicle: ChronicleEvent[],
 ): StateOperation[] {
   const namespaceForKind: Record<Entity["kind"], string> = {
-    person: "npc", location: "location", item: "item", faction: "faction",
-    creature: "creature", event: "event", other: "entity",
+    person: "npc",
+    location: "location",
+    item: "item",
+    faction: "faction",
+    creature: "creature",
+    event: "event",
+    other: "entity",
   };
   const usedEntities = new Set(entities.keys());
   const entityHints = new Map<string, string>();
@@ -33,27 +35,36 @@ function assignGeneratedIds(
     }
     entityHints.set(
       operation.entity.id,
-      allocateGeneratedId(namespaceForKind[operation.entity.kind], operation.entity.name, turn, usedEntities),
+      allocateGeneratedId(
+        namespaceForKind[operation.entity.kind],
+        operation.entity.name,
+        turn,
+        usedEntities,
+      ),
     );
   }
   const entityReference = (id: string): string => entityHints.get(id) ?? id;
   const operations = input.map((operation): StateOperation => {
-    const assigned = operation.type === "create_entity"
-      ? {
-        ...operation,
-        entity: {
-          ...operation.entity,
-          id: entityReference(operation.entity.id),
-        },
-      } satisfies StateOperation
-      : operation;
+    const assigned =
+      operation.type === "create_entity"
+        ? ({
+            ...operation,
+            entity: {
+              ...operation.entity,
+              id: entityReference(operation.entity.id),
+            },
+          } satisfies StateOperation)
+        : operation;
     return mapOperationReferences(assigned, (reference, role) =>
       role.kind === "entity" || role.kind === "location" || role.kind === "item"
         ? entityReference(reference)
-        : reference);
+        : reference,
+    );
   });
 
-  const usedFacts = new Set([...entities.values()].flatMap((entity) => entity.facts.map((fact) => fact.id)));
+  const usedFacts = new Set(
+    [...entities.values()].flatMap((entity) => entity.facts.map((fact) => fact.id)),
+  );
   const usedThreads = new Set(threads.map((thread) => thread.id));
   const usedEvents = new Set(chronicle.map((event) => event.id));
   const factHints = new Map<string, string>();
@@ -68,7 +79,10 @@ function assignGeneratedIds(
     }
     if (operation.type === "supersede_fact") {
       const replacementFactId = allocateGeneratedId("fact", operation.targetId, turn, usedFacts);
-      if (operation.replacementFactId !== "generated:auto" && !factHints.has(operation.replacementFactId)) {
+      if (
+        operation.replacementFactId !== "generated:auto" &&
+        !factHints.has(operation.replacementFactId)
+      ) {
         factHints.set(operation.replacementFactId, replacementFactId);
       }
       return { ...operation, replacementFactId };
@@ -81,20 +95,29 @@ function assignGeneratedIds(
       return { ...operation, threadId };
     }
     if (operation.type === "record_major_event") {
-      return { ...operation, eventId: allocateGeneratedId("event", operation.text, turn, usedEvents) };
+      return {
+        ...operation,
+        eventId: allocateGeneratedId("event", operation.text, turn, usedEvents),
+      };
     }
     return structuredClone(operation);
   });
 
-  return StateOperationSchema.array().parse(generated.map((operation) =>
-    mapOperationReferences(operation, (reference, role) => {
-      if (role.kind === "active_fact") return factHints.get(reference) ?? reference;
-      if (role.kind === "thread") return threadHints.get(reference) ?? reference;
-      return reference;
-    })));
+  return StateOperationSchema.array().parse(
+    generated.map((operation) =>
+      mapOperationReferences(operation, (reference, role) => {
+        if (role.kind === "active_fact") return factHints.get(reference) ?? reference;
+        if (role.kind === "thread") return threadHints.get(reference) ?? reference;
+        return reference;
+      }),
+    ),
+  );
 }
 
-function remapEntityReferences(operation: StateOperation, references: Map<string, string>): StateOperation {
+function remapEntityReferences(
+  operation: StateOperation,
+  references: Map<string, string>,
+): StateOperation {
   const entity = (id: string): string => {
     let current = id;
     const visited = new Set<string>();
@@ -107,11 +130,14 @@ function remapEntityReferences(operation: StateOperation, references: Map<string
   return mapOperationReferences(operation, (reference, role) =>
     role.kind === "entity" || role.kind === "location" || role.kind === "item"
       ? entity(reference)
-      : reference);
+      : reference,
+  );
 }
 
 function normalizedReferenceText(value: string): string {
-  return referenceSuffix(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+  return referenceSuffix(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function editDistance(left: string, right: string): number {
@@ -141,7 +167,9 @@ function normalizeNearMissCreatedEntityReferences(
   operations: StateOperation[],
   entities: Map<string, Entity>,
 ): StateOperation[] {
-  const creations = operations.flatMap((operation) => operation.type === "create_entity" ? [operation.entity] : []);
+  const creations = operations.flatMap((operation) =>
+    operation.type === "create_entity" ? [operation.entity] : [],
+  );
   if (!creations.length) return operations;
   const exactIds = new Set([...entities.keys(), ...creations.map((entity) => entity.id)]);
   const references = new Map<string, string>();
@@ -154,17 +182,26 @@ function normalizeNearMissCreatedEntityReferences(
       .filter((entity) => !expectedKind || entity.kind === expectedKind)
       .filter((entity) => !rawNamespace || entity.id.startsWith(`${rawNamespace}:`))
       .map((entity) => {
-        const candidates = [normalizedReferenceText(entity.id), normalizedReferenceText(entity.name)];
-        const similarity = Math.max(...candidates.map((candidate) => {
-          const longest = Math.max(normalized.length, candidate.length);
-          return longest ? 1 - editDistance(normalized, candidate) / longest : 0;
-        }));
+        const candidates = [
+          normalizedReferenceText(entity.id),
+          normalizedReferenceText(entity.name),
+        ];
+        const similarity = Math.max(
+          ...candidates.map((candidate) => {
+            const longest = Math.max(normalized.length, candidate.length);
+            return longest ? 1 - editDistance(normalized, candidate) / longest : 0;
+          }),
+        );
         return { id: entity.id, similarity };
       })
       .sort((left, right) => right.similarity - left.similarity || left.id.localeCompare(right.id));
     const best = scored[0];
     const runnerUp = scored[1];
-    if (best && best.similarity >= 0.8 && (!runnerUp || best.similarity - runnerUp.similarity >= 0.1)) {
+    if (
+      best &&
+      best.similarity >= 0.8 &&
+      (!runnerUp || best.similarity - runnerUp.similarity >= 0.1)
+    ) {
       references.set(raw, best.id);
     }
   };
@@ -175,7 +212,9 @@ function normalizeNearMissCreatedEntityReferences(
       if (role.kind === "item") consider(reference, "item");
     });
   }
-  return StateOperationSchema.array().parse(operations.map((operation) => remapEntityReferences(operation, references)));
+  return StateOperationSchema.array().parse(
+    operations.map((operation) => remapEntityReferences(operation, references)),
+  );
 }
 
 /**
@@ -208,7 +247,9 @@ function coalesceDuplicateLocationCreates(
     locationsByName.set(canonical, operation.entity.id);
     retained.push(operation);
   }
-  return StateOperationSchema.array().parse(retained.map((operation) => remapEntityReferences(operation, references)));
+  return StateOperationSchema.array().parse(
+    retained.map((operation) => remapEntityReferences(operation, references)),
+  );
 }
 
 /**
@@ -235,26 +276,40 @@ function normalizeCreatedItemOwnership(
       inventoryOwners.set(operation.itemId, owners);
     }
   }
-  return StateOperationSchema.array().parse(operations.flatMap((operation): StateOperation[] => {
-    if (operation.type !== "create_entity" || operation.entity.kind !== "item" || !operation.entity.location) return [operation];
-    const owners = inventoryOwners.get(operation.entity.id);
-    const suppliedReference = operation.entity.location;
-    const suffixMatches = suppliedReference.includes(":")
-      ? []
-      : [...entityKinds.keys()].filter((candidate) => referenceSuffix(candidate) === suppliedReference);
-    const suppliedOwnerId = entityKinds.has(suppliedReference)
-      ? suppliedReference
-      : suffixMatches.length === 1
-        ? suffixMatches[0]!
-        : undefined;
-    if (suppliedOwnerId === undefined) return [operation];
-    const { location: _location, ...entity } = operation.entity;
-    if (owners?.size) return [{ ...operation, entity }];
-    return [
-      { ...operation, entity },
-      { type: "change_inventory", ownerId: suppliedOwnerId, itemId: operation.entity.id, quantityDelta: 1 },
-    ];
-  }));
+  return StateOperationSchema.array().parse(
+    operations.flatMap((operation): StateOperation[] => {
+      if (
+        operation.type !== "create_entity" ||
+        operation.entity.kind !== "item" ||
+        !operation.entity.location
+      )
+        return [operation];
+      const owners = inventoryOwners.get(operation.entity.id);
+      const suppliedReference = operation.entity.location;
+      const suffixMatches = suppliedReference.includes(":")
+        ? []
+        : [...entityKinds.keys()].filter(
+            (candidate) => referenceSuffix(candidate) === suppliedReference,
+          );
+      const suppliedOwnerId = entityKinds.has(suppliedReference)
+        ? suppliedReference
+        : suffixMatches.length === 1
+          ? suffixMatches[0]!
+          : undefined;
+      if (suppliedOwnerId === undefined) return [operation];
+      const { location: _location, ...entity } = operation.entity;
+      if (owners?.size) return [{ ...operation, entity }];
+      return [
+        { ...operation, entity },
+        {
+          type: "change_inventory",
+          ownerId: suppliedOwnerId,
+          itemId: operation.entity.id,
+          quantityDelta: 1,
+        },
+      ];
+    }),
+  );
 }
 
 function referenceSuffix(id: string): string {
@@ -270,7 +325,9 @@ function resolveReference(raw: string, candidates: Iterable<string>, type: strin
   const matches = available.filter((candidate) => referenceSuffix(candidate) === reference);
   if (matches.length === 1) return matches[0]!;
   if (!matches.length) rejectDomainChange(`Unknown ${type} reference ${reference}`);
-  return rejectDomainChange(`Ambiguous ${type} reference ${reference}: ${matches.sort().join(", ")}`);
+  return rejectDomainChange(
+    `Ambiguous ${type} reference ${reference}: ${matches.sort().join(", ")}`,
+  );
 }
 
 function unreachableReferenceRole(role: never): never {
@@ -284,49 +341,69 @@ function normalizeReferences(
 ): StateOperation[] {
   const entityKinds = new Map([...entities.values()].map((entity) => [entity.id, entity.kind]));
   for (const operation of operations) {
-    if (operation.type === "create_entity") entityKinds.set(operation.entity.id, operation.entity.kind);
+    if (operation.type === "create_entity")
+      entityKinds.set(operation.entity.id, operation.entity.kind);
   }
   const entityIds = [...entityKinds.keys()];
   const locationIds = entityIds.filter((id) => entityKinds.get(id) === "location");
   const itemIds = entityIds.filter((id) => entityKinds.get(id) === "item");
   const threadIds = [
     ...threads.map((thread) => thread.id),
-    ...operations.filter((operation) => operation.type === "create_thread").map((operation) => operation.threadId),
+    ...operations
+      .filter((operation) => operation.type === "create_thread")
+      .map((operation) => operation.threadId),
   ];
   const entity = (value: string) => resolveReference(value, entityIds, "entity");
   const location = (value: string) => resolveReference(value, locationIds, "location");
   const item = (value: string) => resolveReference(value, itemIds, "item");
   const thread = (value: string) => resolveReference(value, threadIds, "thread");
-  const normalized = operations.map((operation) => mapOperationReferences(
-    operation,
-    (reference, role) => {
-      switch (role.kind) {
-        case "entity": return entity(reference);
-        case "location": return location(reference);
-        case "item": return item(reference);
-        case "thread": return thread(reference);
-        case "active_fact": return reference;
-        default: return unreachableReferenceRole(role);
-      }
-    },
-  ));
-  return StateOperationSchema.array().parse(normalized.map((operation) =>
+  const normalized = operations.map((operation) =>
     mapOperationReferences(operation, (reference, role) => {
-      if (role.kind !== "active_fact") return reference;
-      const facts = [
-        ...(entities.get(role.targetId)?.facts.filter((fact) => fact.active).map((fact) => fact.id) ?? []),
-        ...normalized.flatMap((candidate) =>
-          candidate.type === "add_fact" && candidate.targetId === role.targetId ? [candidate.factId] : []),
-      ];
-      return resolveReference(reference, facts, `active fact on ${role.targetId}`);
-    })));
+      switch (role.kind) {
+        case "entity":
+          return entity(reference);
+        case "location":
+          return location(reference);
+        case "item":
+          return item(reference);
+        case "thread":
+          return thread(reference);
+        case "active_fact":
+          return reference;
+        default:
+          return unreachableReferenceRole(role);
+      }
+    }),
+  );
+  return StateOperationSchema.array().parse(
+    normalized.map((operation) =>
+      mapOperationReferences(operation, (reference, role) => {
+        if (role.kind !== "active_fact") return reference;
+        const facts = [
+          ...(entities
+            .get(role.targetId)
+            ?.facts.filter((fact) => fact.active)
+            .map((fact) => fact.id) ?? []),
+          ...normalized.flatMap((candidate) =>
+            candidate.type === "add_fact" && candidate.targetId === role.targetId
+              ? [candidate.factId]
+              : [],
+          ),
+        ];
+        return resolveReference(reference, facts, `active fact on ${role.targetId}`);
+      }),
+    ),
+  );
 }
 
 /** Convert an exact debit/credit pair into the atomic transfer it expresses. */
 function normalizeAtomicItemTransfers(operations: StateOperation[]): StateOperation[] {
   const replacements = new Map<number, StateOperation>();
   const removed = new Set<number>();
-  const itemChanges = new Map<string, Array<{ index: number; operation: Extract<StateOperation, { type: "change_inventory" }> }>>();
+  const itemChanges = new Map<
+    string,
+    Array<{ index: number; operation: Extract<StateOperation, { type: "change_inventory" }> }>
+  >();
   const itemsWithOtherDestinations = new Set<string>();
   operations.forEach((operation, index) => {
     if (operation.type === "change_inventory") {
@@ -343,7 +420,8 @@ function normalizeAtomicItemTransfers(operations: StateOperation[]): StateOperat
     if (changes.length !== 2 || itemsWithOtherDestinations.has(itemId)) continue;
     const debit = changes.find(({ operation }) => operation.quantityDelta < 0);
     const credit = changes.find(({ operation }) => operation.quantityDelta > 0);
-    if (!debit || !credit || -debit.operation.quantityDelta !== credit.operation.quantityDelta) continue;
+    if (!debit || !credit || -debit.operation.quantityDelta !== credit.operation.quantityDelta)
+      continue;
     const first = Math.min(debit.index, credit.index);
     const second = Math.max(debit.index, credit.index);
     replacements.set(first, {
@@ -355,16 +433,89 @@ function normalizeAtomicItemTransfers(operations: StateOperation[]): StateOperat
     });
     removed.add(second);
   }
-  return StateOperationSchema.array().parse(operations.flatMap((operation, index) => {
-    if (removed.has(index)) return [];
-    return [replacements.get(index) ?? operation];
-  }));
+  return StateOperationSchema.array().parse(
+    operations.flatMap((operation, index) => {
+      if (removed.has(index)) return [];
+      return [replacements.get(index) ?? operation];
+    }),
+  );
+}
+
+/**
+ * A model may express a drop as an inventory debit followed by moving the item
+ * entity to a location. The debit and destination make that intent exact:
+ * normalize the pair into the conserved owner-to-location transfer required by
+ * the domain. Any less exact item movement remains invalid.
+ */
+function normalizeDroppedItemTransfers(operations: StateOperation[]): StateOperation[] {
+  const replacements = new Map<number, StateOperation>();
+  const removed = new Set<number>();
+  const itemChanges = new Map<
+    string,
+    Array<{
+      index: number;
+      operation: Extract<StateOperation, { type: "change_inventory" }>;
+    }>
+  >();
+  const itemMoves = new Map<
+    string,
+    Array<{
+      index: number;
+      operation: Extract<StateOperation, { type: "move_entity" }>;
+    }>
+  >();
+  const transferredItems = new Set<string>();
+
+  operations.forEach((operation, index) => {
+    if (operation.type === "change_inventory") {
+      const changes = itemChanges.get(operation.itemId) ?? [];
+      changes.push({ index, operation });
+      itemChanges.set(operation.itemId, changes);
+    } else if (operation.type === "move_entity") {
+      const moves = itemMoves.get(operation.targetId) ?? [];
+      moves.push({ index, operation });
+      itemMoves.set(operation.targetId, moves);
+    } else if (operation.type === "transfer_item") {
+      transferredItems.add(operation.itemId);
+    }
+  });
+
+  for (const [itemId, moves] of itemMoves) {
+    const changes = itemChanges.get(itemId) ?? [];
+    if (moves.length !== 1 || changes.length !== 1 || transferredItems.has(itemId)) continue;
+    const move = moves[0]!;
+    const debit = changes[0]!;
+    if (debit.operation.quantityDelta >= 0 || debit.operation.ownerId === move.operation.locationId)
+      continue;
+    const first = Math.min(move.index, debit.index);
+    const second = Math.max(move.index, debit.index);
+    replacements.set(first, {
+      type: "transfer_item",
+      fromId: debit.operation.ownerId,
+      toId: move.operation.locationId,
+      itemId,
+      quantity: -debit.operation.quantityDelta,
+    });
+    removed.add(second);
+  }
+
+  return StateOperationSchema.array().parse(
+    operations.flatMap((operation, index) => {
+      if (removed.has(index)) return [];
+      return [replacements.get(index) ?? operation];
+    }),
+  );
 }
 
 /** A move to the entity's already-authoritative location is an idempotent no-op. */
-function normalizeNoOpMovements(operations: StateOperation[], entities: Map<string, Entity>): StateOperation[] {
+function normalizeNoOpMovements(
+  operations: StateOperation[],
+  entities: Map<string, Entity>,
+): StateOperation[] {
   const locations = new Map(
-    [...entities.values()].flatMap((entity) => entity.location ? [[entity.id, entity.location] as const] : []),
+    [...entities.values()].flatMap((entity) =>
+      entity.location ? [[entity.id, entity.location] as const] : [],
+    ),
   );
   for (const operation of operations) {
     if (operation.type === "create_entity" && operation.entity.location) {
@@ -386,17 +537,20 @@ function assertNoRepeatedAbstractInventoryCredit(
   operations: StateOperation[],
   previousOperations: StateOperation[],
 ): void {
-  const previousCredits = new Set(previousOperations.flatMap((operation) =>
-    operation.type === "change_inventory" && operation.quantityDelta > 0
-      ? [`${operation.ownerId}\u0000${operation.itemId}\u0000${operation.quantityDelta}`]
-      : []));
+  const previousCredits = new Set(
+    previousOperations.flatMap((operation) =>
+      operation.type === "change_inventory" && operation.quantityDelta > 0
+        ? [`${operation.ownerId}\u0000${operation.itemId}\u0000${operation.quantityDelta}`]
+        : [],
+    ),
+  );
   for (const operation of operations) {
     if (operation.type !== "change_inventory" || operation.quantityDelta <= 0) continue;
     const fingerprint = `${operation.ownerId}\u0000${operation.itemId}\u0000${operation.quantityDelta}`;
     if (previousCredits.has(fingerprint)) {
       rejectDomainChange(
-        `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} in the latest gameplay/appeal operation-ledger window. `
-        + "If this turn only handles, pockets, counts, or stows that existing inventory, remove the operation. A genuinely new receipt must be represented by a distinct current-turn source, preferably transfer_item from its owner.",
+        `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} in the latest gameplay/appeal operation-ledger window. ` +
+          "If this turn only handles, pockets, counts, or stows that existing inventory, remove the operation. A genuinely new receipt must be represented by a distinct current-turn source, preferably transfer_item from its owner.",
       );
     }
   }
@@ -419,7 +573,8 @@ export function prepareOperations(
     entities,
     threads,
   );
-  const prepared = normalizeNoOpMovements(normalizeAtomicItemTransfers(referenced), entities);
+  const dropped = normalizeDroppedItemTransfers(referenced);
+  const prepared = normalizeNoOpMovements(normalizeAtomicItemTransfers(dropped), entities);
   assertNoRepeatedAbstractInventoryCredit(prepared, previousOperations);
   assertDeterministicConsistency(prepared, entities);
   return prepared;

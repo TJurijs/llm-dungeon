@@ -4,7 +4,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { listScenarioSeeds, loadScenarioSeed } from "../src/scenario-seeds.js";
 
-async function seedFiles(root: string, id: string, language: string, prefix: string): Promise<void> {
+async function seedFiles(
+  root: string,
+  id: string,
+  language: string,
+  prefix: string,
+): Promise<void> {
   const dir = path.join(root, "defaults", "scenario-seeds", id, language);
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, "world.md"), `${prefix} world\n`, "utf8");

@@ -60,12 +60,14 @@ class SmokeProvider implements LlmProvider {
       data = {
         narration: TURN_NARRATION,
         turnSummary: "The scout recovered the cellar ledger.",
-        operations: [{
-          type: "add_fact",
-          targetId: "player:hero",
-          section: "knowledge",
-          text: LEDGER_FACT,
-        }],
+        operations: [
+          {
+            type: "add_fact",
+            targetId: "player:hero",
+            section: "knowledge",
+            text: LEDGER_FACT,
+          },
+        ],
       };
     } else if (request.schemaName === "campaign_question") {
       data = { answer: ASK_ANSWER };
@@ -86,8 +88,11 @@ class SmokeProvider implements LlmProvider {
 const servers: ReturnType<typeof createDungeonWebServer>[] = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) =>
-    new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(
+    servers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
 });
 
 async function fixtureRoot(): Promise<string> {
@@ -95,7 +100,11 @@ async function fixtureRoot(): Promise<string> {
   await mkdir(path.join(root, "config"), { recursive: true });
   await mkdir(path.join(root, "web"), { recursive: true });
   await writeFile(path.join(root, "config", "provider.json"), JSON.stringify(CONFIG), "utf8");
-  await writeFile(path.join(root, "web", "index.html"), "<!doctype html><title>Dungeon</title>", "utf8");
+  await writeFile(
+    path.join(root, "web", "index.html"),
+    "<!doctype html><title>Dungeon</title>",
+    "utf8",
+  );
   return root;
 }
 
@@ -163,7 +172,9 @@ describe("end-to-end smoke", () => {
     expect(inspection.inspection.facts.knowledge).toContain(LEDGER_FACT);
 
     // :ask answers without consuming a turn or touching state.
-    const ask = await json(base, route("play"), "POST", { action: ":ask What do I know about the cellar?" });
+    const ask = await json(base, route("play"), "POST", {
+      action: ":ask What do I know about the cellar?",
+    });
     expect(ask.answer).toBe(ASK_ANSWER);
     expect((await json(base, route("status"))).campaign.turn).toBe(1);
 
@@ -190,7 +201,10 @@ describe("end-to-end smoke", () => {
       (campaign: { campaignId: string }) => campaign.campaignId === campaignId,
     );
     expect(reloaded?.turn).toBe(1);
-    const reloadedTranscript = await json(reloadedBase, route("transcript").replace(base, reloadedBase));
+    const reloadedTranscript = await json(
+      reloadedBase,
+      route("transcript").replace(base, reloadedBase),
+    );
     expect(reloadedTranscript.turns).toHaveLength(2);
     expect(reloadedTranscript.turns[1].narration).toBe(TURN_NARRATION);
   });

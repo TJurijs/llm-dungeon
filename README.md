@@ -66,10 +66,12 @@ GEMINI_API_KEY=
 OPENROUTER_API_KEY=
 XAI_API_KEY=
 OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 DEEPSEEK_API_KEY=
 ```
 
-Restart the app after changing `.env`. Never commit or share this file.
+After changing `.env`, use the reload icon in **Settings → LLM providers** or
+restart the app. Never commit or share this file.
 
 Provider requests may cost money. The app shows estimated campaign costs, but
 actual billing, free tiers, and limits are controlled by each provider.
@@ -156,13 +158,14 @@ affects new campaigns only.
 
 The curated models are:
 
-| Provider | Models |
-| --- | --- |
+| Provider      | Models                                                    |
+| ------------- | --------------------------------------------------------- |
 | Google Gemini | `gemini-3.6-flash` (recommended), `gemini-3.5-flash-lite` |
-| OpenRouter | `qwen/qwen3.7-plus` |
-| xAI | `grok-4.5` |
-| OpenAI | `gpt-5.4` |
-| DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` |
+| OpenRouter    | `qwen/qwen3.7-plus`                                       |
+| xAI           | `grok-4.5`                                                |
+| OpenAI        | `gpt-5.4`                                                 |
+| Anthropic     | `claude-sonnet-5`                                         |
+| DeepSeek      | `deepseek-v4-flash`, `deepseek-v4-pro`                    |
 
 Settings shows each model's compatibility, reliability, quality, speed, and
 estimated price. You can also add a custom model ID under a provider and test

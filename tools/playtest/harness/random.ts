@@ -37,7 +37,8 @@ export function scriptedRollD100(rolls: readonly number[], used = 0): RollD100 {
 }
 
 export function rollPolicy(
-  policy: { kind: "scripted"; rolls: readonly number[] }
+  policy:
+    | { kind: "scripted"; rolls: readonly number[] }
     | { kind: "seeded_random"; seed: string }
     | { kind: "secure_random" },
   used = 0,

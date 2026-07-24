@@ -69,7 +69,8 @@ export interface CalibrationProbeResult {
 
 const REPRESENTATIVE_SETUP: SetupResult = SetupResultSchema.parse({
   campaignTitle: "The Brass Lantern Calibration",
-  scenarioMarkdown: "A compact city mystery with trade, relationships, hidden evidence, and an approaching threat.",
+  scenarioMarkdown:
+    "A compact city mystery with trade, relationships, hidden evidence, and an approaching threat.",
   openingNarration: "Rain ticks against the Brass Lantern while the last market bell fades.",
   timeLabel: "Evening",
   player: {
@@ -95,7 +96,12 @@ const REPRESENTATIVE_SETUP: SetupResult = SetupResultSchema.parse({
       status: "open",
       tags: ["tavern"],
       description: "A warm tavern beside the market.",
-      establishedFacts: [], secrets: [], playerKnowledge: [], traits: [], conditions: [], inventory: [],
+      establishedFacts: [],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
+      inventory: [],
     },
     {
       id: "location:old-market",
@@ -104,7 +110,11 @@ const REPRESENTATIVE_SETUP: SetupResult = SetupResultSchema.parse({
       status: "closing",
       tags: ["market"],
       description: "Rain-dark stalls surround a stone well.",
-      establishedFacts: [], secrets: ["A coded ledger is hidden beneath the well rim."], playerKnowledge: [], traits: [], conditions: [],
+      establishedFacts: [],
+      secrets: ["A coded ledger is hidden beneath the well rim."],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
       inventory: [{ entityId: "item:sealed-vial", quantity: 1 }],
     },
     {
@@ -115,29 +125,65 @@ const REPRESENTATIVE_SETUP: SetupResult = SetupResultSchema.parse({
       location: "location:brass-lantern",
       tags: ["merchant"],
       description: "A spice merchant with an exact memory.",
-      establishedFacts: ["Promised Ilya information before midnight."], secrets: [], playerKnowledge: [], traits: [], conditions: [],
+      establishedFacts: ["Promised Ilya information before midnight."],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
       inventory: [{ entityId: "item:healing-draught", quantity: 1 }],
     },
     {
-      id: "item:silver-mark", kind: "item", name: "Silver Mark", status: "currency", tags: ["currency"],
-      description: "A stamped silver coin.", establishedFacts: [], secrets: [], playerKnowledge: [], traits: [], conditions: [], inventory: [],
+      id: "item:silver-mark",
+      kind: "item",
+      name: "Silver Mark",
+      status: "currency",
+      tags: ["currency"],
+      description: "A stamped silver coin.",
+      establishedFacts: [],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
+      inventory: [],
     },
     {
-      id: "item:healing-draught", kind: "item", name: "Healing Draught", status: "sealed", tags: ["consumable"],
-      description: "A single-use restorative.", establishedFacts: [], secrets: [], playerKnowledge: [], traits: [], conditions: [], inventory: [],
+      id: "item:healing-draught",
+      kind: "item",
+      name: "Healing Draught",
+      status: "sealed",
+      tags: ["consumable"],
+      description: "A single-use restorative.",
+      establishedFacts: [],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
+      inventory: [],
     },
     {
-      id: "item:sealed-vial", kind: "item", name: "Sealed Vial", status: "loose", tags: [],
-      description: "A thumb-sized blue vial.", establishedFacts: [], secrets: [], playerKnowledge: [], traits: [], conditions: [], inventory: [],
+      id: "item:sealed-vial",
+      kind: "item",
+      name: "Sealed Vial",
+      status: "loose",
+      tags: [],
+      description: "A thumb-sized blue vial.",
+      establishedFacts: [],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
+      inventory: [],
     },
   ],
-  threads: [{
-    id: "thread:missing-ledger",
-    title: "The Missing Ledger",
-    summary: "Find the ledger before the watch closes the market.",
-    status: "active",
-    relatedEntityIds: ["npc:mara", "location:old-market"],
-  }],
+  threads: [
+    {
+      id: "thread:missing-ledger",
+      title: "The Missing Ledger",
+      summary: "Find the ledger before the watch closes the market.",
+      status: "active",
+      relatedEntityIds: ["npc:mara", "location:old-market"],
+    },
+  ],
 });
 
 const EFFECT = {
@@ -221,8 +267,11 @@ const CHECK_WIRE = {
   failureCampaignStatus: "none",
 } as const;
 
-const PRODUCTION_CONTEXT = Array.from({ length: 96 }, (_, index) =>
-  `Context record ${index + 1}: authoritative places, inventories, promises, facts, and recent summaries remain unchanged.`).join("\n");
+const PRODUCTION_CONTEXT = Array.from(
+  { length: 96 },
+  (_, index) =>
+    `Context record ${index + 1}: authoritative places, inventories, promises, facts, and recent summaries remain unchanged.`,
+).join("\n");
 
 interface ProbeCase<T> {
   id: CalibrationProbeCaseId;
@@ -232,10 +281,9 @@ interface ProbeCase<T> {
 }
 
 function probeCases(): Array<ProbeCase<unknown>> {
-  const resolvedEffects = resolvedWire(
-    "Mara confirms the watch schedule while ten minutes pass.",
-    [...REAL_EFFECTS],
-  );
+  const resolvedEffects = resolvedWire("Mara confirms the watch schedule while ten minutes pass.", [
+    ...REAL_EFFECTS,
+  ]);
   const inventoryTransfer = resolvedWire(
     "Mara hands Ilya the promised draught and records the transfer.",
     [EFFECT],
@@ -249,14 +297,17 @@ function probeCases(): Array<ProbeCase<unknown>> {
       request: {
         schemaName: "calibration_campaign_setup_v1",
         schema: SetupResultSchema,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `Return exactly this representative campaign setup: ${JSON.stringify(REPRESENTATIVE_SETUP)}`,
         temperature: 0,
         maxOutputTokens: 8_000,
         generationPhase: "setup",
         attemptKind: "initial",
       },
-      validate: (value) => { validateInitialSetup(value); },
+      validate: (value) => {
+        validateInitialSetup(value);
+      },
     },
     {
       id: "resolved_real_effects",
@@ -265,7 +316,8 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_resolved_effects`,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `Return exactly this resolved gameplay wire object: ${JSON.stringify(resolvedEffects)}`,
         temperature: 0,
         maxOutputTokens: 4_000,
@@ -274,17 +326,25 @@ function probeCases(): Array<ProbeCase<unknown>> {
       }),
       validate: (value) => {
         const parsed = TurnDecisionSchema.parse(value);
-        const addedFact = parsed.kind === "resolved"
-          ? parsed.operations.find((operation) => operation.type === "add_fact")
-          : undefined;
-        const advancedTime = parsed.kind === "resolved"
-          ? parsed.operations.find((operation) => operation.type === "advance_time")
-          : undefined;
-        if (parsed.kind !== "resolved"
-          || addedFact?.text !== "Mara confirmed that the watch changes at midnight."
-          || advancedTime?.minutes !== 10
-          || advancedTime.timeLabel !== "Late Evening") {
-          throw new GenerationFailure("domain_decode_violation", "Calibration response omitted or corrupted required effect fields", true);
+        const addedFact =
+          parsed.kind === "resolved"
+            ? parsed.operations.find((operation) => operation.type === "add_fact")
+            : undefined;
+        const advancedTime =
+          parsed.kind === "resolved"
+            ? parsed.operations.find((operation) => operation.type === "advance_time")
+            : undefined;
+        if (
+          parsed.kind !== "resolved" ||
+          addedFact?.text !== "Mara confirmed that the watch changes at midnight." ||
+          advancedTime?.minutes !== 10 ||
+          advancedTime.timeLabel !== "Late Evening"
+        ) {
+          throw new GenerationFailure(
+            "domain_decode_violation",
+            "Calibration response omitted or corrupted required effect fields",
+            true,
+          );
         }
       },
     },
@@ -295,7 +355,8 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_check`,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `Return exactly this check-required gameplay wire object: ${JSON.stringify(CHECK_WIRE)}`,
         temperature: 0,
         maxOutputTokens: 4_000,
@@ -304,7 +365,11 @@ function probeCases(): Array<ProbeCase<unknown>> {
       }),
       validate: (value) => {
         if (TurnDecisionSchema.parse(value).kind !== "check_required") {
-          throw new GenerationFailure("domain_decode_violation", "Calibration response did not request the required check", true);
+          throw new GenerationFailure(
+            "domain_decode_violation",
+            "Calibration response did not request the required check",
+            true,
+          );
         }
       },
     },
@@ -315,14 +380,17 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_locked_resolution`,
         schema: ResolvedTurnSchema,
         decodeResponse: decodeResolvedTurn,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `The application has locked a successful roll. Return exactly this resolved gameplay wire object: ${JSON.stringify(locked)}`,
         temperature: 0,
         maxOutputTokens: 4_000,
         generationPhase: "locked_resolution",
         attemptKind: "initial",
       }),
-      validate: (value) => { ResolvedTurnSchema.parse(value); },
+      validate: (value) => {
+        ResolvedTurnSchema.parse(value);
+      },
     },
     {
       id: "schema_repair_effect_completeness",
@@ -331,7 +399,8 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_repair_effects`,
         schema: ResolvedTurnSchema,
         decodeResponse: decodeResolvedTurn,
-        system: "Repair the supplied JSON into one complete protocol object. This is a non-scored adapter calibration probe.",
+        system:
+          "Repair the supplied JSON into one complete protocol object. This is a non-scored adapter calibration probe.",
         prompt: `A previous response omitted required fields from effect objects. Return exactly this complete corrected resolved gameplay wire object: ${JSON.stringify(resolvedEffects)}`,
         temperature: 0,
         maxOutputTokens: 8_000,
@@ -342,11 +411,19 @@ function probeCases(): Array<ProbeCase<unknown>> {
       validate: (value) => {
         const parsed = ResolvedTurnSchema.parse(value);
         const addedFact = parsed.operations.find((operation) => operation.type === "add_fact");
-        const advancedTime = parsed.operations.find((operation) => operation.type === "advance_time");
-        if (addedFact?.text !== "Mara confirmed that the watch changes at midnight."
-          || advancedTime?.minutes !== 10
-          || advancedTime.timeLabel !== "Late Evening") {
-          throw new GenerationFailure("domain_decode_violation", "Calibration repair corrupted required effect fields", true);
+        const advancedTime = parsed.operations.find(
+          (operation) => operation.type === "advance_time",
+        );
+        if (
+          addedFact?.text !== "Mara confirmed that the watch changes at midnight." ||
+          advancedTime?.minutes !== 10 ||
+          advancedTime.timeLabel !== "Late Evening"
+        ) {
+          throw new GenerationFailure(
+            "domain_decode_violation",
+            "Calibration repair corrupted required effect fields",
+            true,
+          );
         }
       },
     },
@@ -357,7 +434,8 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_inventory_transfer`,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `The authoritative owners are npc:mara and player:hero, and item:healing-draught exists. Return exactly this wire object: ${JSON.stringify(inventoryTransfer)}`,
         temperature: 0,
         maxOutputTokens: 4_000,
@@ -366,14 +444,21 @@ function probeCases(): Array<ProbeCase<unknown>> {
       }),
       validate: (value) => {
         const parsed = TurnDecisionSchema.parse(value);
-        const transfer = parsed.kind === "resolved"
-          ? parsed.operations.find((operation) => operation.type === "transfer_item")
-          : undefined;
-        if (transfer?.fromId !== "npc:mara"
-          || transfer.toId !== "player:hero"
-          || transfer.itemId !== "item:healing-draught"
-          || transfer.quantity !== 1) {
-          throw new GenerationFailure("domain_decode_violation", "Calibration response did not preserve authoritative transfer fields", true);
+        const transfer =
+          parsed.kind === "resolved"
+            ? parsed.operations.find((operation) => operation.type === "transfer_item")
+            : undefined;
+        if (
+          transfer?.fromId !== "npc:mara" ||
+          transfer.toId !== "player:hero" ||
+          transfer.itemId !== "item:healing-draught" ||
+          transfer.quantity !== 1
+        ) {
+          throw new GenerationFailure(
+            "domain_decode_violation",
+            "Calibration response did not preserve authoritative transfer fields",
+            true,
+          );
         }
       },
     },
@@ -384,14 +469,17 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_production_context`,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `${PRODUCTION_CONTEXT}\n\nReturn exactly this resolved gameplay wire object: ${JSON.stringify(resolvedWire("The authoritative context remains internally consistent."))}`,
         temperature: 0,
         maxOutputTokens: 4_000,
         generationPhase: "decision",
         attemptKind: "initial",
       }),
-      validate: (value) => { TurnDecisionSchema.parse(value); },
+      validate: (value) => {
+        TurnDecisionSchema.parse(value);
+      },
     },
     {
       id: "near_normal_output",
@@ -400,7 +488,8 @@ function probeCases(): Array<ProbeCase<unknown>> {
         schemaName: `${GAMEPLAY_SCHEMA_NAMES.connectionProbe}_near_normal_output`,
         schema: TurnDecisionSchema,
         decodeResponse: decodeTurnDecision,
-        system: "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        system:
+          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
         prompt: `Return exactly this near-normal-sized resolved gameplay wire object: ${JSON.stringify(resolvedWire(normalNarration))}`,
         temperature: 0,
         maxOutputTokens: 4_000,
@@ -410,14 +499,21 @@ function probeCases(): Array<ProbeCase<unknown>> {
       validate: (value) => {
         const parsed = TurnDecisionSchema.parse(value);
         if (parsed.kind !== "resolved" || parsed.narration.length < 1_000) {
-          throw new GenerationFailure("domain_decode_violation", "Calibration response was shorter than the near-normal output fixture", true);
+          throw new GenerationFailure(
+            "domain_decode_violation",
+            "Calibration response was shorter than the near-normal output fixture",
+            true,
+          );
         }
       },
     },
   ];
 }
 
-async function runCase(provider: LlmProvider, probe: ProbeCase<unknown>): Promise<CalibrationCaseResult> {
+async function runCase(
+  provider: LlmProvider,
+  probe: ProbeCase<unknown>,
+): Promise<CalibrationCaseResult> {
   const started = performance.now();
   try {
     const result = await generateStructured(provider, probe.request);
@@ -451,7 +547,9 @@ async function runCase(provider: LlmProvider, probe: ProbeCase<unknown>): Promis
 }
 
 /** Runs the complete non-scored protocol suite sequentially for one route/profile. */
-export async function runModelCalibrationProbe(provider: LlmProvider): Promise<CalibrationProbeResult> {
+export async function runModelCalibrationProbe(
+  provider: LlmProvider,
+): Promise<CalibrationProbeResult> {
   const cases: CalibrationCaseResult[] = [];
   for (const probe of probeCases()) cases.push(await runCase(provider, probe));
   return {
@@ -496,7 +594,11 @@ export class CalibrationEvidenceStore {
   async appendAttempt(artifact: CalibrationAttemptArtifact): Promise<void> {
     const directory = this.evidenceDir(artifact.evidenceId);
     await mkdir(directory, { recursive: true });
-    await appendFile(path.join(directory, "attempts.jsonl"), `${JSON.stringify(artifact)}\n`, "utf8");
+    await appendFile(
+      path.join(directory, "attempts.jsonl"),
+      `${JSON.stringify(artifact)}\n`,
+      "utf8",
+    );
   }
 
   async readAttempts(evidenceId: string): Promise<CalibrationAttemptArtifact[]> {
@@ -507,7 +609,10 @@ export class CalibrationEvidenceStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    return text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as CalibrationAttemptArtifact);
+    return text
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as CalibrationAttemptArtifact);
   }
 
   async writeSelection(evidenceId: string, selected: CalibrationVariantResult): Promise<void> {
@@ -530,8 +635,10 @@ function firstTruncationEscalation(
   probe: CalibrationProbeResult,
 ): ModelExecutionProfileDraft | undefined {
   for (const phase of ["setup", "decision", "locked_resolution"] as const) {
-    if (!probe.cases.some((item) =>
-      item.phase === phase && item.attemptMetadata?.truncated === true)) continue;
+    if (
+      !probe.cases.some((item) => item.phase === phase && item.attemptMetadata?.truncated === true)
+    )
+      continue;
     const escalated = escalateOutputBudgetAfterTruncation(profile, phase, true);
     if (escalated) return escalated;
   }
@@ -548,10 +655,14 @@ function budgetPhaseForChange(changedVariable: string): ModelGenerationPhase | u
 
 function phaseTruncated(probe: CalibrationProbeResult, phase: ModelGenerationPhase): boolean {
   if (phase === "repair") {
-    return probe.cases.some((item) => item.attemptMetadata?.generationPhase === "repair"
-      && item.attemptMetadata.truncated);
+    return probe.cases.some(
+      (item) =>
+        item.attemptMetadata?.generationPhase === "repair" && item.attemptMetadata.truncated,
+    );
   }
-  return probe.cases.some((item) => item.phase === phase && item.attemptMetadata?.truncated === true);
+  return probe.cases.some(
+    (item) => item.phase === phase && item.attemptMetadata?.truncated === true,
+  );
 }
 
 /** Enforces one-variable-at-a-time comparison and sequential execution. */
@@ -561,7 +672,9 @@ export async function runCalibrationVariants(
   options: CalibrationVariantRunOptions = {},
 ): Promise<CalibrationVariantResult[]> {
   if (variants.length === 0 || variants.length > MAX_CALIBRATION_VARIANTS) {
-    throw new Error(`Calibration requires between one and ${MAX_CALIBRATION_VARIANTS} bounded variants`);
+    throw new Error(
+      `Calibration requires between one and ${MAX_CALIBRATION_VARIANTS} bounded variants`,
+    );
   }
   const parsed = variants.map((variant) => ModelExecutionProfileDraftSchema.parse(variant));
   for (let index = 1; index < parsed.length; index += 1) {
@@ -582,10 +695,13 @@ export async function runCalibrationVariants(
   for (let index = 0; index < parsed.length; index += 1) {
     const profile = parsed[index]!;
     const prior = parsed[index - 1];
-    const changedVariable = prior === undefined ? undefined : assertSingleCalibrationVariableChange(prior, profile);
+    const changedVariable =
+      prior === undefined ? undefined : assertSingleCalibrationVariableChange(prior, profile);
     const budgetPhase = changedVariable ? budgetPhaseForChange(changedVariable) : undefined;
     if (budgetPhase && !phaseTruncated(results[index - 1]!.probe, budgetPhase)) {
-      throw new Error(`${changedVariable} requires confirmed truncation in the immediately preceding probe`);
+      throw new Error(
+        `${changedVariable} requires confirmed truncation in the immediately preceding probe`,
+      );
     }
     const probe = await runModelCalibrationProbe(providerFor(profile));
     const result = { profile, ...(changedVariable ? { changedVariable } : {}), probe };
@@ -622,8 +738,11 @@ export function calibrationFailureStatus(
     "application",
     "inconclusive",
   ]);
-  return results.some((result) => result.probe.cases.some((item) =>
-    item.attribution !== undefined && inconclusiveOwners.has(item.attribution.owner)))
+  return results.some((result) =>
+    result.probe.cases.some(
+      (item) => item.attribution !== undefined && inconclusiveOwners.has(item.attribution.owner),
+    ),
+  )
     ? "calibration_inconclusive"
     : "no_compatible_profile";
 }
@@ -633,10 +752,12 @@ function billedCost(result: CalibrationVariantResult): number {
 }
 
 function repairedAttempts(result: CalibrationVariantResult): number {
-  return result.probe.cases.filter((item) =>
-    item.attemptMetadata?.attemptKind === "schema_repair"
-    || item.attemptMetadata?.attemptKind === "transient_retry"
-    || item.attemptMetadata?.attemptKind === "domain_repair").length;
+  return result.probe.cases.filter(
+    (item) =>
+      item.attemptMetadata?.attemptKind === "schema_repair" ||
+      item.attemptMetadata?.attemptKind === "transient_retry" ||
+      item.attemptMetadata?.attemptKind === "domain_repair",
+  ).length;
 }
 
 /** Selects without narrative scoring: correctness, first pass, truncation, repair, latency, then cost. */
@@ -647,13 +768,21 @@ export function selectCalibrationProfile(
     const leftSuccesses = left.probe.cases.filter((item) => item.success).length;
     const rightSuccesses = right.probe.cases.filter((item) => item.success).length;
     if (leftSuccesses !== rightSuccesses) return rightSuccesses - leftSuccesses;
-    const leftFirstPass = left.probe.cases.filter((item) => item.success
-      && (item.attemptMetadata === undefined || item.attemptMetadata.attemptKind === "initial")).length;
-    const rightFirstPass = right.probe.cases.filter((item) => item.success
-      && (item.attemptMetadata === undefined || item.attemptMetadata.attemptKind === "initial")).length;
+    const leftFirstPass = left.probe.cases.filter(
+      (item) =>
+        item.success &&
+        (item.attemptMetadata === undefined || item.attemptMetadata.attemptKind === "initial"),
+    ).length;
+    const rightFirstPass = right.probe.cases.filter(
+      (item) =>
+        item.success &&
+        (item.attemptMetadata === undefined || item.attemptMetadata.attemptKind === "initial"),
+    ).length;
     if (leftFirstPass !== rightFirstPass) return rightFirstPass - leftFirstPass;
     const leftTruncated = left.probe.cases.filter((item) => item.attemptMetadata?.truncated).length;
-    const rightTruncated = right.probe.cases.filter((item) => item.attemptMetadata?.truncated).length;
+    const rightTruncated = right.probe.cases.filter(
+      (item) => item.attemptMetadata?.truncated,
+    ).length;
     if (leftTruncated !== rightTruncated) return leftTruncated - rightTruncated;
     const repairDifference = repairedAttempts(left) - repairedAttempts(right);
     if (repairDifference !== 0) return repairDifference;

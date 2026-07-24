@@ -12,7 +12,7 @@ export interface ScheduledCallResult<T> extends ScheduledCallTiming {
 const failedCallTimings = new WeakMap<object, ScheduledCallTiming>();
 
 export function scheduledCallTimingFor(error: unknown): ScheduledCallTiming | undefined {
-  return ((typeof error === "object" && error !== null) || typeof error === "function")
+  return (typeof error === "object" && error !== null) || typeof error === "function"
     ? failedCallTimings.get(error as object)
     : undefined;
 }
@@ -83,10 +83,7 @@ export class PlaytestProviderScheduler {
   private readonly global: Semaphore;
   private readonly providers = new Map<string, Semaphore>();
 
-  constructor(
-    globalLimit: number,
-    providerLimits: Readonly<Record<string, number>> = {},
-  ) {
+  constructor(globalLimit: number, providerLimits: Readonly<Record<string, number>> = {}) {
     this.global = new Semaphore(globalLimit);
     for (const [provider, limit] of Object.entries(providerLimits)) {
       this.providers.set(provider, new Semaphore(limit));
@@ -143,8 +140,13 @@ export class CampaignTurnScheduler {
   async run<T>(campaignId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(campaignId) ?? Promise.resolve();
     let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    const tail = previous.then(() => current, () => current);
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(
+      () => current,
+      () => current,
+    );
     this.tails.set(campaignId, tail);
     await previous.catch(() => undefined);
     try {

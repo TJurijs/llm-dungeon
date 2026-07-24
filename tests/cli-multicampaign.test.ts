@@ -51,7 +51,9 @@ async function projectFixture(): Promise<{ root: string; project: CliProjectCont
     testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
   });
   await modelCatalog.recordTestSuccess(modelSelection(gemini), { testedLanguages: ["en", "ru"] });
-  await modelCatalog.recordTestSuccess(modelSelection(openRouter), { testedLanguages: ["en", "ru"] });
+  await modelCatalog.recordTestSuccess(modelSelection(openRouter), {
+    testedLanguages: ["en", "ru"],
+  });
   return {
     root,
     project: new CliProjectContext(paths, {
@@ -120,14 +122,19 @@ describe("multi-campaign terminal integration", () => {
     const { root, project } = await projectFixture();
     const dataRoot = path.join(root, "data");
     const catalog = new CampaignCatalog(dataRoot, { defaultProviderConfig: openRouter });
-    const existing = await catalog.createCampaign({
-      setup: setup("Existing Campaign"),
-      worldRules: "Existing rules.",
-      language: "en",
-    }, { providerConfig: openRouter });
+    const existing = await catalog.createCampaign(
+      {
+        setup: setup("Existing Campaign"),
+        worldRules: "Existing rules.",
+        language: "en",
+      },
+      { providerConfig: openRouter },
+    );
 
     await project.setLanguage("ru");
-    expect((await (await catalog.openCampaign(existing.campaignId)).readManifest()).language).toBe("en");
+    expect((await (await catalog.openCampaign(existing.campaignId)).readManifest()).language).toBe(
+      "en",
+    );
 
     const existingEngine = await project.createEngine(existing.campaignId);
     expect(existingEngine.provider).toMatchObject({ id: "openrouter", model: openRouter.model });
@@ -140,31 +147,38 @@ describe("multi-campaign terminal integration", () => {
     expect(added.engine.provider).toMatchObject({ id: "gemini", model: gemini.model });
 
     const campaigns = await project.campaigns();
-    expect(campaigns).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        campaignId: existing.campaignId,
-        archived: false,
-        language: "en",
-        providerConfig: openRouter,
-      }),
-      expect.objectContaining({
-        campaignId: added.campaignId,
-        archived: false,
-        language: "ru",
-        providerConfig: gemini,
-      }),
-    ]));
+    expect(campaigns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campaignId: existing.campaignId,
+          archived: false,
+          language: "en",
+          providerConfig: openRouter,
+        }),
+        expect.objectContaining({
+          campaignId: added.campaignId,
+          archived: false,
+          language: "ru",
+          providerConfig: gemini,
+        }),
+      ]),
+    );
   });
 
   it("reuses the current calibrated execution profile for ordinary campaign gameplay", async () => {
     const { root, project } = await projectFixture();
     const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: gemini });
-    const created = await catalog.createCampaign({
-      setup: setup("Calibrated Campaign"),
-      worldRules: "Calibrated rules.",
-      language: "en",
-    }, { providerConfig: gemini });
-    const baseline = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((draft) => draft.key.provider === "gemini")!;
+    const created = await catalog.createCampaign(
+      {
+        setup: setup("Calibrated Campaign"),
+        worldRules: "Calibrated rules.",
+        language: "en",
+      },
+      { providerConfig: gemini },
+    );
+    const baseline = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+      (draft) => draft.key.provider === "gemini",
+    )!;
     const profile = freezeModelExecutionProfile({
       ...baseline,
       key: { provider: gemini.provider, model: gemini.model, route: "direct" },
@@ -185,38 +199,54 @@ describe("multi-campaign terminal integration", () => {
 
     await project.createEngine(created.campaignId);
 
-    expect(providerSpy).toHaveBeenCalledWith(gemini, expect.objectContaining({
-      fingerprint: profile.fingerprint,
-    }));
+    expect(providerSpy).toHaveBeenCalledWith(
+      gemini,
+      expect.objectContaining({
+        fingerprint: profile.fingerprint,
+      }),
+    );
   });
 
   it("refuses to construct a play engine for an archived campaign", async () => {
     const { root, project } = await projectFixture();
     const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: gemini });
-    const created = await catalog.createCampaign({ setup: setup("Archived"), worldRules: "Rules." });
+    const created = await catalog.createCampaign({
+      setup: setup("Archived"),
+      worldRules: "Rules.",
+    });
     await catalog.archiveCampaign(created.campaignId);
 
-    await expect(project.createEngine(created.campaignId)).rejects.toThrow(/archived and cannot be resumed/);
-    expect(await project.campaigns()).toContainEqual(expect.objectContaining({
-      campaignId: created.campaignId,
-      archived: true,
-    }));
+    await expect(project.createEngine(created.campaignId)).rejects.toThrow(
+      /archived and cannot be resumed/,
+    );
+    expect(await project.campaigns()).toContainEqual(
+      expect.objectContaining({
+        campaignId: created.campaignId,
+        archived: true,
+      }),
+    );
   });
 
   it("lists and opens a pinned campaign without demanding a global default configuration", async () => {
     const { root, project } = await projectFixture();
-    const catalog = new CampaignCatalog(path.join(root, "data"), { defaultProviderConfig: openRouter });
+    const catalog = new CampaignCatalog(path.join(root, "data"), {
+      defaultProviderConfig: openRouter,
+    });
     const created = await catalog.createCampaign(
       { setup: setup("Pinned"), worldRules: "Rules." },
       { providerConfig: openRouter },
     );
     await rm(path.join(root, "config", "provider.json"));
-    const configure = vi.spyOn(project, "configureProvider").mockRejectedValue(new Error("must not prompt"));
+    const configure = vi
+      .spyOn(project, "configureProvider")
+      .mockRejectedValue(new Error("must not prompt"));
 
-    expect(await project.campaigns()).toContainEqual(expect.objectContaining({
-      campaignId: created.campaignId,
-      providerConfig: openRouter,
-    }));
+    expect(await project.campaigns()).toContainEqual(
+      expect.objectContaining({
+        campaignId: created.campaignId,
+        providerConfig: openRouter,
+      }),
+    );
     expect((await project.createEngine(created.campaignId)).provider).toMatchObject({
       id: "openrouter",
       model: openRouter.model,
@@ -228,22 +258,46 @@ describe("multi-campaign terminal integration", () => {
     const { root, project } = await projectFixture();
     const dataRoot = path.join(root, "data");
     const unpinnedCatalog = new CampaignCatalog(dataRoot);
-    const legacy = await unpinnedCatalog.createCampaign({ setup: setup("Unpinned"), worldRules: "Rules." });
-    await legacy.store.setPendingRequest({ kind: "action", action: "Continue", phase: "requested" });
+    const legacy = await unpinnedCatalog.createCampaign({
+      setup: setup("Unpinned"),
+      worldRules: "Rules.",
+    });
+    await legacy.store.setPendingRequest({
+      kind: "action",
+      action: "Continue",
+      phase: "requested",
+    });
 
-    expect((await project.createEngine(legacy.campaignId)).provider).toMatchObject({ model: gemini.model });
+    expect((await project.createEngine(legacy.campaignId)).provider).toMatchObject({
+      model: gemini.model,
+    });
     expect(await unpinnedCatalog.providerConfig(legacy.campaignId)).toEqual(gemini);
-    await writeFile(path.join(root, "config", "provider.json"), `${JSON.stringify(openRouter, null, 2)}\n`, "utf8");
-    expect((await project.createEngine(legacy.campaignId)).provider).toMatchObject({ model: gemini.model });
+    await writeFile(
+      path.join(root, "config", "provider.json"),
+      `${JSON.stringify(openRouter, null, 2)}\n`,
+      "utf8",
+    );
+    expect((await project.createEngine(legacy.campaignId)).provider).toMatchObject({
+      model: gemini.model,
+    });
 
     const setupSession = await project.createSetupSession();
-    await writeFile(path.join(root, "config", "provider.json"), `${JSON.stringify(gemini, null, 2)}\n`, "utf8");
-    const created = await project.createCampaignSession({
-      setup: setup("Captured Model"),
-      worldRules: "Rules.",
-    }, setupSession.config);
+    await writeFile(
+      path.join(root, "config", "provider.json"),
+      `${JSON.stringify(gemini, null, 2)}\n`,
+      "utf8",
+    );
+    const created = await project.createCampaignSession(
+      {
+        setup: setup("Captured Model"),
+        worldRules: "Rules.",
+      },
+      setupSession.config,
+    );
     expect(created.engine.provider).toMatchObject({ model: openRouter.model });
-    expect(await new CampaignCatalog(dataRoot).providerConfig(created.campaignId)).toEqual(openRouter);
+    expect(await new CampaignCatalog(dataRoot).providerConfig(created.campaignId)).toEqual(
+      openRouter,
+    );
   });
 
   it("chooses among unarchived campaigns and excludes the current campaign when switching", async () => {
@@ -251,7 +305,11 @@ describe("multi-campaign terminal integration", () => {
       summary("campaign:first", { title: "First" }),
       summary("campaign:second", { title: "Second" }),
       summary("campaign:third", { title: "Third" }),
-      summary("campaign:archived", { title: "Archived", archived: true, archivedAt: "2026-01-02T00:00:00.000Z" }),
+      summary("campaign:archived", {
+        title: "Archived",
+        archived: true,
+        archivedAt: "2026-01-02T00:00:00.000Z",
+      }),
     ];
     const engines = new Map(campaigns.map((campaign) => [campaign.campaignId, {} as GameEngine]));
     const project = {
@@ -260,11 +318,12 @@ describe("multi-campaign terminal integration", () => {
     } as unknown as CliProjectContext;
     const choose = vi.fn(async (choices: CampaignCatalogSummary[]) => choices.at(-1)!.campaignId);
     const cli = new HumanGameCli(project, choose);
-    const select = (campaignId?: string, excludedCampaignId?: string) => (
-      cli as unknown as {
-        selectCampaign(id?: string, excluded?: string): Promise<CliCampaignSession | undefined>;
-      }
-    ).selectCampaign(campaignId, excludedCampaignId);
+    const select = (campaignId?: string, excludedCampaignId?: string) =>
+      (
+        cli as unknown as {
+          selectCampaign(id?: string, excluded?: string): Promise<CliCampaignSession | undefined>;
+        }
+      ).selectCampaign(campaignId, excludedCampaignId);
 
     expect((await select())?.campaignId).toBe("campaign:third");
     expect(choose.mock.calls[0]![0].map((campaign) => campaign.campaignId)).toEqual([
@@ -289,10 +348,12 @@ describe("multi-campaign terminal integration", () => {
       await program.parseAsync(["node", "llm-dungeon", "play", "campaign:chosen"]);
       expect(play).toHaveBeenCalledWith("campaign:chosen");
 
-      expect(program.commands.find((command) => command.name() === "configure")?.description())
-        .toContain("default provider and model for new campaigns");
-      expect(program.commands.find((command) => command.name() === "language")?.description())
-        .toContain("default language for new campaigns");
+      expect(
+        program.commands.find((command) => command.name() === "configure")?.description(),
+      ).toContain("default provider and model for new campaigns");
+      expect(
+        program.commands.find((command) => command.name() === "language")?.description(),
+      ).toContain("default language for new campaigns");
       const commandNames = program.commands.map((command) => command.name());
       expect(commandNames).toContain("campaigns");
       expect(commandNames).not.toContain("playtest");

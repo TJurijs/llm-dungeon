@@ -346,7 +346,7 @@ new facts.
   language-specific quality (`high`, `medium`, `low`, `unrated`,
   `awaiting_judgment`) are independent authorities. Recommendation eligibility
   is derived separately and is never equivalent to a connection-schema pass.
-  Gemini 3.5 Flash remains the explicit product-recommended default even when
+  Gemini 3.6 Flash remains the explicit product-recommended default even when
   no new paid certification has been authorized.
 - Calibration is non-scored and exercises representative setup, resolved real
   effects, `check_required`, locked resolution, inventory/reference transfer,
@@ -425,7 +425,7 @@ new facts.
 - Never run paid calibration, certification, autoplay, stress, replay, or
   judging without explicit authorization and an understood cost ceiling.
 
-Nine profiles exist and should remain individually selectable:
+Ten profiles exist and should remain individually selectable:
 
 ```text
 curious-explorer
@@ -437,6 +437,7 @@ creative-problem-solver
 rule-challenger
 long-term-planner
 chaotic
+in-character
 ```
 
 ## Refactoring workflow

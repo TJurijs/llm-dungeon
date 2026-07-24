@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CampaignTurnScheduler, PlaytestProviderScheduler } from "../tools/playtest/harness/scheduler.js";
+import {
+  CampaignTurnScheduler,
+  PlaytestProviderScheduler,
+} from "../tools/playtest/harness/scheduler.js";
 import { PlaytestCostLimitError, PlaytestCostManager } from "../tools/playtest/harness/cost.js";
 
 describe("playtest scheduling", () => {
@@ -7,18 +10,23 @@ describe("playtest scheduling", () => {
     const scheduler = new PlaytestProviderScheduler(4, { gemini: 1, openai: 2 });
     const active = new Map<string, number>();
     const maximum = new Map<string, number>();
-    const call = (provider: string) => scheduler.schedule(provider, async () => {
-      const next = (active.get(provider) ?? 0) + 1;
-      active.set(provider, next);
-      maximum.set(provider, Math.max(maximum.get(provider) ?? 0, next));
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      active.set(provider, next - 1);
-      return provider;
-    });
+    const call = (provider: string) =>
+      scheduler.schedule(provider, async () => {
+        const next = (active.get(provider) ?? 0) + 1;
+        active.set(provider, next);
+        maximum.set(provider, Math.max(maximum.get(provider) ?? 0, next));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active.set(provider, next - 1);
+        return provider;
+      });
 
     await Promise.all([
-      call("gemini"), call("gemini"), call("gemini"),
-      call("openai"), call("openai"), call("openai"),
+      call("gemini"),
+      call("gemini"),
+      call("gemini"),
+      call("openai"),
+      call("openai"),
+      call("openai"),
     ]);
 
     expect(maximum.get("gemini")).toBe(1);
@@ -28,7 +36,9 @@ describe("playtest scheduling", () => {
   it("does not let calls queued in one provider pool occupy global permits", async () => {
     const scheduler = new PlaytestProviderScheduler(2, { gemini: 1, openai: 1 });
     let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
     const first = scheduler.schedule("gemini", async () => {
       await firstGate;
       return "first";
@@ -47,19 +57,20 @@ describe("playtest scheduling", () => {
     let maxA = 0;
     let activeB = 0;
     let sawIndependentOverlap = false;
-    const turn = (campaignId: string) => scheduler.run(campaignId, async () => {
-      if (campaignId === "campaign-a") {
-        activeA += 1;
-        maxA = Math.max(maxA, activeA);
-        if (activeB > 0) sawIndependentOverlap = true;
-      } else {
-        activeB += 1;
-        if (activeA > 0) sawIndependentOverlap = true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      if (campaignId === "campaign-a") activeA -= 1;
-      else activeB -= 1;
-    });
+    const turn = (campaignId: string) =>
+      scheduler.run(campaignId, async () => {
+        if (campaignId === "campaign-a") {
+          activeA += 1;
+          maxA = Math.max(maxA, activeA);
+          if (activeB > 0) sawIndependentOverlap = true;
+        } else {
+          activeB += 1;
+          if (activeA > 0) sawIndependentOverlap = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (campaignId === "campaign-a") activeA -= 1;
+        else activeB -= 1;
+      });
 
     await Promise.all([turn("campaign-a"), turn("campaign-a"), turn("campaign-b")]);
     expect(maxA).toBe(1);

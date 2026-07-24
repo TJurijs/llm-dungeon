@@ -14,12 +14,13 @@ const attemptMetadataByError = new WeakMap<object, ProviderAttemptMetadata>();
 export function attachStructuredFailure(error: unknown, details: StructuredFailureDetails): void {
   if ((typeof error === "object" && error !== null) || typeof error === "function") {
     failures.set(error as object, details);
-    if (details.attemptMetadata) attemptMetadataByError.set(error as object, details.attemptMetadata);
+    if (details.attemptMetadata)
+      attemptMetadataByError.set(error as object, details.attemptMetadata);
   }
 }
 
 export function structuredFailureDetails(error: unknown): StructuredFailureDetails | undefined {
-  return ((typeof error === "object" && error !== null) || typeof error === "function")
+  return (typeof error === "object" && error !== null) || typeof error === "function"
     ? failures.get(error as object)
     : undefined;
 }
@@ -32,7 +33,7 @@ export function attachAttemptMetadata(error: unknown, metadata: ProviderAttemptM
 }
 
 export function attemptMetadataFor(error: unknown): ProviderAttemptMetadata | undefined {
-  return ((typeof error === "object" && error !== null) || typeof error === "function")
+  return (typeof error === "object" && error !== null) || typeof error === "function"
     ? attemptMetadataByError.get(error as object)
     : undefined;
 }

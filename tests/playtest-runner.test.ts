@@ -31,9 +31,13 @@ import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/ty
 
 const CALIBRATED_AT = "2026-07-19T00:00:00.000Z";
 
-function frozenProfile(provider: PlaytestModelTarget["config"]["provider"], model: string): FrozenModelExecutionProfile {
-  const draft = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((candidate) =>
-    candidate.key.provider === provider && candidate.key.model === model);
+function frozenProfile(
+  provider: PlaytestModelTarget["config"]["provider"],
+  model: string,
+): FrozenModelExecutionProfile {
+  const draft = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+    (candidate) => candidate.key.provider === provider && candidate.key.model === model,
+  );
   if (!draft) throw new Error(`Missing test execution profile for ${provider}/${model}`);
   return freezeModelExecutionProfile({
     ...draft,
@@ -176,7 +180,10 @@ class RunnerFakeProvider implements LlmProvider {
     this.activity.maxActive = Math.max(this.activity.maxActive, this.activity.active);
     if (this.sharedActivity) {
       this.sharedActivity.active += 1;
-      this.sharedActivity.maxActive = Math.max(this.sharedActivity.maxActive, this.sharedActivity.active);
+      this.sharedActivity.maxActive = Math.max(
+        this.sharedActivity.maxActive,
+        this.sharedActivity.active,
+      );
     }
     try {
       if (this.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
@@ -186,15 +193,17 @@ class RunnerFakeProvider implements LlmProvider {
           if (this.judgmentFailuresRemaining > 0) this.judgmentFailuresRemaining -= 1;
           throw new Error("Independent judge fixture failed");
         }
-        const requirementsText = request.prompt
-          .split("SEMANTIC COVERAGE REQUIREMENTS\n")[1]
-          ?.split("\n\nDETERMINISTIC COVERAGE")[0] ?? "[]";
+        const requirementsText =
+          request.prompt
+            .split("SEMANTIC COVERAGE REQUIREMENTS\n")[1]
+            ?.split("\n\nDETERMINISTIC COVERAGE")[0] ?? "[]";
         const requirements = JSON.parse(requirementsText) as Array<{ id: string }>;
         const turnMatch = /Judgment interval: (\d+) through (\d+)/u.exec(request.prompt);
         const throughTurn = Number(turnMatch?.[2] ?? 10);
-        const turnsText = request.prompt
-          .split("TURN RECORDS WITH LOCKED CHECKS AND COMMITTED OPERATIONS\n")[1]
-          ?.split("\n\nAUTHORITATIVE STARTING STATE")[0] ?? "[]";
+        const turnsText =
+          request.prompt
+            .split("TURN RECORDS WITH LOCKED CHECKS AND COMMITTED OPERATIONS\n")[1]
+            ?.split("\n\nAUTHORITATIVE STARTING STATE")[0] ?? "[]";
         const auditedTurns = JSON.parse(turnsText) as Array<{
           turn: number;
           operations: Array<{ operationIndex: number }>;
@@ -226,15 +235,25 @@ class RunnerFakeProvider implements LlmProvider {
         value = {
           narration: `The locked outcome resolves decision ${this.decisionCount}.`,
           turnSummary: `Locked outcome ${this.decisionCount} completed.`,
-          operations: this.terminalOnDecision === this.decisionCount
-            ? [{ type: "end_campaign", status: "dead", reason: "The locked severe failure is fatal." }]
-            : [],
+          operations:
+            this.terminalOnDecision === this.decisionCount
+              ? [
+                  {
+                    type: "end_campaign",
+                    status: "dead",
+                    reason: "The locked severe failure is fatal.",
+                  },
+                ]
+              : [],
         };
       } else if (request.schemaName.includes("turn_decision_v1")) {
         this.decisionCount += 1;
         const checked = [3, 6, 7].includes(this.decisionCount);
         value = checked
-          ? checkRequired(this.decisionCount, this.terminalOnDecision === this.decisionCount ? "dead" : "none")
+          ? checkRequired(
+              this.decisionCount,
+              this.terminalOnDecision === this.decisionCount ? "dead" : "none",
+            )
           : resolved(this.decisionCount);
         if (!this.cancelledOnce && this.cancelOnDecision === this.decisionCount) {
           this.cancelledOnce = true;
@@ -272,7 +291,9 @@ class FirstCallGateProvider extends RunnerFakeProvider {
     this.releaseGate();
   }
 
-  override async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+  override async generateStructured<T>(
+    request: StructuredRequest<T>,
+  ): Promise<StructuredResult<T>> {
     if (!this.gated) {
       this.gated = true;
       this.signalStarted();
@@ -300,7 +321,11 @@ class RecordingAssessmentCatalog extends ModelAssessmentCatalog {
 async function readTurns(runDir: string, jobId = "job-001"): Promise<PlaytestTurnRecord[]> {
   const text = await readFile(path.join(runDir, "jobs", jobId, "turns.jsonl"), "utf8");
   return PlaytestTurnRecordSchema.array().parse(
-    text.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line)),
+    text
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line)),
   );
 }
 
@@ -325,10 +350,16 @@ function dependencies(
 ) {
   return {
     profileFor: async (input: PlaytestModelTarget) => {
-      if (input.config.provider === candidateProfile.key.provider
-        && input.config.model === candidateProfile.key.model) return candidateProfile;
-      if (input.config.provider === judgeProfile.key.provider
-        && input.config.model === judgeProfile.key.model) return judgeProfile;
+      if (
+        input.config.provider === candidateProfile.key.provider &&
+        input.config.model === candidateProfile.key.model
+      )
+        return candidateProfile;
+      if (
+        input.config.provider === judgeProfile.key.provider &&
+        input.config.model === judgeProfile.key.model
+      )
+        return judgeProfile;
       throw new Error(`Unexpected target ${input.config.provider}/${input.config.model}`);
     },
     providerFor: (input: PlaytestModelTarget) =>
@@ -345,7 +376,8 @@ describe("playtest runner", () => {
     const preflights: string[] = [];
     let providerCreations = 0;
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
-      profileFor: async (input) => input.config.provider === "gemini" ? candidateProfile : judgeProfile,
+      profileFor: async (input) =>
+        input.config.provider === "gemini" ? candidateProfile : judgeProfile,
       preflightTarget: async (input, language) => {
         preflights.push(`${input.config.provider}:${language}`);
         if (input.config.provider === "openai" && language === "ru") {
@@ -359,14 +391,10 @@ describe("playtest runner", () => {
       costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
     });
 
-    await expect(runner.run(certificationConfig({ languages: ["en", "ru"] }), "runner-preflight"))
-      .rejects.toThrow("Russian judge compatibility is unavailable");
-    expect(preflights).toEqual([
-      "gemini:en",
-      "gemini:ru",
-      "openai:en",
-      "openai:ru",
-    ]);
+    await expect(
+      runner.run(certificationConfig({ languages: ["en", "ru"] }), "runner-preflight"),
+    ).rejects.toThrow("Russian judge compatibility is unavailable");
+    expect(preflights).toEqual(["gemini:en", "gemini:ru", "openai:en", "openai:ru"]);
     expect(providerCreations).toBe(0);
   });
 
@@ -391,12 +419,17 @@ describe("playtest runner", () => {
       costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
     });
 
-    await expect(runner.run(certificationConfig({
-      candidates: [candidateTarget, candidateTarget],
-    }), "runner-duplicate-certification"))
-      .rejects.toThrow("Candidate provider/model/routes must be unique");
-    await expect(runner.run(certificationConfig({ repetitions: 2 }), "runner-repeated-certification"))
-      .rejects.toThrow("certification-v1 requires exactly one authoritative repetition");
+    await expect(
+      runner.run(
+        certificationConfig({
+          candidates: [candidateTarget, candidateTarget],
+        }),
+        "runner-duplicate-certification",
+      ),
+    ).rejects.toThrow("Candidate provider/model/routes must be unique");
+    await expect(
+      runner.run(certificationConfig({ repetitions: 2 }), "runner-repeated-certification"),
+    ).rejects.toThrow("certification-v1 requires exactly one authoritative repetition");
     expect({ profileReads, preflights, providerCreations }).toEqual({
       profileReads: 0,
       preflights: 0,
@@ -409,14 +442,21 @@ describe("playtest runner", () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-same-judge-"));
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
       profileFor: async () => candidateProfile,
-      preflightTarget: async () => { throw new Error("same-model judge reached preflight"); },
+      preflightTarget: async () => {
+        throw new Error("same-model judge reached preflight");
+      },
       providerFor: () => new RunnerFakeProvider(candidateProfile),
       costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
     });
 
-    await expect(runner.run(certificationConfig({
-      judge: { policy: "final", rubricVersion: 1, target: candidateTarget },
-    }), "runner-same-model-judge")).rejects.toThrow("same-model judge reached preflight");
+    await expect(
+      runner.run(
+        certificationConfig({
+          judge: { policy: "final", rubricVersion: 1, target: candidateTarget },
+        }),
+        "runner-same-model-judge",
+      ),
+    ).rejects.toThrow("same-model judge reached preflight");
   });
 
   it("executes all ten certification actions and rolls, then reruns a separate judge without gameplay commits", async () => {
@@ -425,20 +465,35 @@ describe("playtest runner", () => {
     const judge = new RunnerFakeProvider(judgeProfile);
     judge.failJudgment = true;
     const catalog = await fixtureCatalog(root);
-    const runner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
 
     const failedJudgment = await runner.run(certificationConfig(), "runner-certification");
     const jobDir = path.join(failedJudgment.runDir, "jobs", "job-001");
     const turns = await readTurns(failedJudgment.runDir);
     expect(turns).toHaveLength(10);
-    expect(turns.map((turn) => turn.scriptedTurnId)).toEqual(CERTIFICATION_SCRIPT.map((turn) => turn.id));
-    expect(turns.map((turn) => turn.assignedNaturalRoll)).toEqual([42, 55, 100, 64, 71, 82, 1, 36, 49, 93]);
+    expect(turns.map((turn) => turn.scriptedTurnId)).toEqual(
+      CERTIFICATION_SCRIPT.map((turn) => turn.id),
+    );
+    expect(turns.map((turn) => turn.assignedNaturalRoll)).toEqual([
+      42, 55, 100, 64, 71, 82, 1, 36, 49, 93,
+    ]);
     expect(turns.every((turn) => turn.driver === "scripted")).toBe(true);
     for (const [index, turn] of turns.entries()) {
-      expect(CERTIFICATION_SCRIPT[index]!.branches.map((branch) => branch.action.en)).toContain(turn.action);
+      expect(CERTIFICATION_SCRIPT[index]!.branches.map((branch) => branch.action.en)).toContain(
+        turn.action,
+      );
     }
-    expect(turns.filter((turn) => turn.check).map((turn) => [turn.turn, turn.check!.roll]))
-      .toEqual([[3, 100], [6, 82], [7, 1]]);
+    expect(turns.filter((turn) => turn.check).map((turn) => [turn.turn, turn.check!.roll])).toEqual(
+      [
+        [3, 100],
+        [6, 82],
+        [7, 1],
+      ],
+    );
     expect(failedJudgment.manifest.jobs[0]).toMatchObject({
       status: "awaiting_judgment",
       completedTurns: 10,
@@ -447,7 +502,10 @@ describe("playtest runner", () => {
 
     const technicalBefore = await readFile(path.join(jobDir, "technical.json"), "utf8");
     const turnsBefore = await readFile(path.join(jobDir, "turns.jsonl"), "utf8");
-    const candidateCallsBefore = await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8");
+    const candidateCallsBefore = await readFile(
+      path.join(jobDir, "calls", "candidate.jsonl"),
+      "utf8",
+    );
     const campaignStore = new StateStore(path.join(jobDir, "campaign"));
     expect((await campaignStore.load()).manifest.turn).toBe(10);
 
@@ -473,17 +531,26 @@ describe("playtest runner", () => {
     });
     expect(await readFile(path.join(jobDir, "technical.json"), "utf8")).toBe(technicalBefore);
     expect(await readFile(path.join(jobDir, "turns.jsonl"), "utf8")).toBe(turnsBefore);
-    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(candidateCallsBefore);
+    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(
+      candidateCallsBefore,
+    );
     expect((await campaignStore.load()).manifest.turn).toBe(10);
     expect(currentProfileReads).toBe(0);
     expect(currentPreflights).toBe(0);
     expect(catalog.certificationRecords).toHaveLength(2);
-    expect(catalog.certificationRecords.every((record) => record.packageId === "certification-v1")).toBe(true);
-    expect(await catalog.effective({
-      provider: candidateTarget.config.provider,
-      model: candidateTarget.config.model,
-      route: candidateTarget.route,
-    }, "en")).toMatchObject({ certificationCurrent: true, qualityStatus: "high" });
+    expect(
+      catalog.certificationRecords.every((record) => record.packageId === "certification-v1"),
+    ).toBe(true);
+    expect(
+      await catalog.effective(
+        {
+          provider: candidateTarget.config.provider,
+          model: candidateTarget.config.model,
+          route: candidateTarget.route,
+        },
+        "en",
+      ),
+    ).toMatchObject({ certificationCurrent: true, qualityStatus: "high" });
   });
 
   it("preserves a valid death and finishes later coverage in a fresh isolated fixture", async () => {
@@ -492,7 +559,11 @@ describe("playtest runner", () => {
     candidate.terminalOnDecision = 7;
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    const runner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
 
     const result = await runner.run(certificationConfig(), "runner-terminal-continuation");
     const jobDir = path.join(result.runDir, "jobs", "job-001");
@@ -504,14 +575,20 @@ describe("playtest runner", () => {
       turn: 7,
       status: "dead",
     });
-    expect((await new StateStore(path.join(jobDir, "fixtures", "coverage-after-007", "campaign")).load()).manifest)
-      .toMatchObject({ turn: 10, status: "active" });
+    expect(
+      (await new StateStore(path.join(jobDir, "fixtures", "coverage-after-007", "campaign")).load())
+        .manifest,
+    ).toMatchObject({ turn: 10, status: "active" });
     const warmupText = await readFile(
       path.join(jobDir, "fixtures", "coverage-after-007", "warmup-turns.jsonl"),
       "utf8",
     );
     const warmupTurns = PlaytestTurnRecordSchema.array().parse(
-      warmupText.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line)),
+      warmupText
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
     );
     expect(warmupTurns).toHaveLength(7);
     expect(result.manifest.jobs[0]).toMatchObject({
@@ -520,8 +597,9 @@ describe("playtest runner", () => {
       stopReason: "turn_limit",
       technicalStatus: "clean",
     });
-    expect(await readFile(path.join(jobDir, "transcript.md"), "utf8"))
-      .toContain("Fresh isolated coverage fixture");
+    expect(await readFile(path.join(jobDir, "transcript.md"), "utf8")).toContain(
+      "Fresh isolated coverage fixture",
+    );
   });
 
   it("reconciles a completed immutable judgment after its assessment commit was interrupted", async () => {
@@ -530,7 +608,11 @@ describe("playtest runner", () => {
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
     catalog.failOnCertificationAttempt = 2;
-    const runner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
 
     const interrupted = await runner.run(certificationConfig(), "runner-judgment-commit");
     expect(interrupted.manifest.jobs[0]).toMatchObject({
@@ -539,7 +621,8 @@ describe("playtest runner", () => {
       qualityStatus: "awaiting_judgment",
     });
     const judgeCallsBefore = judge.requests.filter((request) =>
-      request.schemaName.includes("playtest_judgment")).length;
+      request.schemaName.includes("playtest_judgment"),
+    ).length;
     expect(judgeCallsBefore).toBe(1);
 
     catalog.failOnCertificationAttempt = undefined;
@@ -548,8 +631,9 @@ describe("playtest runner", () => {
       status: "completed",
       qualityStatus: "high",
     });
-    expect(judge.requests.filter((request) =>
-      request.schemaName.includes("playtest_judgment"))).toHaveLength(judgeCallsBefore);
+    expect(
+      judge.requests.filter((request) => request.schemaName.includes("playtest_judgment")),
+    ).toHaveLength(judgeCallsBefore);
     expect(catalog.certificationRecords).toHaveLength(2);
   });
 
@@ -558,14 +642,20 @@ describe("playtest runner", () => {
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    const runner: PlaytestRunner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner: PlaytestRunner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
     const interrupted = await runner.run(certificationConfig(), "runner-resume");
     const jobDir = path.join(interrupted.runDir, "jobs", "job-001");
     expect(interrupted.manifest.jobs[0]).toMatchObject({ status: "cancelled", completedTurns: 2 });
-    const prepared = JSON.parse(await readFile(path.join(jobDir, "prepared-turn.json"), "utf8")) as {
+    const prepared = JSON.parse(
+      await readFile(path.join(jobDir, "prepared-turn.json"), "utf8"),
+    ) as {
       turn: number;
       assignedNaturalRoll: number;
     };
@@ -637,7 +727,9 @@ describe("playtest runner", () => {
     });
     const candidateBefore = await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8");
     const playerBefore = await readFile(path.join(jobDir, "calls", "player-driver.jsonl"), "utf8");
-    const initialTasks = JSON.parse(await readFile(path.join(jobDir, "judge-tasks.json"), "utf8")) as Array<{
+    const initialTasks = JSON.parse(
+      await readFile(path.join(jobDir, "judge-tasks.json"), "utf8"),
+    ) as Array<{
       id: string;
       status: string;
       attempts: number;
@@ -650,9 +742,15 @@ describe("playtest runner", () => {
 
     const retried = await runner.judge("runner-autoplay-checkpoints");
     expect(retried.manifest.jobs[0]).toMatchObject({ status: "completed", completedTurns: 25 });
-    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(candidateBefore);
-    expect(await readFile(path.join(jobDir, "calls", "player-driver.jsonl"), "utf8")).toBe(playerBefore);
-    const retriedTasks = JSON.parse(await readFile(path.join(jobDir, "judge-tasks.json"), "utf8")) as Array<{
+    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(
+      candidateBefore,
+    );
+    expect(await readFile(path.join(jobDir, "calls", "player-driver.jsonl"), "utf8")).toBe(
+      playerBefore,
+    );
+    const retriedTasks = JSON.parse(
+      await readFile(path.join(jobDir, "judge-tasks.json"), "utf8"),
+    ) as Array<{
       id: string;
       status: string;
       attempts: number;
@@ -664,7 +762,9 @@ describe("playtest runner", () => {
     ]);
     const judgeCalls = PlaytestCallRecordSchema.array().parse(
       (await readFile(path.join(jobDir, "calls", "judge.jsonl"), "utf8"))
-        .trim().split(/\r?\n/u).map((line) => JSON.parse(line)),
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line)),
     );
     expect(judgeCalls.map((call) => call.phase)).toEqual([
       "checkpoint_judge",
@@ -704,10 +804,15 @@ describe("playtest runner", () => {
     const running = runner.run(config, "runner-worker-lock");
 
     await candidate.firstCallStarted;
-    const competingRunner = new PlaytestRunner(root, path.join(root, "playtests"), runnerDependencies);
+    const competingRunner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      runnerDependencies,
+    );
     try {
-      await expect(competingRunner.resume("runner-worker-lock"))
-        .rejects.toThrow("Playtest run runner-worker-lock is locked by another running process");
+      await expect(competingRunner.resume("runner-worker-lock")).rejects.toThrow(
+        "Playtest run runner-worker-lock is locked by another running process",
+      );
     } finally {
       candidate.releaseFirstCall();
     }
@@ -730,7 +835,11 @@ describe("playtest runner", () => {
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    const runner: PlaytestRunner = new PlaytestRunner(root, path.join(root, "playtests"), dependencies(candidate, judge, catalog));
+    const runner: PlaytestRunner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
@@ -806,7 +915,8 @@ describe("playtest runner", () => {
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
-      profileFor: async (input) => input.config.provider === "gemini" ? candidateProfile : judgeProfile,
+      profileFor: async (input) =>
+        input.config.provider === "gemini" ? candidateProfile : judgeProfile,
       providerFor: (input) => {
         if (input.config.provider !== "gemini") return judge;
         const candidate = new RunnerFakeProvider(candidateProfile, shared);
@@ -830,7 +940,9 @@ describe("playtest runner", () => {
 
     const result = await runner.run(config, "runner-concurrency");
     expect(result.manifest.jobs).toHaveLength(2);
-    expect(result.manifest.jobs.every((job) => job.status === "completed" && job.completedTurns === 10)).toBe(true);
+    expect(
+      result.manifest.jobs.every((job) => job.status === "completed" && job.completedTurns === 10),
+    ).toBe(true);
     expect(shared.maxActive).toBe(2);
     expect(shared.maxActive).toBeLessThanOrEqual(2);
     expect(candidates).toHaveLength(2);

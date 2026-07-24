@@ -2,75 +2,109 @@ import { z } from "zod";
 import { languageInstruction, type LanguageCode } from "../../../src/language.js";
 import { CURRENT_STATE_RECONCILIATION } from "../../../src/prompts/blocks.js";
 import { CHECK_DIFFICULTY_POLICY } from "../../../src/prompts/difficulty.js";
-import { QualityDimensionSchema, type PlaytestPackage, type PlaytestTurnRecord } from "./contracts.js";
+import {
+  QualityDimensionSchema,
+  type PlaytestPackage,
+  type PlaytestTurnRecord,
+} from "./contracts.js";
 import type { CoverageAssessment, PlaytestMechanicalAudit } from "./audit.js";
 
 export const PLAYTEST_JUDGE_RUBRIC_VERSION = 1 as const;
 
-const RubricScoresSchema = z.object({
-  narrative: z.number().int().min(1).max(10),
-  agency: z.number().int().min(1).max(10),
-  persistence: z.number().int().min(1).max(10),
-  checks: z.number().int().min(1).max(10),
-  sandbox: z.number().int().min(1).max(10),
-  npcContinuity: z.number().int().min(1).max(10),
-  secrecy: z.number().int().min(1).max(10),
-  pacing: z.number().int().min(1).max(10),
-  language: z.number().int().min(1).max(10),
-}).strict();
+const RubricScoresSchema = z
+  .object({
+    narrative: z.number().int().min(1).max(10),
+    agency: z.number().int().min(1).max(10),
+    persistence: z.number().int().min(1).max(10),
+    checks: z.number().int().min(1).max(10),
+    sandbox: z.number().int().min(1).max(10),
+    npcContinuity: z.number().int().min(1).max(10),
+    secrecy: z.number().int().min(1).max(10),
+    pacing: z.number().int().min(1).max(10),
+    language: z.number().int().min(1).max(10),
+  })
+  .strict();
 
-export const PlaytestJudgmentSchema = z.object({
-  rubricVersion: z.literal(PLAYTEST_JUDGE_RUBRIC_VERSION),
-  qualityStatus: z.enum(["high", "medium", "low"]),
-  overallScore: z.number().int().min(1).max(10),
-  scores: RubricScoresSchema,
-  executiveSummary: z.string().min(1).max(4_000),
-  strengths: z.array(z.string().min(1).max(1_000)).max(8),
-  issues: z.array(z.object({
-    severity: z.enum(["high", "medium", "low"]),
-    dimension: QualityDimensionSchema,
-    evidence: z.string().min(1).max(2_000),
-    recommendation: z.string().min(1).max(2_000),
-  }).strict()).max(20),
-  coverageJudgments: z.array(z.object({
-    requirementId: z.string().min(1),
-    passed: z.boolean(),
-    evidence: z.string().min(1).max(2_000),
-  }).strict()),
-  turnAudits: z.array(z.object({
-    turn: z.number().int().positive(),
-    durableConsequences: z.array(z.object({
-      consequence: z.string().min(1).max(1_000),
-      operationIndexes: z.array(z.number().int().nonnegative()).max(40),
-      persistence: z.enum(["persisted", "missing", "contradicted"]),
-    }).strict()).max(40),
-  }).strict()).max(200),
-  narrativeAssessment: z.string().min(1).max(3_000),
-  persistenceAssessment: z.string().min(1).max(3_000),
-  checksAssessment: z.string().min(1).max(3_000),
-  sandboxAndAgencyAssessment: z.string().min(1).max(3_000),
-  continuityAndSecrecyAssessment: z.string().min(1).max(3_000),
-  pacingAndLanguageAssessment: z.string().min(1).max(3_000),
-  recommendedChanges: z.array(z.string().min(1).max(1_000)).max(8),
-}).strict().superRefine((judgment, context) => {
-  const expectedStatus = judgment.overallScore >= 8 ? "high" : judgment.overallScore >= 5 ? "medium" : "low";
-  if (judgment.qualityStatus !== expectedStatus) {
-    context.addIssue({
-      code: "custom",
-      path: ["qualityStatus"],
-      message: `overall score ${judgment.overallScore} requires qualityStatus=${expectedStatus}`,
-    });
-  }
-  const hasPersistenceDefect = judgment.turnAudits.some((audit) =>
-    audit.durableConsequences.some((consequence) => consequence.persistence !== "persisted"));
-  if (hasPersistenceDefect && (judgment.scores.persistence > 8 || judgment.overallScore > 8)) {
-    context.addIssue({
-      code: "custom",
-      path: ["scores", "persistence"],
-      message: "missing or contradicted durable consequences cap persistence and overall scores at 8",
-    });
-  }
-});
+export const PlaytestJudgmentSchema = z
+  .object({
+    rubricVersion: z.literal(PLAYTEST_JUDGE_RUBRIC_VERSION),
+    qualityStatus: z.enum(["high", "medium", "low"]),
+    overallScore: z.number().int().min(1).max(10),
+    scores: RubricScoresSchema,
+    executiveSummary: z.string().min(1).max(4_000),
+    strengths: z.array(z.string().min(1).max(1_000)).max(8),
+    issues: z
+      .array(
+        z
+          .object({
+            severity: z.enum(["high", "medium", "low"]),
+            dimension: QualityDimensionSchema,
+            evidence: z.string().min(1).max(2_000),
+            recommendation: z.string().min(1).max(2_000),
+          })
+          .strict(),
+      )
+      .max(20),
+    coverageJudgments: z.array(
+      z
+        .object({
+          requirementId: z.string().min(1),
+          passed: z.boolean(),
+          evidence: z.string().min(1).max(2_000),
+        })
+        .strict(),
+    ),
+    turnAudits: z
+      .array(
+        z
+          .object({
+            turn: z.number().int().positive(),
+            durableConsequences: z
+              .array(
+                z
+                  .object({
+                    consequence: z.string().min(1).max(1_000),
+                    operationIndexes: z.array(z.number().int().nonnegative()).max(40),
+                    persistence: z.enum(["persisted", "missing", "contradicted"]),
+                  })
+                  .strict(),
+              )
+              .max(40),
+          })
+          .strict(),
+      )
+      .max(200),
+    narrativeAssessment: z.string().min(1).max(3_000),
+    persistenceAssessment: z.string().min(1).max(3_000),
+    checksAssessment: z.string().min(1).max(3_000),
+    sandboxAndAgencyAssessment: z.string().min(1).max(3_000),
+    continuityAndSecrecyAssessment: z.string().min(1).max(3_000),
+    pacingAndLanguageAssessment: z.string().min(1).max(3_000),
+    recommendedChanges: z.array(z.string().min(1).max(1_000)).max(8),
+  })
+  .strict()
+  .superRefine((judgment, context) => {
+    const expectedStatus =
+      judgment.overallScore >= 8 ? "high" : judgment.overallScore >= 5 ? "medium" : "low";
+    if (judgment.qualityStatus !== expectedStatus) {
+      context.addIssue({
+        code: "custom",
+        path: ["qualityStatus"],
+        message: `overall score ${judgment.overallScore} requires qualityStatus=${expectedStatus}`,
+      });
+    }
+    const hasPersistenceDefect = judgment.turnAudits.some((audit) =>
+      audit.durableConsequences.some((consequence) => consequence.persistence !== "persisted"),
+    );
+    if (hasPersistenceDefect && (judgment.scores.persistence > 8 || judgment.overallScore > 8)) {
+      context.addIssue({
+        code: "custom",
+        path: ["scores", "persistence"],
+        message:
+          "missing or contradicted durable consequences cap persistence and overall scores at 8",
+      });
+    }
+  });
 
 export type PlaytestJudgment = z.infer<typeof PlaytestJudgmentSchema>;
 
@@ -88,7 +122,9 @@ export function playtestJudgmentSchemaFor(
     .sort();
 
   return PlaytestJudgmentSchema.superRefine((judgment, context) => {
-    const actualTurns = judgment.turnAudits.map((audit) => audit.turn).sort((left, right) => left - right);
+    const actualTurns = judgment.turnAudits
+      .map((audit) => audit.turn)
+      .sort((left, right) => left - right);
     if (JSON.stringify(actualTurns) !== JSON.stringify(expectedTurns)) {
       context.addIssue({
         code: "custom",
@@ -112,29 +148,51 @@ export function playtestJudgmentSchemaFor(
         if (consequence.persistence === "missing" && consequence.operationIndexes.length > 0) {
           context.addIssue({
             code: "custom",
-            path: ["turnAudits", auditIndex, "durableConsequences", consequenceIndex, "operationIndexes"],
+            path: [
+              "turnAudits",
+              auditIndex,
+              "durableConsequences",
+              consequenceIndex,
+              "operationIndexes",
+            ],
             message: "a missing consequence cannot cite a committed operation",
           });
         }
         if (consequence.persistence !== "missing" && consequence.operationIndexes.length === 0) {
           context.addIssue({
             code: "custom",
-            path: ["turnAudits", auditIndex, "durableConsequences", consequenceIndex, "operationIndexes"],
+            path: [
+              "turnAudits",
+              auditIndex,
+              "durableConsequences",
+              consequenceIndex,
+              "operationIndexes",
+            ],
             message: `a ${consequence.persistence} consequence must cite a committed operation`,
           });
         }
         if (consequence.operationIndexes.some((index) => index >= operationCount)) {
           context.addIssue({
             code: "custom",
-            path: ["turnAudits", auditIndex, "durableConsequences", consequenceIndex, "operationIndexes"],
+            path: [
+              "turnAudits",
+              auditIndex,
+              "durableConsequences",
+              consequenceIndex,
+              "operationIndexes",
+            ],
             message: `operation indexes for turn ${audit.turn} must be between 0 and ${Math.max(0, operationCount - 1)}`,
           });
         }
       }
-      const covered = new Set(audit.durableConsequences.flatMap((consequence) =>
-        consequence.persistence === "missing" ? [] : consequence.operationIndexes));
-      const omitted = Array.from({ length: operationCount }, (_, index) => index)
-        .filter((index) => !covered.has(index));
+      const covered = new Set(
+        audit.durableConsequences.flatMap((consequence) =>
+          consequence.persistence === "missing" ? [] : consequence.operationIndexes,
+        ),
+      );
+      const omitted = Array.from({ length: operationCount }, (_, index) => index).filter(
+        (index) => !covered.has(index),
+      );
       if (omitted.length > 0) {
         context.addIssue({
           code: "custom",
@@ -198,7 +256,9 @@ export interface PlaytestJudgePromptInput {
 }
 
 export function playtestJudgePrompt(input: PlaytestJudgePromptInput): string {
-  const semanticRequirements = input.playtestPackage.coverageRequirements.filter((requirement) => requirement.mode === "judge");
+  const semanticRequirements = input.playtestPackage.coverageRequirements.filter(
+    (requirement) => requirement.mode === "judge",
+  );
   const turns = input.turns.map((turn) => ({
     ...turn,
     operations: turn.operations.map((operation, operationIndex) => ({ operationIndex, operation })),
@@ -251,13 +311,23 @@ export function renderPlaytestJudgment(
     ["Secrecy", judgment.scores.secrecy],
     ["Pacing", judgment.scores.pacing],
     ["Language", judgment.scores.language],
-  ].map(([dimension, score]) => `| ${dimension} | ${score}/10 |`).join("\n");
-  const issues = judgment.issues.map((issue) =>
-    `- **${issue.severity} / ${issue.dimension}:** ${issue.evidence}\n  - ${issue.recommendation}`)
-    .join("\n") || "_No material quality issues._";
-  const coverage = judgment.coverageJudgments.map((entry) =>
-    `- ${entry.passed ? "PASS" : "FAIL"} \`${entry.requirementId}\`: ${entry.evidence}`)
-    .join("\n") || "_No semantic coverage requirements._";
+  ]
+    .map(([dimension, score]) => `| ${dimension} | ${score}/10 |`)
+    .join("\n");
+  const issues =
+    judgment.issues
+      .map(
+        (issue) =>
+          `- **${issue.severity} / ${issue.dimension}:** ${issue.evidence}\n  - ${issue.recommendation}`,
+      )
+      .join("\n") || "_No material quality issues._";
+  const coverage =
+    judgment.coverageJudgments
+      .map(
+        (entry) =>
+          `- ${entry.passed ? "PASS" : "FAIL"} \`${entry.requirementId}\`: ${entry.evidence}`,
+      )
+      .join("\n") || "_No semantic coverage requirements._";
   return `# Playtest Judgment: ${packageId}
 
 - Rubric: **v${judgment.rubricVersion}**

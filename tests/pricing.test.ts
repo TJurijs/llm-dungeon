@@ -5,10 +5,7 @@ import {
   openRouterModelId,
   parseOpenRouterPrices,
 } from "../src/pricing.js";
-import {
-  modelQualityRating,
-  modelQualityRatings,
-} from "../src/model-quality.js";
+import { modelQualityRating, modelQualityRatings } from "../src/model-quality.js";
 import { modelCostRating } from "../src/model-cost.js";
 
 describe("model price estimates", () => {
@@ -23,21 +20,25 @@ describe("model price estimates", () => {
   });
 
   it("uses one documented 50-turn workload for every known model", () => {
-    expect(FIFTY_TURN_ESTIMATE).toMatchObject({ turns: 50, inputTokens: 480_000, outputTokens: 110_000 });
+    expect(FIFTY_TURN_ESTIMATE).toMatchObject({
+      turns: 50,
+      inputTokens: 480_000,
+      outputTokens: 110_000,
+    });
     expect(estimateModelPrice("gemini", "gemini-3.5-flash")).toEqual({
       sourceModel: "google/gemini-3.5-flash",
       inputPerMillion: 1.5,
       outputPerMillion: 9,
       estimated50TurnsUsd: 1.71,
     });
-    expect(estimateModelPrice("openrouter", "deepseek/deepseek-v4-flash")?.estimated50TurnsUsd)
-      .toBe(0.0686);
-    expect(estimateModelPrice("openrouter", "minimax/minimax-m3")?.estimated50TurnsUsd)
-      .toBe(0.276);
-    expect(estimateModelPrice("openrouter", "tencent/hy3")?.estimated50TurnsUsd)
-      .toBe(0.184);
-    expect(estimateModelPrice("openrouter", "deepseek/deepseek-v3.2")?.estimated50TurnsUsd)
-      .toBe(0.138358);
+    expect(
+      estimateModelPrice("openrouter", "deepseek/deepseek-v4-flash")?.estimated50TurnsUsd,
+    ).toBe(0.0686);
+    expect(estimateModelPrice("openrouter", "minimax/minimax-m3")?.estimated50TurnsUsd).toBe(0.276);
+    expect(estimateModelPrice("openrouter", "tencent/hy3")?.estimated50TurnsUsd).toBe(0.184);
+    expect(estimateModelPrice("openrouter", "deepseek/deepseek-v3.2")?.estimated50TurnsUsd).toBe(
+      0.138358,
+    );
     expect(estimateModelPrice("openai", "gpt-5.6-sol")?.estimated50TurnsUsd).toBe(5.7);
     expect(estimateModelPrice("openai", "gpt-5.6-terra")?.estimated50TurnsUsd).toBe(2.85);
     expect(estimateModelPrice("openai", "gpt-5.6-luna")?.estimated50TurnsUsd).toBe(1.14);
@@ -62,7 +63,10 @@ describe("model price estimates", () => {
     expect(modelQualityRating("openrouter", "qwen/qwen3.7-plus", "ru")).toBe("unrated");
     expect(modelQualityRating("deepseek", "deepseek-v4-pro")).toBe("unrated");
     expect(modelQualityRating("openai", "unknown-model")).toBe("unrated");
-    expect(modelQualityRatings("gemini", "gemini-3.5-flash")).toEqual({ en: "unrated", ru: "unrated" });
+    expect(modelQualityRatings("gemini", "gemini-3.5-flash")).toEqual({
+      en: "unrated",
+      ru: "unrated",
+    });
   });
 
   it("maps exact estimates to compact cost categories", () => {
@@ -82,7 +86,8 @@ describe("model price estimates", () => {
     expect(modelCostRating(sonnet5)).toBe("expensive");
     expect(modelCostRating(sonnet5, "anthropic", "claude-sonnet-5")).toBe("very-expensive");
     // A non-overridden model still resolves through the price formula.
-    expect(modelCostRating(estimateModelPrice("xai", "grok-4.5"), "xai", "grok-4.5"))
-      .toBe("moderate");
+    expect(modelCostRating(estimateModelPrice("xai", "grok-4.5"), "xai", "grok-4.5")).toBe(
+      "moderate",
+    );
   });
 });

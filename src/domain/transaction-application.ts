@@ -1,4 +1,7 @@
-import { assertCampaignStateConsistency } from "./state-consistency.js";
+import {
+  assertCampaignStateConsistency,
+  type CampaignStateConsistencyOptions,
+} from "./state-consistency.js";
 import { rejectDomainChange } from "./validation-error.js";
 import {
   EntitySchema,
@@ -35,6 +38,7 @@ export function applyOperations(
   entities: Map<string, Entity>,
   threads: Thread[],
   chronicle: ChronicleEvent[],
+  consistencyOptions: CampaignStateConsistencyOptions = {},
 ): void {
   const usedFactIds = new Set([
     ...[...entities.values()].flatMap((entity) => entity.facts.map((fact) => fact.id)),
@@ -49,9 +53,11 @@ export function applyOperations(
       rejectDomainChange(`Entity ${operation.entity.id} already exists`);
     }
     if (operation.entity.kind === "location") {
-      const duplicate = [...entities.values()].find((entity) =>
-        entity.kind === "location"
-        && canonicalEntityName(entity.name) === canonicalEntityName(operation.entity.name));
+      const duplicate = [...entities.values()].find(
+        (entity) =>
+          entity.kind === "location" &&
+          canonicalEntityName(entity.name) === canonicalEntityName(operation.entity.name),
+      );
       if (duplicate) {
         rejectDomainChange(
           `Location ${operation.entity.name} duplicates existing location ${duplicate.id}; reuse that exact ID`,
@@ -117,7 +123,10 @@ export function applyOperations(
       case "supersede_fact": {
         const target = requireEntity(operation.targetId);
         const fact = target.facts.find((item) => item.id === operation.factId && item.active);
-        if (!fact) rejectDomainChange(`Active fact ${operation.factId} does not exist on ${operation.targetId}`);
+        if (!fact)
+          rejectDomainChange(
+            `Active fact ${operation.factId} does not exist on ${operation.targetId}`,
+          );
         if (target.facts.some((item) => item.id === operation.replacementFactId)) {
           rejectDomainChange(`Fact ${operation.replacementFactId} already exists`);
         }
@@ -133,7 +142,11 @@ export function applyOperations(
       }
       case "set_entity_state": {
         const target = requireEntity(operation.targetId);
-        if (operation.name === undefined && operation.status === undefined && operation.tags === undefined) {
+        if (
+          operation.name === undefined &&
+          operation.status === undefined &&
+          operation.tags === undefined
+        ) {
           rejectDomainChange("set_entity_state must change at least one field");
         }
         if (operation.name !== undefined) target.name = operation.name;
@@ -145,7 +158,13 @@ export function applyOperations(
       case "move_entity": {
         const target = requireEntity(operation.targetId);
         const destination = requireEntity(operation.locationId);
-        if (destination.kind !== "location") rejectDomainChange(`${operation.locationId} is not a location`);
+        if (destination.kind !== "location")
+          rejectDomainChange(`${operation.locationId} is not a location`);
+        if (target.kind === "item") {
+          rejectDomainChange(
+            `${target.id} cannot use move_entity; transfer it between inventory owners`,
+          );
+        }
         target.location = destination.id;
         if (target.id === manifest.playerId) manifest.currentLocationId = destination.id;
         touch(target);
@@ -164,14 +183,17 @@ export function applyOperations(
         break;
       }
       case "transfer_item": {
-        if (operation.fromId === operation.toId) rejectDomainChange("transfer_item requires different owners");
+        if (operation.fromId === operation.toId)
+          rejectDomainChange("transfer_item requires different owners");
         const from = requireEntity(operation.fromId);
         const to = requireEntity(operation.toId);
         const item = requireEntity(operation.itemId);
         if (item.kind !== "item") rejectDomainChange(`${item.id} is not an item`);
         const source = from.inventory.find((entry) => entry.entityId === item.id);
         if (!source || source.quantity < operation.quantity) {
-          rejectDomainChange(`${operation.fromId} does not own ${operation.quantity} of ${operation.itemId}`);
+          rejectDomainChange(
+            `${operation.fromId} does not own ${operation.quantity} of ${operation.itemId}`,
+          );
         }
         adjustInventory(from, item, -operation.quantity);
         adjustInventory(to, item, operation.quantity);
@@ -192,9 +214,13 @@ export function applyOperations(
       case "remove_condition": {
         const target = requireEntity(operation.targetId);
         if (!target.conditions.includes(operation.condition)) {
-          rejectDomainChange(`${operation.targetId} does not have condition ${operation.condition}`);
+          rejectDomainChange(
+            `${operation.targetId} does not have condition ${operation.condition}`,
+          );
         }
-        target.conditions = target.conditions.filter((condition) => condition !== operation.condition);
+        target.conditions = target.conditions.filter(
+          (condition) => condition !== operation.condition,
+        );
         touch(target);
         break;
       }
@@ -207,7 +233,9 @@ export function applyOperations(
       case "set_relationship": {
         const source = requireEntity(operation.sourceId);
         requireEntity(operation.targetId);
-        const existing = source.relationships.find((relation) => relation.targetId === operation.targetId);
+        const existing = source.relationships.find(
+          (relation) => relation.targetId === operation.targetId,
+        );
         if (existing) {
           existing.summary = operation.summary;
         } else {
@@ -232,7 +260,8 @@ export function applyOperations(
       case "update_thread": {
         const thread = threads.find((item) => item.id === operation.threadId);
         if (!thread) rejectDomainChange(`Unknown thread ${operation.threadId}`);
-        if (thread.status !== "active") rejectDomainChange(`Thread ${operation.threadId} is not active`);
+        if (thread.status !== "active")
+          rejectDomainChange(`Thread ${operation.threadId} is not active`);
         thread.summary = operation.summary;
         if (operation.relatedEntityIds !== undefined) {
           thread.relatedEntityIds = operation.relatedEntityIds;
@@ -242,7 +271,8 @@ export function applyOperations(
       case "resolve_thread": {
         const thread = threads.find((item) => item.id === operation.threadId);
         if (!thread) rejectDomainChange(`Unknown thread ${operation.threadId}`);
-        if (thread.status !== "active") rejectDomainChange(`Thread ${operation.threadId} is not active`);
+        if (thread.status !== "active")
+          rejectDomainChange(`Thread ${operation.threadId} is not active`);
         thread.status = operation.status;
         thread.summary = operation.outcome;
         break;
@@ -275,10 +305,11 @@ export function applyOperations(
   for (const entity of entities.values()) {
     if (entity.location) {
       const location = requireEntity(entity.location);
-      if (location.kind !== "location") rejectDomainChange(`${entity.id} has a non-location location reference`);
+      if (location.kind !== "location")
+        rejectDomainChange(`${entity.id} has a non-location location reference`);
     }
     for (const inventory of entity.inventory) requireEntity(inventory.entityId);
     EntitySchema.parse(entity);
   }
-  assertCampaignStateConsistency(manifest, entities, threads, chronicle);
+  assertCampaignStateConsistency(manifest, entities, threads, chronicle, consistencyOptions);
 }

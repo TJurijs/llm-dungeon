@@ -5,6 +5,7 @@ The player arrived with a caravan as hired muscle. That caravan is the immediate
 Something is wrong with the water. Over the last days the Motherwell has dropped fast, and what comes up now tastes of ash and iron. This morning, with no warning, the Vashti ordered the great gates barred and the well ringed with guards — no one in or out, no one to draw water. Panic spreads through the packed settlement: rumors of poison, of a curse, of the well running dry. The authorities give no answers and are visibly, badly frightened — more frightened than a failing well alone should warrant. The player is sealed inside with everyone else, caravan and escape cut off, among people growing more desperate by the hour.
 
 Key figures:
+
 - **Warden Sohra Vashti**, head of the family and the settlement's authority, who gave the order to seal the gates. She holds the line in public, but there is clearly something behind her fear she will not say.
 - **Old Denar**, the well-keeper who tends the Motherwell and first raised the alarm — frightened, evasive, and seemingly closer to the truth than he lets on.
 - **Gate-Captain Ruvo**, who commands the guard enforcing the lockdown and will meet defiance at the walls with force.

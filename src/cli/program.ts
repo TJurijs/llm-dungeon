@@ -4,7 +4,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { APPLICATION_VERSION } from "../version.js";
 import { LANGUAGES, LanguageCodeSchema } from "../language.js";
-import { terminalBanner, terminalHeading, terminalStyle } from "../terminal-style.js";
+import {
+  sanitizeTerminalText,
+  terminalBanner,
+  terminalHeading,
+  terminalStyle,
+} from "../terminal-style.js";
 import { HumanGameCli } from "./game.js";
 import type { CliProjectContext } from "./project-context.js";
 
@@ -43,23 +48,33 @@ export function createCliProgram(project: CliProjectContext): Command {
         console.log("No campaigns yet.");
         return;
       }
-      console.log(campaigns.map((campaign) => [
-        campaign.campaignId,
-        campaign.archived ? "archived" : campaign.status,
-        `turn ${campaign.turn}`,
-        campaign.title,
-      ].join("\t")).join("\n"));
+      console.log(
+        campaigns
+          .map((campaign) =>
+            [
+              campaign.campaignId,
+              campaign.archived ? "archived" : campaign.status,
+              `turn ${campaign.turn}`,
+              sanitizeTerminalText(campaign.title),
+            ].join("\t"),
+          )
+          .join("\n"),
+      );
     });
 
   program
     .command("configure")
     .description("Configure the default provider and model for new campaigns")
     .helpGroup("Configuration")
-    .action(async () => { await project.configureProvider(); });
+    .action(async () => {
+      await project.configureProvider();
+    });
 
   program
     .command("language [language]")
-    .description(`Show or set the default language for new campaigns (${Object.keys(LANGUAGES).join(", ")})`)
+    .description(
+      `Show or set the default language for new campaigns (${Object.keys(LANGUAGES).join(", ")})`,
+    )
     .helpGroup("Configuration")
     .action(async (value?: string) => {
       if (!value) {
@@ -81,7 +96,9 @@ export function createCliProgram(project: CliProjectContext): Command {
     .description("Print the selected language's world and style profile")
     .action(async () => {
       const profile = await project.worldProfile();
-      console.log(`${terminalHeading("World and DM style", profile.source)}\n\n${profile.markdown}`);
+      console.log(
+        `${terminalHeading("World and DM style", profile.source)}\n\n${sanitizeTerminalText(profile.markdown)}`,
+      );
     });
 
   world
@@ -92,7 +109,9 @@ export function createCliProgram(project: CliProjectContext): Command {
       const markdown = await readFile(source, "utf8");
       if (!markdown.trim()) throw new Error("World and style guidance cannot be empty");
       const target = await project.saveWorldProfile(markdown);
-      p.log.success(`Saved ${path.relative(project.paths.root, target)}. It will apply to future campaigns.`);
+      p.log.success(
+        `Saved ${path.relative(project.paths.root, target)}. It will apply to future campaigns.`,
+      );
     });
 
   program
@@ -110,7 +129,9 @@ export function createCliProgram(project: CliProjectContext): Command {
       });
       console.log(terminalBanner("llm-dungeon Web"));
       console.log(`${terminalHeading("Web app ready")} http://${options.host}:${options.port}`);
-      console.log(terminalStyle.dim("Provider keys are read from .env at startup. Press Ctrl+C to stop."));
+      console.log(
+        terminalStyle.dim("Provider keys are read from .env at startup. Press Ctrl+C to stop."),
+      );
     });
 
   program
@@ -120,7 +141,9 @@ export function createCliProgram(project: CliProjectContext): Command {
     .action(() => {
       console.log(terminalBanner("Machine-facing integration"));
       console.log(terminalHeading("API mode is reserved for future development"));
-      console.log(`\n${terminalStyle.dim("No API contract is exposed yet. Use llm-dungeon web for the browser app or llm-dungeon play for terminal play.")}\n`);
+      console.log(
+        `\n${terminalStyle.dim("No API contract is exposed yet. Use llm-dungeon web for the browser app or llm-dungeon play for terminal play.")}\n`,
+      );
     });
 
   program.action(() => game.play());

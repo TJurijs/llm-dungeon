@@ -41,11 +41,13 @@ describe("turn engine", () => {
     expect(provider.requests[0]?.maxOutputTokens).toBe(8_000);
     expect(provider.requests[1]?.maxOutputTokens).toBe(8_000);
     expect(provider.requests[1]?.schemaName).toBe("repair_campaign_setup");
-    expect(provider.requests.map((request) => ({
-      phase: request.generationPhase,
-      repairOf: request.repairOfPhase,
-      kind: request.attemptKind,
-    }))).toEqual([
+    expect(
+      provider.requests.map((request) => ({
+        phase: request.generationPhase,
+        repairOf: request.repairOfPhase,
+        kind: request.attemptKind,
+      })),
+    ).toEqual([
       { phase: "setup", repairOf: undefined, kind: "initial" },
       { phase: "repair", repairOf: "setup", kind: "schema_repair" },
     ]);
@@ -100,7 +102,8 @@ describe("turn engine", () => {
   it("corrects an initial location that contains itself", async () => {
     const store = await createTestStore();
     const invalid = structuredClone(setupFixture);
-    invalid.entities.find((entity) => entity.id === "location:crooked-crown")!.location = "location:crooked-crown";
+    invalid.entities.find((entity) => entity.id === "location:crooked-crown")!.location =
+      "location:crooked-crown";
     const provider = new FakeProvider([invalid, setupFixture]);
     const setup = await new DungeonEngine(store, provider).generateSetup({
       worldRules: "Classic fantasy.",
@@ -132,9 +135,14 @@ describe("turn engine", () => {
 
   it("answers an explicit question without rolling, persisting, or advancing a turn", async () => {
     const store = await createTestStore();
-    const provider = new FakeProvider([{ answer: "You can attempt one primary action while under immediate pressure." }]);
+    const provider = new FakeProvider([
+      { answer: "You can attempt one primary action while under immediate pressure." },
+    ]);
     let rolls = 0;
-    const engine = new DungeonEngine(store, provider, () => { rolls += 1; return 50; });
+    const engine = new DungeonEngine(store, provider, () => {
+      rolls += 1;
+      return 50;
+    });
     const before = await store.load();
     const beforeTranscript = await store.recentTranscript();
 
@@ -160,14 +168,24 @@ describe("turn engine", () => {
     const store = await createTestStore();
     const thread = (await store.load()).threads[0]!;
     const threadSuffix = thread.id.slice(thread.id.indexOf(":") + 1);
-    const provider = new FakeProvider([{
-      kind: "resolved",
-      narration: "Mara adds a fresh detail about the northern road.",
-      turnSummary: "The northern-road lead advanced.",
-      operations: [{ type: "update_thread", threadId: threadSuffix, summary: "Mara supplied a fresh detail." }],
-    }]);
+    const provider = new FakeProvider([
+      {
+        kind: "resolved",
+        narration: "Mara adds a fresh detail about the northern road.",
+        turnSummary: "The northern-road lead advanced.",
+        operations: [
+          {
+            type: "update_thread",
+            threadId: threadSuffix,
+            summary: "Mara supplied a fresh detail.",
+          },
+        ],
+      },
+    ]);
 
-    const result = await new DungeonEngine(store, provider).play("Ask Mara about the northern road.");
+    const result = await new DungeonEngine(store, provider).play(
+      "Ask Mara about the northern road.",
+    );
     expect(provider.calls).toBe(1);
     expect(result.operations[0]).toMatchObject({ type: "update_thread", threadId: thread.id });
     expect((await store.load()).threads[0]?.summary).toBe("Mara supplied a fresh detail.");
@@ -189,22 +207,49 @@ describe("turn engine", () => {
       resolved: {
         narration: "The northern road lies beyond the tavern.",
         turnSummary: "The northern road was established.",
-        operations: [{
-          type: "create_entity",
-          entity: { id: "location:northern-road", kind: "location", name: "Northern Road", status: "open", tags: ["road"], description: "A road leading north.", establishedFacts: [], secrets: [], playerKnowledge: [] },
-        }],
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "location:northern-road",
+              kind: "location",
+              name: "Northern Road",
+              status: "open",
+              tags: ["road"],
+              description: "A road leading north.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
+        ],
       },
       provider: "fake",
       model: "fake-model",
     });
-    const existingRoad = [...(await store.load()).entities.values()].find((entity) => entity.name === "Northern Road")!;
+    const existingRoad = [...(await store.load()).entities.values()].find(
+      (entity) => entity.name === "Northern Road",
+    )!;
     const provider = new FakeProvider([
       {
         kind: "resolved",
         narration: "You step onto the existing northern road.",
         turnSummary: "The hero reached the northern road.",
         operations: [
-          { type: "create_entity", entity: { id: "location:model-road", kind: "location", name: "The Northern Road", status: "rainy", tags: [], description: "A redundant description.", establishedFacts: [], secrets: [], playerKnowledge: [] } },
+          {
+            type: "create_entity",
+            entity: {
+              id: "location:model-road",
+              kind: "location",
+              name: "The Northern Road",
+              status: "rainy",
+              tags: [],
+              description: "A redundant description.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
           { type: "move_entity", targetId: "player:hero", locationId: "location:model-road" },
         ],
       },
@@ -213,7 +258,9 @@ describe("turn engine", () => {
     const result = await new DungeonEngine(store, provider).play("I leave for the northern road.");
     expect(provider.calls).toBe(1);
     expect(result.state.currentLocationId).toBe(existingRoad.id);
-    const locations = [...(await store.load()).entities.values()].filter((entity) => entity.kind === "location" && entity.name.includes("Northern Road"));
+    const locations = [...(await store.load()).entities.values()].filter(
+      (entity) => entity.kind === "location" && entity.name.includes("Northern Road"),
+    );
     expect(locations).toHaveLength(1);
   });
 
@@ -224,7 +271,9 @@ describe("turn engine", () => {
         kind: "resolved",
         narration: "You remain at the Crooked Crown's bar while Mara waits nearby.",
         turnSummary: "Arlen remained at the tavern bar.",
-        operations: [{ type: "move_entity", targetId: "player:hero", locationId: "location:crooked-crown" }],
+        operations: [
+          { type: "move_entity", targetId: "player:hero", locationId: "location:crooked-crown" },
+        ],
       },
     ]);
     const result = await new DungeonEngine(store, provider).play("I remain at the bar for now.");
@@ -238,7 +287,8 @@ describe("turn engine", () => {
     const provider = new FakeProvider([
       {
         kind: "resolved",
-        narration: "Mara wraps trail rations in oilskin, and you tuck the parcel securely into your pack.",
+        narration:
+          "Mara wraps trail rations in oilskin, and you tuck the parcel securely into your pack.",
         turnSummary: "Arlen bought and packed trail rations.",
         operations: [],
       },
@@ -250,32 +300,43 @@ describe("turn engine", () => {
 
   it("does not mistake an NPC arrival or taking out owned gear for player state changes", async () => {
     const store = await createTestStore();
-    const provider = new FakeProvider([{
-      kind: "resolved",
-      narration: "You slip your travel sword from your satchel as someone shouts that the watch has arrived at the door.",
-      turnSummary: "Arlen readied his owned sword while the watch arrived outside.",
-      operations: [],
-    }]);
-    const result = await new DungeonEngine(store, provider).play("I take my travel sword from my satchel and ready it.");
+    const provider = new FakeProvider([
+      {
+        kind: "resolved",
+        narration:
+          "You slip your travel sword from your satchel as someone shouts that the watch has arrived at the door.",
+        turnSummary: "Arlen readied his owned sword while the watch arrived outside.",
+        operations: [],
+      },
+    ]);
+    const result = await new DungeonEngine(store, provider).play(
+      "I take my travel sword from my satchel and ready it.",
+    );
     expect(provider.calls).toBe(1);
     expect(result.turn).toBe(1);
   });
 
   it("makes inventory authority, graceful nonsense handling, and lethal limits explicit", async () => {
     const store = await createTestStore();
-    const provider = new FakeProvider([{
-      kind: "resolved",
-      narration: "You reach for a dragon sword, but you do not possess one.",
-      turnSummary: "The unsupported item claim changed nothing.",
-      operations: [],
-    }]);
-    await new DungeonEngine(store, provider).play("I use my dragon sword to fly across the ordinary bridge. xyzzy@@@");
+    const provider = new FakeProvider([
+      {
+        kind: "resolved",
+        narration: "You reach for a dragon sword, but you do not possess one.",
+        turnSummary: "The unsupported item claim changed nothing.",
+        operations: [],
+      },
+    ]);
+    await new DungeonEngine(store, provider).play(
+      "I use my dragon sword to fly across the ordinary bridge. xyzzy@@@",
+    );
     const request = provider.requests[0]!;
     expect(request.system).toContain("Player input proposes an action");
     expect(request.system).toContain("If no coherent in-fiction action can be derived");
     expect(request.system).toContain("Low-stakes uncertainty cannot become campaign-ending");
     expect(request.system).toContain("Apply the restart test");
-    expect(request.system).toContain("Historical operations are already applied and must never be repeated");
+    expect(request.system).toContain(
+      "Historical operations are already applied and must never be repeated",
+    );
     expect(request.system).toContain("application assigns durable IDs");
     expect(request.prompt).toContain("PLAYER INVENTORY — AUTHORITATIVE CLOSED LIST");
     expect(request.prompt).toContain("[item:travel-sword] Travel Sword");
@@ -312,11 +373,19 @@ describe("turn engine", () => {
         narration: "You catch the hooded stranger watching you in the mirror.",
         turnSummary: "The hero noticed a watcher.",
         operations: [
-          { type: "add_fact", targetId: "player:hero", section: "knowledge", factId: "player-hero-5", text: "A hooded stranger is watching from the corner." },
+          {
+            type: "add_fact",
+            targetId: "player:hero",
+            section: "knowledge",
+            factId: "player-hero-5",
+            text: "A hooded stranger is watching from the corner.",
+          },
         ],
       },
     ]);
-    const result = await new DungeonEngine(store, provider, () => 60).play("I scan the room for anyone watching me.");
+    const result = await new DungeonEngine(store, provider, () => 60).play(
+      "I scan the room for anyone watching me.",
+    );
     expect(provider.calls).toBe(2);
     expect(provider.requests[1]?.jsonSchema?.properties).toMatchObject({
       decision: { enum: ["resolved"] },
@@ -325,8 +394,17 @@ describe("turn engine", () => {
       "decision",
       "locked_resolution",
     ]);
-    expect(result.check).toMatchObject({ roll: 60, modifierTotal: 10, total: 70, outcome: "success" });
-    expect((await store.load()).entities.get("player:hero")?.facts.some((fact) => fact.text === "A hooded stranger is watching from the corner.")).toBe(true);
+    expect(result.check).toMatchObject({
+      roll: 60,
+      modifierTotal: 10,
+      total: 70,
+      outcome: "success",
+    });
+    expect(
+      (await store.load()).entities
+        .get("player:hero")
+        ?.facts.some((fact) => fact.text === "A hooded stranger is watching from the corner."),
+    ).toBe(true);
   });
 
   it("repairs a checked resolution that tries to bypass the locked ending with player status", async () => {
@@ -355,7 +433,9 @@ describe("turn engine", () => {
       },
     ]);
 
-    const result = await new DungeonEngine(store, provider, () => 80).play("I investigate the noise.");
+    const result = await new DungeonEngine(store, provider, () => 80).play(
+      "I investigate the noise.",
+    );
 
     expect(provider.calls).toBe(3);
     expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v1");
@@ -372,20 +452,36 @@ describe("turn engine", () => {
     const store = await createTestStore();
     let rolls = 0;
     class FailingOnceProvider extends FakeProvider {
-      override async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
-        if (this.calls === 1) { this.calls += 1; throw new Error("temporary provider failure"); }
+      override async generateStructured<T>(
+        request: StructuredRequest<T>,
+      ): Promise<StructuredResult<T>> {
+        if (this.calls === 1) {
+          this.calls += 1;
+          throw new Error("temporary provider failure");
+        }
         return super.generateStructured(request);
       }
     }
     const provider = new FailingOnceProvider([
       {
         kind: "check_required",
-        check: { name: "Stealth", difficulty: 50, modifiers: [], successStakes: "Pass unseen.", failureStakes: "Be noticed." },
+        check: {
+          name: "Stealth",
+          difficulty: 50,
+          modifiers: [],
+          successStakes: "Pass unseen.",
+          failureStakes: "Be noticed.",
+        },
       },
       { narration: "You slip past.", turnSummary: "The hero passed unseen.", operations: [] },
     ]);
-    const engine = new DungeonEngine(store, provider, () => { rolls += 1; return 73; });
-    await expect(engine.play("I sneak past the door.")).rejects.toThrow("temporary provider failure");
+    const engine = new DungeonEngine(store, provider, () => {
+      rolls += 1;
+      return 73;
+    });
+    await expect(engine.play("I sneak past the door.")).rejects.toThrow(
+      "temporary provider failure",
+    );
     const pending = await store.getPending();
     expect(pending).toMatchObject({ kind: "action", phase: "rolled", checkResult: { roll: 73 } });
     const result = await engine.resumePendingTurn();

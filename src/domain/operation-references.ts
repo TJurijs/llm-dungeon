@@ -7,10 +7,7 @@ export type OperationReferenceRole =
   | { kind: "thread" }
   | { kind: "active_fact"; targetId: string };
 
-export type OperationReferenceMapper = (
-  reference: string,
-  role: OperationReferenceRole,
-) => string;
+export type OperationReferenceMapper = (reference: string, role: OperationReferenceRole) => string;
 
 function unreachableOperation(operation: never): never {
   throw new Error(`Unsupported state operation: ${JSON.stringify(operation)}`);
@@ -88,7 +85,9 @@ export function mapOperationReferences(
         threadId: map(operation.threadId, { kind: "thread" }),
         ...(operation.relatedEntityIds === undefined
           ? {}
-          : { relatedEntityIds: operation.relatedEntityIds.map((id) => map(id, { kind: "entity" })) }),
+          : {
+              relatedEntityIds: operation.relatedEntityIds.map((id) => map(id, { kind: "entity" })),
+            }),
       };
     case "resolve_thread":
       return { ...operation, threadId: map(operation.threadId, { kind: "thread" }) };

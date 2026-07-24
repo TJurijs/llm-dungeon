@@ -2,10 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  appendPlaytestJsonLine,
-  readPlaytestJsonLines,
-} from "../tools/playtest/harness/files.js";
+import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../tools/playtest/harness/files.js";
 
 describe("playtest JSONL recovery", () => {
   it("removes an interrupted final fragment before appending a resumed record", async () => {

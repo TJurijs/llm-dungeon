@@ -16,7 +16,8 @@ async function renameWithTransientRetry(source: string, target: string): Promise
       await rename(source, target);
       return;
     } catch (error) {
-      if (!isTransientRenameError(error) || delayMs === ATOMIC_RENAME_RETRY_DELAYS_MS.at(-1)) throw error;
+      if (!isTransientRenameError(error) || delayMs === ATOMIC_RENAME_RETRY_DELAYS_MS.at(-1))
+        throw error;
     }
   }
 }

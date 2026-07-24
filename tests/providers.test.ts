@@ -25,7 +25,12 @@ import { requestDiagnosticsFor } from "../src/llm/request-diagnostics.js";
 import { structuredFailureDetails } from "../src/llm/structured-error.js";
 
 const answerSchema = z.object({ answer: z.string() });
-const answerRequest = { schemaName: "answer", schema: answerSchema, system: "system", prompt: "prompt" };
+const answerRequest = {
+  schemaName: "answer",
+  schema: answerSchema,
+  system: "system",
+  prompt: "prompt",
+};
 
 function resolvedWire(effects: unknown[] = []) {
   return {
@@ -86,28 +91,80 @@ describe("provider adapters", () => {
 
     expect(request.wireSchema).toBe(WireResolvedTurnSchema);
     expect(request.jsonSchema).toEqual(RESOLVED_GAMEPLAY_WIRE_JSON_SCHEMA);
-    expect((request.jsonSchema?.properties as Record<string, any>).decision.enum).toEqual(["resolved"]);
-    expect(request.wireSchema?.safeParse({ ...resolvedWire(), decision: "check_required" }).success).toBe(false);
+    expect((request.jsonSchema?.properties as Record<string, any>).decision.enum).toEqual([
+      "resolved",
+    ]);
+    expect(
+      request.wireSchema?.safeParse({ ...resolvedWire(), decision: "check_required" }).success,
+    ).toBe(false);
     expect(request.wireSchema?.safeParse(resolvedWire()).success).toBe(true);
   });
 
   it.each([
-    ["OpenRouter", (apiKey: string, fetchMock: typeof fetch) =>
-      new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
-    ["Gemini", (apiKey: string, fetchMock: typeof fetch) =>
-      new GeminiProvider("gemini-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock)],
-    ["OpenAI", (apiKey: string, fetchMock: typeof fetch) =>
-      new OpenAIProvider("gpt-4o", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
-    ["Anthropic", (apiKey: string, fetchMock: typeof fetch) =>
-      new AnthropicProvider("claude-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/messages", fetchMock)],
-    ["DeepSeek", (apiKey: string, fetchMock: typeof fetch) =>
-      new DeepSeekProvider("deepseek-chat", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
+    [
+      "OpenRouter",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new OpenRouterProvider(
+          "provider/model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
+    [
+      "Gemini",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new GeminiProvider(
+          "gemini-model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/v1beta",
+          fetchMock,
+        ),
+    ],
+    [
+      "OpenAI",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new OpenAIProvider(
+          "gpt-4o",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
+    [
+      "Anthropic",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new AnthropicProvider(
+          "claude-model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/messages",
+          fetchMock,
+        ),
+    ],
+    [
+      "DeepSeek",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new DeepSeekProvider(
+          "deepseek-chat",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
   ])("redacts the configured API key from %s HTTP failures", async (_name, createProvider) => {
     const apiKey = "test-key-that-must-not-escape";
-    const fetchMock = vi.fn(async () => new Response(
-      JSON.stringify({ error: `Invalid credential ${apiKey}; received ${apiKey}` }),
-      { status: 401 },
-    ));
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: `Invalid credential ${apiKey}; received ${apiKey}` }),
+          { status: 401 },
+        ),
+    );
     const provider = createProvider(apiKey, fetchMock as typeof fetch);
 
     let failure: unknown;
@@ -124,10 +181,9 @@ describe("provider adapters", () => {
 
   it("redacts an echoed key before truncating a long provider error", async () => {
     const apiKey = "boundary-secret-key";
-    const fetchMock = vi.fn(async () => new Response(
-      `${"x".repeat(992)}${apiKey}`,
-      { status: 401 },
-    ));
+    const fetchMock = vi.fn(
+      async () => new Response(`${"x".repeat(992)}${apiKey}`, { status: 401 }),
+    );
     const provider = new OpenRouterProvider(
       "provider/model",
       apiKey,
@@ -146,37 +202,46 @@ describe("provider adapters", () => {
   });
 
   it("reports an exact actionable path when a transfer uses a negative quantity", () => {
-    expect(() => decodeTurnDecision(resolvedWire([
-      effect({
-        kind: "transfer_item",
-        targetId: "player:hero",
-        relatedId: "npc:mara",
-        itemId: "item:silver-marks",
-        quantity: -3,
-      }),
-    ]))).toThrow(
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire([
+          effect({
+            kind: "transfer_item",
+            targetId: "player:hero",
+            relatedId: "npc:mara",
+            itemId: "item:silver-marks",
+            quantity: -3,
+          }),
+        ]),
+      ),
+    ).toThrow(
       "effects[0].quantity: transfer_item quantity must be strictly positive; direction is targetId (prior owner) to relatedId (new owner), so never use a negative quantity",
     );
-    expect((GAMEPLAY_WIRE_JSON_SCHEMA.properties as Record<string, any>)
-      .effects.items.properties.quantity.description).toContain("never use a negative transfer quantity");
+    expect(
+      (GAMEPLAY_WIRE_JSON_SCHEMA.properties as Record<string, any>).effects.items.properties
+        .quantity.description,
+    ).toContain("never use a negative transfer quantity");
   });
 
   it("captures allowlisted OpenAI request diagnostics without retaining arbitrary headers", async () => {
     let sentClientRequestId: string | null = null;
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       sentClientRequestId = new Headers(init?.headers).get("x-client-request-id");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), {
-        status: 200,
-        headers: {
-          "x-request-id": "req_success_123",
-          "x-ratelimit-remaining-requests": "99",
-          "x-ratelimit-reset-requests": "250ms",
-          "x-ratelimit-limit-tokens": "openai-key",
-          "x-unsafe-diagnostic": "must-not-be-retained",
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        {
+          status: 200,
+          headers: {
+            "x-request-id": "req_success_123",
+            "x-ratelimit-remaining-requests": "99",
+            "x-ratelimit-reset-requests": "250ms",
+            "x-ratelimit-limit-tokens": "openai-key",
+            "x-unsafe-diagnostic": "must-not-be-retained",
+          },
         },
-      });
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.6-luna",
@@ -245,16 +310,61 @@ describe("provider adapters", () => {
   });
 
   it.each([
-    ["OpenRouter", (apiKey: string, fetchMock: typeof fetch) =>
-      new OpenRouterProvider("provider/model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
-    ["Gemini", (apiKey: string, fetchMock: typeof fetch) =>
-      new GeminiProvider("gemini-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock)],
-    ["OpenAI", (apiKey: string, fetchMock: typeof fetch) =>
-      new OpenAIProvider("gpt-4o", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
-    ["Anthropic", (apiKey: string, fetchMock: typeof fetch) =>
-      new AnthropicProvider("claude-model", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/messages", fetchMock)],
-    ["DeepSeek", (apiKey: string, fetchMock: typeof fetch) =>
-      new DeepSeekProvider("deepseek-chat", apiKey, { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock)],
+    [
+      "OpenRouter",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new OpenRouterProvider(
+          "provider/model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
+    [
+      "Gemini",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new GeminiProvider(
+          "gemini-model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/v1beta",
+          fetchMock,
+        ),
+    ],
+    [
+      "OpenAI",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new OpenAIProvider(
+          "gpt-4o",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
+    [
+      "Anthropic",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new AnthropicProvider(
+          "claude-model",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/messages",
+          fetchMock,
+        ),
+    ],
+    [
+      "DeepSeek",
+      (apiKey: string, fetchMock: typeof fetch) =>
+        new DeepSeekProvider(
+          "deepseek-chat",
+          apiKey,
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
   ])("redacts the configured API key from %s network exceptions", async (_name, createProvider) => {
     const apiKey = "network-key-that-must-not-escape";
     const fetchMock = vi.fn(async () => {
@@ -280,55 +390,82 @@ describe("provider adapters", () => {
       expect(body.response_format.type).toBe("json_schema");
       expect(body.response_format.json_schema.strict).toBe(true);
       expect(body.provider.require_parameters).toBe(true);
-      return new Response(JSON.stringify({
-        choices: [{ message: { content: '{"answer":"yes"}' } }],
-        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4, cost: 0.000123 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"answer":"yes"}' } }],
+          usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4, cost: 0.000123 },
+        }),
+        { status: 200 },
+      );
     });
-    const provider = new OpenRouterProvider("provider/model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock as typeof fetch);
+    const provider = new OpenRouterProvider(
+      "provider/model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
     const result = await provider.generateStructured(answerRequest);
     expect(result.data).toEqual({ answer: "yes" });
-    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4, billedCostUsd: 0.000123 });
+    expect(result.usage).toEqual({
+      inputTokens: 3,
+      outputTokens: 1,
+      totalTokens: 4,
+      billedCostUsd: 0.000123,
+    });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("maps every provider to its dedicated environment key", () => {
     const defaults = { temperature: 0.8, maxOutputTokens: 1000 };
-    expect(createProvider(
-      { provider: "gemini", model: "gemini-model", ...defaults },
-      { GEMINI_API_KEY: "gemini-key" },
-    )).toBeInstanceOf(GeminiProvider);
-    expect(createProvider(
-      { provider: "openrouter", model: "vendor/model", ...defaults },
-      { OPENROUTER_API_KEY: "openrouter-key" },
-    )).toBeInstanceOf(OpenRouterProvider);
-    expect(createProvider(
-      { provider: "xai", model: "grok-4.5", ...defaults },
-      { XAI_API_KEY: "xai-key" },
-    )).toBeInstanceOf(XaiProvider);
-    expect(createProvider(
-      { provider: "openai", model: "gpt-4o", ...defaults },
-      { OPENAI_API_KEY: "openai-key" },
-    )).toBeInstanceOf(OpenAIProvider);
-    expect(createProvider(
-      { provider: "anthropic", model: "claude-model", ...defaults },
-      { ANTHROPIC_API_KEY: "anthropic-key" },
-    )).toBeInstanceOf(AnthropicProvider);
-    expect(createProvider(
-      { provider: "deepseek", model: "deepseek-chat", ...defaults },
-      { DEEPSEEK_API_KEY: "deepseek-key" },
-    )).toBeInstanceOf(DeepSeekProvider);
-    expect(() => createProvider(
-      { provider: "openai", model: "gpt-4o", ...defaults },
-      {},
-    )).toThrow("OPENAI_API_KEY is not set");
+    expect(
+      createProvider(
+        { provider: "gemini", model: "gemini-model", ...defaults },
+        { GEMINI_API_KEY: "gemini-key" },
+      ),
+    ).toBeInstanceOf(GeminiProvider);
+    expect(
+      createProvider(
+        { provider: "openrouter", model: "vendor/model", ...defaults },
+        { OPENROUTER_API_KEY: "openrouter-key" },
+      ),
+    ).toBeInstanceOf(OpenRouterProvider);
+    expect(
+      createProvider(
+        { provider: "xai", model: "grok-4.5", ...defaults },
+        { XAI_API_KEY: "xai-key" },
+      ),
+    ).toBeInstanceOf(XaiProvider);
+    expect(
+      createProvider(
+        { provider: "openai", model: "gpt-4o", ...defaults },
+        { OPENAI_API_KEY: "openai-key" },
+      ),
+    ).toBeInstanceOf(OpenAIProvider);
+    expect(
+      createProvider(
+        { provider: "anthropic", model: "claude-model", ...defaults },
+        { ANTHROPIC_API_KEY: "anthropic-key" },
+      ),
+    ).toBeInstanceOf(AnthropicProvider);
+    expect(
+      createProvider(
+        { provider: "deepseek", model: "deepseek-chat", ...defaults },
+        { DEEPSEEK_API_KEY: "deepseek-key" },
+      ),
+    ).toBeInstanceOf(DeepSeekProvider);
+    expect(() => createProvider({ provider: "openai", model: "gpt-4o", ...defaults }, {})).toThrow(
+      "OPENAI_API_KEY is not set",
+    );
   });
 
   it("adapts optional fields to OpenAI strict schema and restores null to omission locally", async () => {
-    const optionalAnswerSchema = z.object({
-      answer: z.string(),
-      note: z.string().optional(),
-    }).strict();
+    const optionalAnswerSchema = z
+      .object({
+        answer: z.string(),
+        note: z.string().optional(),
+      })
+      .strict();
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       expect(body.max_completion_tokens).toBe(777);
@@ -343,10 +480,15 @@ describe("provider adapters", () => {
       expect(schema.additionalProperties).toBe(false);
       expect(schema.properties.note.anyOf).toEqual([{ type: "string" }, { type: "null" }]);
       expect(JSON.stringify(schema)).not.toContain('"$schema"');
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes","note":null}' } }],
-        usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [
+            { finish_reason: "stop", message: { content: '{"answer":"yes","note":null}' } },
+          ],
+          usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-4o",
@@ -379,10 +521,13 @@ describe("provider adapters", () => {
         type: "json_schema",
         json_schema: { name: "answer", strict: true },
       });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 6 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+          usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 6 },
+        }),
+        { status: 200 },
+      );
     });
     const provider = new XaiProvider(
       "grok-4.5",
@@ -406,9 +551,12 @@ describe("provider adapters", () => {
       expect(body.reasoning_effort).toBe("none");
       expect(body).not.toHaveProperty("temperature");
       expect(body.max_completion_tokens).toBe(1000);
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.4-mini",
@@ -429,9 +577,12 @@ describe("provider adapters", () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       reasoningByModel.set(String(body.model), body.reasoning_effort);
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
 
     for (const model of ["grok-4.3", "grok-4.5"]) {
@@ -449,10 +600,12 @@ describe("provider adapters", () => {
       });
     }
 
-    expect(reasoningByModel).toEqual(new Map([
-      ["grok-4.3", "none"],
-      ["grok-4.5", "low"],
-    ]));
+    expect(reasoningByModel).toEqual(
+      new Map([
+        ["grok-4.3", "none"],
+        ["grok-4.5", "low"],
+      ]),
+    );
   });
 
   it("preserves Gameplay Contract V1 through OpenAI's strict schema projection", async () => {
@@ -462,9 +615,14 @@ describe("provider adapters", () => {
       expect(schema.required).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA.required);
       expect(schema.properties.decision.enum).toEqual(["resolved", "check_required"]);
       expect(schema.properties.effects.items.additionalProperties).toBe(false);
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [
+            { finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } },
+          ],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-4o",
@@ -481,12 +639,17 @@ describe("provider adapters", () => {
   });
 
   it("uses Anthropic Messages structured output with its explicit schema projection", async () => {
-    const constrainedSchema = z.object({
-      id: z.string().regex(/^[a-z]+$/).min(2),
-      kind: z.enum(["person", "creature"]),
-      quantity: z.number().int().min(1).max(20),
-      entries: z.array(z.string()).max(3),
-    }).strict();
+    const constrainedSchema = z
+      .object({
+        id: z
+          .string()
+          .regex(/^[a-z]+$/)
+          .min(2),
+        kind: z.enum(["person", "creature"]),
+        quantity: z.number().int().min(1).max(20),
+        entries: z.array(z.string()).max(3),
+      })
+      .strict();
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("x-api-key")).toBe("anthropic-key");
@@ -510,11 +673,16 @@ describe("provider adapters", () => {
       expect(schema.properties.quantity).not.toHaveProperty("minimum");
       expect(schema.properties.quantity).not.toHaveProperty("maximum");
       expect(schema.properties.entries).not.toHaveProperty("maxItems");
-      return new Response(JSON.stringify({
-        stop_reason: "end_turn",
-        content: [{ type: "text", text: '{"id":"hero","kind":"person","quantity":1,"entries":["one"]}' }],
-        usage: { input_tokens: 12, output_tokens: 7 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          stop_reason: "end_turn",
+          content: [
+            { type: "text", text: '{"id":"hero","kind":"person","quantity":1,"entries":["one"]}' },
+          ],
+          usage: { input_tokens: 12, output_tokens: 7 },
+        }),
+        { status: 200 },
+      );
     });
     const provider = new AnthropicProvider(
       "claude-model",
@@ -544,10 +712,13 @@ describe("provider adapters", () => {
       expect(schema.properties.effects.items.additionalProperties).toBe(false);
       expect(schema.properties.difficulty).not.toHaveProperty("minimum");
       expect(schema.properties.difficulty).not.toHaveProperty("maximum");
-      return new Response(JSON.stringify({
-        stop_reason: "end_turn",
-        content: [{ type: "text", text: JSON.stringify(resolvedWire()) }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: JSON.stringify(resolvedWire()) }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new AnthropicProvider(
       "claude-model",
@@ -571,15 +742,26 @@ describe("provider adapters", () => {
       expect(body).not.toHaveProperty("temperature");
       expect(body.messages[0].content).toContain("DEEPSEEK JSON OUTPUT CONTRACT");
       expect(body.messages[0].content).toContain("Schema name: turn_decision_v1");
-      expect(body.messages[0].content).toContain('\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]');
-      expect(body.messages[0].content).toContain("Required fields apply independently to every object inside an array");
-      expect(body.messages[0].content).toContain("$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, lifecycleCode, name, status, text, quantity, tags, references");
+      expect(body.messages[0].content).toContain(
+        '\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]',
+      );
+      expect(body.messages[0].content).toContain(
+        "Required fields apply independently to every object inside an array",
+      );
+      expect(body.messages[0].content).toContain(
+        "$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, lifecycleCode, name, status, text, quantity, tags, references",
+      );
       expect(body.messages[0].content).toContain("$.modifiers[]: label, value");
       expect(body.messages[0].content).toContain("Example JSON object with the required shape:");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } }],
-        usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [
+            { finish_reason: "stop", message: { content: JSON.stringify(resolvedWire()) } },
+          ],
+          usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 },
+        }),
+        { status: 200 },
+      );
     });
     const provider = new DeepSeekProvider(
       "deepseek-v4-flash",
@@ -606,9 +788,12 @@ describe("provider adapters", () => {
         expect(body.thinking).toEqual({ type: "disabled" });
         expect(body.response_format).toEqual({ type: "json_object" });
         expect(body).not.toHaveProperty("temperature");
-        return new Response(JSON.stringify({
-          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+          }),
+          { status: 200 },
+        );
       });
       const provider = new DeepSeekProvider(
         model,
@@ -631,9 +816,12 @@ describe("provider adapters", () => {
       expect(body).not.toHaveProperty("thinking");
       expect(body.temperature).toBe(0.8);
       expect(body.response_format).toEqual({ type: "json_object" });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new DeepSeekProvider(
       "deepseek-chat",
@@ -650,9 +838,15 @@ describe("provider adapters", () => {
   });
 
   it("rejects a valid DeepSeek JSON object that violates the local schema", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ finish_reason: "stop", message: { content: '{\"answer\":42}' } }],
-    }), { status: 200 }));
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: '{\"answer\":42}' } }],
+          }),
+          { status: 200 },
+        ),
+    );
     const provider = new DeepSeekProvider(
       "deepseek-v4-pro",
       "key",
@@ -689,9 +883,12 @@ describe("provider adapters", () => {
       expect(body).not.toHaveProperty("temperature");
       expect(body.reasoning_effort).toBe("none");
       expect(body.max_completion_tokens).toBe(1000);
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.6-sol",
@@ -700,7 +897,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("disables default Kimi reasoning so structured output retains its token budget", async () => {
@@ -711,9 +910,12 @@ describe("provider adapters", () => {
       expect(body.provider).toEqual({ require_parameters: true });
       expect(body.messages[0].content).toContain("OPENROUTER JSON OUTPUT CONTRACT");
       expect(body.messages[0].content).toContain("JSON Schema:");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "moonshotai/kimi-k2.6",
@@ -722,7 +924,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("explicitly disables Luna reasoning while preserving strict structured output", async () => {
@@ -735,9 +939,12 @@ describe("provider adapters", () => {
         type: "json_schema",
         json_schema: { name: "answer", strict: true },
       });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.6-luna",
@@ -746,7 +953,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("explicitly disables Terra reasoning while preserving strict structured output", async () => {
@@ -760,9 +969,12 @@ describe("provider adapters", () => {
         type: "json_schema",
         json_schema: { name: "answer", strict: true },
       });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.6-terra",
@@ -771,7 +983,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("explicitly disables Nano reasoning while preserving strict structured output", async () => {
@@ -785,9 +999,12 @@ describe("provider adapters", () => {
         type: "json_schema",
         json_schema: { name: "answer", strict: true },
       });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenAIProvider(
       "gpt-5.4-nano",
@@ -796,7 +1013,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("disables Qwen 3.7 Plus reasoning without enabling Kimi response healing", async () => {
@@ -805,9 +1024,12 @@ describe("provider adapters", () => {
       expect(body.reasoning).toEqual({ effort: "none" });
       expect(body).not.toHaveProperty("plugins");
       expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "qwen/qwen3.7-plus",
@@ -816,7 +1038,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("disables MiniMax M3 reasoning without enabling Kimi response healing", async () => {
@@ -825,9 +1049,12 @@ describe("provider adapters", () => {
       expect(body.reasoning).toEqual({ effort: "none" });
       expect(body).not.toHaveProperty("plugins");
       expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "minimax/minimax-m3",
@@ -836,7 +1063,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("explicitly selects Hy3 no-think mode without enabling Kimi response healing", async () => {
@@ -845,9 +1074,12 @@ describe("provider adapters", () => {
       expect(body.reasoning).toEqual({ effort: "none" });
       expect(body).not.toHaveProperty("plugins");
       expect(body.messages[0].content).not.toContain("OPENROUTER JSON OUTPUT CONTRACT");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "tencent/hy3",
@@ -856,7 +1088,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("disables GLM 4.6 reasoning", async () => {
@@ -864,9 +1098,12 @@ describe("provider adapters", () => {
       const body = JSON.parse(String(init?.body));
       expect(body.reasoning).toEqual({ effort: "none" });
       expect(body).not.toHaveProperty("plugins");
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "z-ai/glm-4.6",
@@ -875,7 +1112,9 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("disables DeepSeek V3.2 reasoning with its documented enabled boolean", async () => {
@@ -884,9 +1123,12 @@ describe("provider adapters", () => {
       expect(body.reasoning).toEqual({ enabled: false });
       expect(body).not.toHaveProperty("plugins");
       expect(body.provider).toEqual({ require_parameters: true });
-      return new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "stop", message: { content: '{"answer":"yes"}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "deepseek/deepseek-v3.2",
@@ -895,16 +1137,21 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("omits temperature for Claude Opus 4.8", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).not.toHaveProperty("temperature");
-      return new Response(JSON.stringify({
-        stop_reason: "end_turn",
-        content: [{ type: "text", text: '{"answer":"yes"}' }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: '{"answer":"yes"}' }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new AnthropicProvider(
       "claude-opus-4-8",
@@ -913,7 +1160,9 @@ describe("provider adapters", () => {
       "https://example.test/messages",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(provider.generateStructured(answerRequest)).resolves.toMatchObject({
+      data: { answer: "yes" },
+    });
   });
 
   it("omits deprecated temperature for exact Claude Sonnet 5", async () => {
@@ -922,10 +1171,13 @@ describe("provider adapters", () => {
       expect(body.model).toBe("claude-sonnet-5");
       expect(body).not.toHaveProperty("temperature");
       expect(body.output_config).toBeDefined();
-      return new Response(JSON.stringify({
-        stop_reason: "end_turn",
-        content: [{ type: "text", text: '{"answer":"yes"}' }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: '{"answer":"yes"}' }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new AnthropicProvider(
       "claude-sonnet-5",
@@ -934,10 +1186,12 @@ describe("provider adapters", () => {
       "https://example.test/messages",
       fetchMock as typeof fetch,
     );
-    await expect(provider.generateStructured({
-      ...answerRequest,
-      temperature: 0,
-    })).resolves.toMatchObject({ data: { answer: "yes" } });
+    await expect(
+      provider.generateStructured({
+        ...answerRequest,
+        temperature: 0,
+      }),
+    ).resolves.toMatchObject({ data: { answer: "yes" } });
   });
 
   it("classifies OpenAI and Anthropic refusals as content blocks with usage", async () => {
@@ -946,26 +1200,42 @@ describe("provider adapters", () => {
       "key",
       { temperature: 0.8, maxOutputTokens: 1000 },
       "https://example.test/chat",
-      vi.fn(async () => new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { refusal: "Cannot comply." } }],
-        usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
-      }), { status: 200 })) as typeof fetch,
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ finish_reason: "stop", message: { refusal: "Cannot comply." } }],
+              usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
     );
     const anthropic = new AnthropicProvider(
       "claude-model",
       "key",
       { temperature: 0.8, maxOutputTokens: 1000 },
       "https://example.test/messages",
-      vi.fn(async () => new Response(JSON.stringify({
-        stop_reason: "refusal",
-        content: [{ type: "text", text: "Cannot comply." }],
-        usage: { input_tokens: 6, output_tokens: 3 },
-      }), { status: 200 })) as typeof fetch,
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              stop_reason: "refusal",
+              content: [{ type: "text", text: "Cannot comply." }],
+              usage: { input_tokens: 6, output_tokens: 3 },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
     );
 
     for (const provider of [openAi, anthropic]) {
       let failure: unknown;
-      try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+      try {
+        await provider.generateStructured(answerRequest);
+      } catch (error) {
+        failure = error;
+      }
       expect(failure).toMatchObject({ kind: "content_block", retryable: false });
       expect(structuredFailureDetails(failure)?.usage?.inputTokens).toBeGreaterThan(0);
     }
@@ -977,26 +1247,42 @@ describe("provider adapters", () => {
       "key",
       { temperature: 0.8, maxOutputTokens: 1000 },
       "https://example.test/chat",
-      vi.fn(async () => new Response(JSON.stringify({
-        choices: [{ finish_reason: "length", message: { content: '{"answer":' } }],
-        usage: { prompt_tokens: 5, completion_tokens: 100, total_tokens: 105 },
-      }), { status: 200 })) as typeof fetch,
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ finish_reason: "length", message: { content: '{"answer":' } }],
+              usage: { prompt_tokens: 5, completion_tokens: 100, total_tokens: 105 },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
     );
     const anthropic = new AnthropicProvider(
       "claude-model",
       "key",
       { temperature: 0.8, maxOutputTokens: 1000 },
       "https://example.test/messages",
-      vi.fn(async () => new Response(JSON.stringify({
-        stop_reason: "max_tokens",
-        content: [{ type: "text", text: '{"answer":' }],
-        usage: { input_tokens: 6, output_tokens: 100 },
-      }), { status: 200 })) as typeof fetch,
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              stop_reason: "max_tokens",
+              content: [{ type: "text", text: '{"answer":' }],
+              usage: { input_tokens: 6, output_tokens: 100 },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
     );
 
     for (const provider of [openAi, anthropic]) {
       let failure: unknown;
-      try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+      try {
+        await provider.generateStructured(answerRequest);
+      } catch (error) {
+        failure = error;
+      }
       expect(failure).toMatchObject({ kind: "malformed_json", retryable: true });
       expect((failure as Error).message).toContain("truncated");
       expect(structuredFailureDetails(failure)?.usage?.outputTokens).toBe(100);
@@ -1005,7 +1291,11 @@ describe("provider adapters", () => {
 
   it("uses the Gemini-compatible schema projection for Gemini routed through OpenRouter", async () => {
     const constrainedSchema = z.object({
-      id: z.string().regex(/^[a-z]+$/).min(2).default("hero"),
+      id: z
+        .string()
+        .regex(/^[a-z]+$/)
+        .min(2)
+        .default("hero"),
       kind: z.literal("person"),
       entries: z.array(z.string()).max(3),
     });
@@ -1018,9 +1308,12 @@ describe("provider adapters", () => {
       expect(serialized).not.toContain('"default"');
       expect(serialized).not.toContain('"pattern"');
       expect(schema.properties.entries).not.toHaveProperty("maxItems");
-      return new Response(JSON.stringify({
-        choices: [{ message: { content: '{"id":"hero","kind":"person","entries":["one"]}' } }],
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"id":"hero","kind":"person","entries":["one"]}' } }],
+        }),
+        { status: 200 },
+      );
     });
     const provider = new OpenRouterProvider(
       "google/gemini-3.5-flash",
@@ -1029,7 +1322,15 @@ describe("provider adapters", () => {
       "https://example.test/chat",
       fetchMock as typeof fetch,
     );
-    expect((await provider.generateStructured({ ...answerRequest, schemaName: "constrained", schema: constrainedSchema })).data.entries).toEqual(["one"]);
+    expect(
+      (
+        await provider.generateStructured({
+          ...answerRequest,
+          schemaName: "constrained",
+          schema: constrainedSchema,
+        })
+      ).data.entries,
+    ).toEqual(["one"]);
   });
 
   it("enforces Gameplay Contract V1 machine codes and decodes its stable effect shape into domain operations", async () => {
@@ -1043,65 +1344,154 @@ describe("provider adapters", () => {
       expect(schema.properties.effects.items.required).toContain("references");
       expect(schema.properties.effects.items.properties.text.description).toContain("advance_time");
       expect(schema.properties.effects).not.toHaveProperty("maxItems");
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(resolvedWire([
-        effect({
-          kind: "create_entity",
-          targetId: "location:market-square",
-          entityKindCode: 2,
-          name: "Market Square",
-          status: "open",
-          text: "A busy public square.",
-          tags: ["market"],
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(
+                  resolvedWire([
+                    effect({
+                      kind: "create_entity",
+                      targetId: "location:market-square",
+                      entityKindCode: 2,
+                      name: "Market Square",
+                      status: "open",
+                      text: "A busy public square.",
+                      tags: ["market"],
+                    }),
+                  ]),
+                ),
+              },
+            },
+          ],
         }),
-      ])) } }] }), { status: 200 });
+        { status: 200 },
+      );
     });
-    const provider = new OpenRouterProvider("provider/model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock as typeof fetch);
+    const provider = new OpenRouterProvider(
+      "provider/model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
     const result = await provider.generateStructured(gameplayRequest);
     expect(result.structuredMode).toBe("exact_schema");
     expect(result.protocolVersion).toBe(1);
     expect(result.data).toMatchObject({
       kind: "resolved",
-      operations: [{ type: "create_entity", entity: { id: "location:market-square", kind: "location" } }],
+      operations: [
+        { type: "create_entity", entity: { id: "location:market-square", kind: "location" } },
+      ],
     });
   });
 
   it("rejects domain-shaped and prose-coded responses outside the wire contract", () => {
-    expect(WireTurnSchema.safeParse({
-      kind: "resolved",
-      turnSummary: "wrong shape",
-      operations: [],
-    }).success).toBe(false);
-    expect(WireTurnSchema.safeParse(resolvedWire([
-      { ...effect({ kind: "add_fact", targetId: "player:hero", factSectionCode: 3, text: "A clue." }), factSectionCode: "Player Knowledge" },
-    ])).success).toBe(false);
-    expect(decodeTurnDecision(resolvedWire([
-      effect({ kind: "add_fact", targetId: "player:hero", factSectionCode: 3, text: "A clue." }),
-    ]))).toMatchObject({ kind: "resolved", operations: [{ type: "add_fact", section: "knowledge" }] });
+    expect(
+      WireTurnSchema.safeParse({
+        kind: "resolved",
+        turnSummary: "wrong shape",
+        operations: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      WireTurnSchema.safeParse(
+        resolvedWire([
+          {
+            ...effect({
+              kind: "add_fact",
+              targetId: "player:hero",
+              factSectionCode: 3,
+              text: "A clue.",
+            }),
+            factSectionCode: "Player Knowledge",
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+    expect(
+      decodeTurnDecision(
+        resolvedWire([
+          effect({
+            kind: "add_fact",
+            targetId: "player:hero",
+            factSectionCode: 3,
+            text: "A clue.",
+          }),
+        ]),
+      ),
+    ).toMatchObject({ kind: "resolved", operations: [{ type: "add_fact", section: "knowledge" }] });
   });
 
   it("uses explicit sentinels without losing intentional empty list updates", () => {
-    expect(decodeTurnDecision(resolvedWire([
-      effect({ kind: "set_entity_state", targetId: "npc:mara-venn", name: "Mara", tags: ["$unchanged"] }),
-      effect({ kind: "update_thread", targetId: "thread:northern-road", text: "The road is open.", references: [] }),
-    ]))).toMatchObject({
+    expect(
+      decodeTurnDecision(
+        resolvedWire([
+          effect({
+            kind: "set_entity_state",
+            targetId: "npc:mara-venn",
+            name: "Mara",
+            tags: ["$unchanged"],
+          }),
+          effect({
+            kind: "update_thread",
+            targetId: "thread:northern-road",
+            text: "The road is open.",
+            references: [],
+          }),
+        ]),
+      ),
+    ).toMatchObject({
       kind: "resolved",
       operations: [
         { type: "set_entity_state", targetId: "npc:mara-venn", name: "Mara" },
         { type: "update_thread", threadId: "thread:northern-road", relatedEntityIds: [] },
       ],
     });
-    expect(() => decodeTurnDecision(resolvedWire(Array.from({ length: 41 }, () =>
-      effect({ kind: "record_major_event", text: "Event" }))))).toThrow();
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire(
+          Array.from({ length: 41 }, () => effect({ kind: "record_major_event", text: "Event" })),
+        ),
+      ),
+    ).toThrow();
   });
 
   it("classifies wire-valid but domain-invalid effects separately", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify(resolvedWire([
-        effect({ kind: "end_campaign", lifecycleCode: 1, text: "Not a valid ending." }),
-      ])) } }],
-    }), { status: 200 }));
-    const provider = new OpenRouterProvider("provider/model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/chat", fetchMock as typeof fetch);
-    await expect(provider.generateStructured(gameplayRequest)).rejects.toMatchObject({ kind: "domain_decode_violation" });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify(
+                    resolvedWire([
+                      effect({
+                        kind: "end_campaign",
+                        lifecycleCode: 1,
+                        text: "Not a valid ending.",
+                      }),
+                    ]),
+                  ),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new OpenRouterProvider(
+      "provider/model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(gameplayRequest)).rejects.toMatchObject({
+      kind: "domain_decode_violation",
+    });
   });
 
   it("sends and validates the exact Gameplay Contract V1 schema through Gemini", async () => {
@@ -1112,34 +1502,71 @@ describe("provider adapters", () => {
       expect(schema.required).toContain("failureCampaignStatus");
       expect(schema.properties.effects.items.additionalProperties).toBe(false);
       expect(schema.properties.effects).not.toHaveProperty("maxItems");
-      return new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: JSON.stringify(resolvedWire()) }] } }],
-        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
-      }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(resolvedWire()) }] } }],
+          usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
+        }),
+        { status: 200 },
+      );
     });
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
     const result = await provider.generateStructured(gameplayRequest);
     expect(result.data).toMatchObject({ kind: "resolved", operations: [] });
     expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10, totalTokens: 30 });
   });
 
   it("rejects root arrays rather than selecting or merging a candidate", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: '[{"answer":"yes"}]' }] } }],
-    }), { status: 200 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: '[{"answer":"yes"}]' }] } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
     await expect(provider.generateStructured(answerRequest)).rejects.toBeInstanceOf(z.ZodError);
   });
 
   it("retains raw schema-invalid output and billed usage for diagnostics", async () => {
     const rawText = '[{"answer":"one"},{"answer":"two"}]';
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: rawText }] } }],
-      usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
-    }), { status: 200 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: rawText }] } }],
+            usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
     let failure: unknown;
-    try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
     expect(failure).toBeInstanceOf(z.ZodError);
     expect(structuredFailureDetails(failure)).toMatchObject({
       rawText,
@@ -1151,25 +1578,61 @@ describe("provider adapters", () => {
 
   it("classifies incomplete JSON without salvaging a nested value", async () => {
     const rawText = '{"outer":{"answer":"yes"}';
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: rawText }] } }],
-    }), { status: 200 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: rawText }] } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
     let failure: unknown;
-    try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
     expect(failure).toBeInstanceOf(GenerationFailure);
     expect((failure as GenerationFailure).kind).toBe("malformed_json");
     expect(structuredFailureDetails(failure)?.rawText).toBe(rawText);
   });
 
   it("classifies a no-content MAX_TOKENS response as a repairable truncated JSON failure", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      candidates: [{ finishReason: "MAX_TOKENS" }],
-      usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 100, totalTokenCount: 120 },
-    }), { status: 200 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ finishReason: "MAX_TOKENS" }],
+            usageMetadata: {
+              promptTokenCount: 20,
+              candidatesTokenCount: 100,
+              totalTokenCount: 120,
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
     let failure: unknown;
-    try { await provider.generateStructured(answerRequest); } catch (error) { failure = error; }
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
     expect(failure).toMatchObject({ kind: "malformed_json", retryable: true });
     expect(structuredFailureDetails(failure)).toMatchObject({
       rawText: "",
@@ -1180,7 +1643,11 @@ describe("provider adapters", () => {
 
   it("removes unsupported JSON Schema keywords before calling Gemini", async () => {
     const constrainedSchema = z.object({
-      id: z.string().regex(/^[a-z]+$/).min(2).default("hero"),
+      id: z
+        .string()
+        .regex(/^[a-z]+$/)
+        .min(2)
+        .default("hero"),
       kind: z.literal("person"),
       quantity: z.number().int().positive().max(20),
       entries: z.array(z.string()).max(3),
@@ -1195,26 +1662,80 @@ describe("provider adapters", () => {
       expect(serialized).not.toContain('"default"');
       expect(serialized).not.toContain('"pattern"');
       expect(schema.properties.entries).not.toHaveProperty("maxItems");
-      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"id":"hero","kind":"person","quantity":1,"entries":["one"]}' }] } }] }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: '{"id":"hero","kind":"person","quantity":1,"entries":["one"]}' }],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
     });
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
-    expect((await provider.generateStructured({ ...answerRequest, schemaName: "constrained", schema: constrainedSchema })).data.quantity).toBe(1);
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
+    expect(
+      (
+        await provider.generateStructured({
+          ...answerRequest,
+          schemaName: "constrained",
+          schema: constrainedSchema,
+        })
+      ).data.quantity,
+    ).toBe(1);
   });
 
   it("fails closed after one request when Gemini rejects the exact schema", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      error: { status: "INVALID_ARGUMENT", message: "Schema is too complex." },
-    }), { status: 400 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
-    await expect(provider.generateStructured(gameplayRequest)).rejects.toMatchObject({ kind: "schema_rejected", retryable: false });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { status: "INVALID_ARGUMENT", message: "Schema is too complex." },
+          }),
+          { status: 400 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(gameplayRequest)).rejects.toMatchObject({
+      kind: "schema_rejected",
+      retryable: false,
+    });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("does not accept commentary or Markdown fences around structured JSON", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: '```json\n{"answer":"yes"}\n```' }] } }],
-    }), { status: 200 }));
-    const provider = new GeminiProvider("gemini-model", "key", { temperature: 0.8, maxOutputTokens: 1000 }, "https://example.test/v1beta", fetchMock as typeof fetch);
-    await expect(provider.generateStructured(answerRequest)).rejects.toMatchObject({ kind: "malformed_json" });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: '```json\n{"answer":"yes"}\n```' }] } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
+    await expect(provider.generateStructured(answerRequest)).rejects.toMatchObject({
+      kind: "malformed_json",
+    });
   });
 });

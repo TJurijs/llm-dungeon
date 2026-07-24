@@ -19,37 +19,50 @@ async function legacyFixture(): Promise<{
   const sessionDir = path.join(runDir, "sessions", "session-one");
   await mkdir(sessionDir, { recursive: true });
   const manifestPath = path.join(runDir, "manifest.json");
-  await writeFile(manifestPath, `${JSON.stringify({
-    schemaVersion: 1,
-    runId: "legacy-run",
-    config: {
-      language: "en",
-      provider: "historical-provider",
-      maxCostUsd: 5,
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      runId: "legacy-run",
+      config: {
+        language: "en",
+        provider: "historical-provider",
+        maxCostUsd: 5,
+      },
+      sessions: [
+        {
+          id: "session-one",
+          profile: "cautious-investigator",
+          status: "completed",
+        },
+      ],
+      historicalOnly: true,
+    })}\n`,
+    "utf8",
+  );
+  const check = resolveCheck(
+    {
+      name: "Investigation",
+      difficulty: 40,
+      modifiers: [{ label: "Careful search", value: 5 }],
+      successStakes: "The clue is found.",
+      failureStakes: "The clue remains hidden.",
     },
-    sessions: [{
-      id: "session-one",
-      profile: "cautious-investigator",
+    55,
+  );
+  await writeFile(
+    path.join(sessionDir, "turns.jsonl"),
+    `${JSON.stringify({
+      turn: 1,
+      action: "Inspect the sealed desk.",
+      approach: "investigation",
+      narration: "A maker's mark is visible beneath the drawer.",
+      check,
       status: "completed",
-    }],
-    historicalOnly: true,
-  })}\n`, "utf8");
-  const check = resolveCheck({
-    name: "Investigation",
-    difficulty: 40,
-    modifiers: [{ label: "Careful search", value: 5 }],
-    successStakes: "The clue is found.",
-    failureStakes: "The clue remains hidden.",
-  }, 55);
-  await writeFile(path.join(sessionDir, "turns.jsonl"), `${JSON.stringify({
-    turn: 1,
-    action: "Inspect the sealed desk.",
-    approach: "investigation",
-    narration: "A maker's mark is visible beneath the drawer.",
-    check,
-    status: "completed",
-    privateLegacyField: "not projected",
-  })}\n`, "utf8");
+      privateLegacyField: "not projected",
+    })}\n`,
+    "utf8",
+  );
   const markdown = [
     "# Historical evaluation",
     "",
@@ -81,12 +94,16 @@ describe("legacy evaluation artifacts", () => {
 
   it("rejects non-v1 manifests instead of reinterpreting them as current playtests", async () => {
     const fixture = await legacyFixture();
-    await writeFile(fixture.manifestPath, `${JSON.stringify({
-      schemaVersion: 2,
-      runId: "legacy-run",
-      config: { language: "en" },
-      sessions: [{ id: "session-one", profile: "curious-explorer" }],
-    })}\n`, "utf8");
+    await writeFile(
+      fixture.manifestPath,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        runId: "legacy-run",
+        config: { language: "en" },
+        sessions: [{ id: "session-one", profile: "curious-explorer" }],
+      })}\n`,
+      "utf8",
+    );
     await expect(readLegacyEvaluationManifest(fixture.manifestPath)).rejects.toThrow();
   });
 
@@ -101,13 +118,15 @@ describe("legacy evaluation artifacts", () => {
     expect(presentation).toMatchObject({
       profile: "cautious-investigator",
       opening: "The archive door closes behind the investigator.",
-      turns: [{
-        turn: 1,
-        action: "Inspect the sealed desk.",
-        approach: "investigation",
-        status: "completed",
-        narration: "A maker's mark is visible beneath the drawer.",
-      }],
+      turns: [
+        {
+          turn: 1,
+          action: "Inspect the sealed desk.",
+          approach: "investigation",
+          status: "completed",
+          narration: "A maker's mark is visible beneath the drawer.",
+        },
+      ],
     });
     expect(JSON.stringify(presentation)).toContain("Investigation: d100 = 55");
     expect(JSON.stringify(presentation)).not.toContain("privateLegacyField");
@@ -116,20 +135,17 @@ describe("legacy evaluation artifacts", () => {
 
   it("rejects traversal-like run and session IDs before resolving artifact paths", async () => {
     const fixture = await legacyFixture();
-    expect(() => evaluationArtifactPath(fixture.root, "../outside", "manifest")).toThrow("Invalid run ID");
-    expect(() => evaluationArtifactPath(fixture.root, "legacy-run", "transcript", "../outside"))
-      .toThrow("Invalid session ID");
-    await expect(evaluationTranscriptPresentation(
-      fixture.root,
-      "../outside",
-      "session-one",
-      fixture.markdown,
-    )).rejects.toThrow("Invalid run ID");
-    await expect(evaluationTranscriptPresentation(
-      fixture.root,
-      "legacy-run",
-      "../outside",
-      fixture.markdown,
-    )).rejects.toThrow("Invalid session ID");
+    expect(() => evaluationArtifactPath(fixture.root, "../outside", "manifest")).toThrow(
+      "Invalid run ID",
+    );
+    expect(() =>
+      evaluationArtifactPath(fixture.root, "legacy-run", "transcript", "../outside"),
+    ).toThrow("Invalid session ID");
+    await expect(
+      evaluationTranscriptPresentation(fixture.root, "../outside", "session-one", fixture.markdown),
+    ).rejects.toThrow("Invalid run ID");
+    await expect(
+      evaluationTranscriptPresentation(fixture.root, "legacy-run", "../outside", fixture.markdown),
+    ).rejects.toThrow("Invalid session ID");
   });
 });

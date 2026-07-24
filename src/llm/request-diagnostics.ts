@@ -13,7 +13,7 @@ export function attachRequestDiagnostics(
 }
 
 export function requestDiagnosticsFor(error: unknown): ProviderRequestDiagnostics | undefined {
-  return ((typeof error === "object" && error !== null) || typeof error === "function")
+  return (typeof error === "object" && error !== null) || typeof error === "function"
     ? diagnosticsByError.get(error as object)
     : undefined;
 }

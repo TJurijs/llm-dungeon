@@ -6,10 +6,22 @@ import { CampaignCatalog, type CampaignCatalogSummary } from "./campaign-catalog
 import { campaignMarkdownFilename, renderCampaignMarkdown } from "./campaign-export.js";
 import { probeProviderConnection } from "./connection-probe.js";
 import { DungeonEngine } from "./engine.js";
-import { campaignSetupDefaults, LANGUAGES, LanguageCodeSchema, loadAppConfig, saveAppConfig, type LanguageCode } from "./language.js";
+import {
+  campaignSetupDefaults,
+  LANGUAGES,
+  LanguageCodeSchema,
+  loadAppConfig,
+  saveAppConfig,
+  type LanguageCode,
+} from "./language.js";
 import { parseAppealCommand } from "./appeal.js";
 import { readCampaignMetadata } from "./persistence/campaign-catalog.js";
-import { LlmProviderIdSchema, ModelSelectionSchema } from "./llm-model-catalog.js";
+import {
+  LlmProviderIdSchema,
+  ModelUnavailableError,
+  ModelSelectionSchema,
+  type ModelSelection,
+} from "./llm-model-catalog.js";
 import type { OpenAiModelsFetcher } from "./openai-model-access.js";
 import { parseQuestionCommand } from "./question.js";
 import { listScenarioSeeds, loadScenarioSeed } from "./scenario-seeds.js";
@@ -25,7 +37,16 @@ import type { CampaignCostSummary } from "./campaign-cost.js";
 import type { GenerationMetadata, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
-import { asError, readJsonBody, rejectUnsafeMutation, rejectUntrustedHost, sendJson, sendTextDownload, statusFor, WebApiError } from "./web/http.js";
+import {
+  asError,
+  readJsonBody,
+  rejectUnsafeMutation,
+  rejectUntrustedHost,
+  sendJson,
+  sendTextDownload,
+  statusFor,
+  WebApiError,
+} from "./web/http.js";
 import { serveStaticAsset } from "./web/static-assets.js";
 import {
   ModelSettingsService,
@@ -45,6 +66,7 @@ export interface WebServerOptions {
   maxConcurrentCampaignOperations?: number;
   pricingFetcher?: (() => Promise<unknown>) | false;
   openAiModelsFetcher?: OpenAiModelsFetcher | false;
+  openAiModelsTimeoutMs?: number;
   connectionTester?: ProviderConnectionTester;
 }
 
@@ -65,25 +87,28 @@ interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerCon
   config: BrowserModelSelection | null;
 }
 
-const SetupModelConfigSchema = z.union([
-  ModelSelectionSchema,
-  ProviderConfigSchema.strict(),
-]);
+const SetupModelConfigSchema = z.union([ModelSelectionSchema, ProviderConfigSchema.strict()]);
 
-const SetupDraftRequestSchema = z.object({
-  premise: z.string().max(100_000).default(""),
-  character: z.string().max(100_000).default(""),
-  language: LanguageCodeSchema.optional(),
-  worldRules: z.string().min(1).max(500_000).optional(),
-  config: SetupModelConfigSchema.optional(),
-}).strict();
+const SetupDraftRequestSchema = z
+  .object({
+    premise: z.string().max(100_000).default(""),
+    character: z.string().max(100_000).default(""),
+    language: LanguageCodeSchema.optional(),
+    worldRules: z.string().min(1).max(500_000).optional(),
+    config: SetupModelConfigSchema.optional(),
+  })
+  .strict();
 
 const ModelEnabledRequestSchema = ModelSelectionSchema.extend({ enabled: z.boolean() }).strict();
-const ModelTestRequestSchema = ModelSelectionSchema.extend({ language: LanguageCodeSchema.optional() }).strict();
-const SessionProviderKeyRequestSchema = z.object({
-  provider: LlmProviderIdSchema,
-  key: z.string().max(10_000),
+const ModelTestRequestSchema = ModelSelectionSchema.extend({
+  language: LanguageCodeSchema.optional(),
 }).strict();
+const SessionProviderKeyRequestSchema = z
+  .object({
+    provider: LlmProviderIdSchema,
+    key: z.string().max(10_000),
+  })
+  .strict();
 
 const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
 const MAX_DRAFTS = 20;
@@ -103,7 +128,10 @@ function decodeCampaignId(segment: string): string {
 }
 
 function campaignRoute(pathname: string): { campaignId: string; action: string } | undefined {
-  const match = /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup|title)$/.exec(pathname);
+  const match =
+    /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup|title)$/.exec(
+      pathname,
+    );
   if (!match) return undefined;
   return { campaignId: decodeCampaignId(match[1]!), action: match[2]! };
 }
@@ -114,18 +142,65 @@ export class DungeonWebController {
   readonly settings: ModelSettingsService;
   private readonly operations: CampaignOperationCoordinator;
   private readonly drafts = new Map<string, SetupDraft>();
+  private readonly activeModelUses = new Map<string, number>();
+  private readonly activeModelRemovals = new Set<string>();
   private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
   private campaignCatalog: CampaignCatalog | undefined;
 
-  constructor(readonly root: string, options: Omit<WebServerOptions, "root"> = {}) {
+  constructor(
+    readonly root: string,
+    options: Omit<WebServerOptions, "root"> = {},
+  ) {
     this.dataRoot = path.join(root, "data");
     this.webRoot = path.join(root, "web");
     this.settings = new ModelSettingsService(root, options);
-    this.operations = new CampaignOperationCoordinator(options.maxConcurrentCampaignOperations ?? 3);
+    this.operations = new CampaignOperationCoordinator(
+      options.maxConcurrentCampaignOperations ?? 3,
+    );
   }
 
   safeError(error: unknown, fallback?: string): string {
     return this.settings.safeError(error, fallback);
+  }
+
+  private modelOperationKey(selection: ModelSelection): string {
+    return `${selection.provider}\u0000${selection.model}`;
+  }
+
+  /**
+   * Model use is shared by drafts/probes, but mutually exclusive with removal.
+   * Registration is synchronous so two HTTP handlers cannot pass each other
+   * between their safety check and first await.
+   */
+  private reserveModelUse(selection: ModelSelection): () => void {
+    const key = this.modelOperationKey(selection);
+    if (this.activeModelRemovals.has(key)) {
+      throw new WebApiError(409, "Model removal is already in progress");
+    }
+    this.activeModelUses.set(key, (this.activeModelUses.get(key) ?? 0) + 1);
+    return () => {
+      const remaining = (this.activeModelUses.get(key) ?? 1) - 1;
+      if (remaining > 0) this.activeModelUses.set(key, remaining);
+      else this.activeModelUses.delete(key);
+    };
+  }
+
+  private reserveModelRemoval(selection: ModelSelection): () => void {
+    const key = this.modelOperationKey(selection);
+    if (this.activeModelRemovals.has(key) || (this.activeModelUses.get(key) ?? 0) > 0) {
+      throw new WebApiError(409, "Model is being tested or used by a campaign preview");
+    }
+    this.activeModelRemovals.add(key);
+    return () => {
+      this.activeModelRemovals.delete(key);
+    };
+  }
+
+  private removedModelConflict(error: unknown, activity: string): never {
+    if (error instanceof ModelUnavailableError && error.reason === "unregistered") {
+      throw new WebApiError(409, `Model was removed while ${activity}`);
+    }
+    throw error;
   }
 
   private async catalog(): Promise<CampaignCatalog> {
@@ -139,10 +214,10 @@ export class DungeonWebController {
     return this.campaignCatalog;
   }
 
-
   private async requireSummary(campaignId: string): Promise<CampaignCatalogSummary> {
-    const summary = (await (await this.catalog()).listCampaigns())
-      .find((candidate) => candidate.campaignId === campaignId);
+    const summary = (await (await this.catalog()).listCampaigns()).find(
+      (candidate) => candidate.campaignId === campaignId,
+    );
     if (!summary) throw new WebApiError(404, `Campaign ${campaignId} was not found`);
     return summary;
   }
@@ -162,7 +237,10 @@ export class DungeonWebController {
     }
   }
 
-  private async campaignCost(summary: CampaignCatalogSummary, store: StateStore): Promise<CampaignCostSummary | null> {
+  private async campaignCost(
+    summary: CampaignCatalogSummary,
+    store: StateStore,
+  ): Promise<CampaignCostSummary | null> {
     const cached = this.costCache.get(summary.campaignId);
     if (cached?.updatedAt === summary.updatedAt) return cached.cost;
     if (this.operations.isBusy(summary.campaignId)) return cached?.cost ?? null;
@@ -176,7 +254,9 @@ export class DungeonWebController {
     }
   }
 
-  private async campaignPresentation(summary: CampaignCatalogSummary): Promise<CampaignPresentation> {
+  private async campaignPresentation(
+    summary: CampaignCatalogSummary,
+  ): Promise<CampaignPresentation> {
     const store = await this.readStore(summary);
     const { providerConfig, ...manifest } = summary;
     return {
@@ -184,22 +264,27 @@ export class DungeonWebController {
       busy: this.operations.isBusy(summary.campaignId),
       pending: pendingStatus(await store.getPending()),
       campaignCost: await this.campaignCost(summary, store),
-      config: providerConfig === undefined ? null : this.settings.presentedSelection(providerConfig),
+      config:
+        providerConfig === undefined ? null : this.settings.presentedSelection(providerConfig),
     };
   }
 
   private async activeStore(campaignId: string): Promise<StateStore> {
     const summary = await this.requireSummary(campaignId);
-    if (summary.archived) throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
+    if (summary.archived)
+      throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
     return (await this.catalog()).openCampaign(campaignId);
   }
 
-  private async confirmedCampaignResponse(requestId: string): Promise<{
-    state: GameState;
-    playerName: string;
-    openingNarration: string;
-    config: BrowserModelSelection | null;
-  } | undefined> {
+  private async confirmedCampaignResponse(requestId: string): Promise<
+    | {
+        state: GameState;
+        playerName: string;
+        openingNarration: string;
+        config: BrowserModelSelection | null;
+      }
+    | undefined
+  > {
     const catalog = await this.catalog();
     const created = await catalog.findCampaignByCreationRequest(requestId);
     if (created === undefined) return undefined;
@@ -209,13 +294,16 @@ export class DungeonWebController {
       state: created.state,
       playerName: snapshot.playerName,
       openingNarration: opening?.narration ?? "",
-      config: await catalog.providerConfig(created.campaignId).then((config) => (
-        config === undefined ? null : this.settings.presentedSelection(config)
-      )),
+      config: await catalog
+        .providerConfig(created.campaignId)
+        .then((config) => (config === undefined ? null : this.settings.presentedSelection(config))),
     };
   }
 
-  private async runCampaign<T>(campaignId: string, operation: (engine: DungeonEngine, store: StateStore) => Promise<T>): Promise<T> {
+  private async runCampaign<T>(
+    campaignId: string,
+    operation: (engine: DungeonEngine, store: StateStore) => Promise<T>,
+  ): Promise<T> {
     if (this.operations.isBusy(campaignId)) {
       throw new WebApiError(409, "Another operation is still running for this campaign");
     }
@@ -224,9 +312,14 @@ export class DungeonWebController {
         const store = await this.activeStore(campaignId);
         return store.withCampaignLock(async () => {
           const metadata = await readCampaignMetadata(store.dataRoot);
-          if (metadata.archived) throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
+          if (metadata.archived)
+            throw new WebApiError(409, `Campaign ${campaignId} is archived and cannot be resumed`);
           const config = metadata.providerConfig;
-          if (!config) throw new WebApiError(409, "Choose a provider and model for this campaign before playing");
+          if (!config)
+            throw new WebApiError(
+              409,
+              "Choose a provider and model for this campaign before playing",
+            );
           const language = (await store.readManifest()).language;
           const engine = new DungeonEngine(store, await this.settings.provider(config, language));
           return operation(engine, store);
@@ -240,7 +333,11 @@ export class DungeonWebController {
     }
   }
 
-  private async handleStatusApi(method: string, response: ServerResponse, url: URL): Promise<boolean> {
+  private async handleStatusApi(
+    method: string,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<boolean> {
     if (method !== "GET" || url.pathname !== "/api/status") return false;
     const config = await this.settings.defaultConfig().catch(() => null);
     const presentedConfig = config === null ? null : this.settings.presentedSelection(config);
@@ -270,7 +367,10 @@ export class DungeonWebController {
     url: URL,
   ): Promise<boolean> {
     if (url.pathname === "/api/config/language" && method === "PUT") {
-      const body = z.object({ language: LanguageCodeSchema }).strict().parse(await readJsonBody(request));
+      const body = z
+        .object({ language: LanguageCodeSchema })
+        .strict()
+        .parse(await readJsonBody(request));
       await saveAppConfig(this.root, { language: body.language });
       sendJson(response, 200, { language: body.language });
       return true;
@@ -292,46 +392,75 @@ export class DungeonWebController {
       const body = ModelTestRequestSchema.parse(await readJsonBody(request));
       const selection = this.settings.selection(body);
       this.settings.requirePublicSelection(selection);
-      const languages = body.language === undefined
-        ? Object.keys(LANGUAGES) as LanguageCode[]
-        : [body.language];
-      this.settings.requireProviderKey(selection);
-      const config = await this.settings.configForSelection(selection);
-      const operationId = `probe:${randomUUID()}`;
-      const provider = this.settings.bareProvider(config);
-      const passed: LanguageCode[] = [];
-      const failed: Array<{ language: LanguageCode; error: string }> = [];
-      const results: Awaited<ReturnType<typeof probeProviderConnection>>[] = [];
-      await this.operations.run(operationId, async () => {
-        for (const language of languages) {
-          try {
-            const result = await probeProviderConnection(provider, [language]);
-            await this.settings.modelCatalog.recordTestSuccess(selection, { testedLanguages: [language] });
+      const releaseModel = this.reserveModelUse(selection);
+      try {
+        const languages =
+          body.language === undefined
+            ? (Object.keys(LANGUAGES) as LanguageCode[])
+            : [body.language];
+        this.settings.requireProviderKey(selection);
+        // Preserve the historical direct-test API while making every result
+        // update require that this registration still exists.
+        await this.settings.modelCatalog.addModel(selection);
+        const config = await this.settings.configForSelection(selection);
+        const operationId = `probe:${randomUUID()}`;
+        const provider = this.settings.bareProvider(config);
+        const passed: LanguageCode[] = [];
+        const failed: Array<{ language: LanguageCode; error: string }> = [];
+        const results: Awaited<ReturnType<typeof probeProviderConnection>>[] = [];
+        await this.operations.run(operationId, async () => {
+          for (const language of languages) {
+            let result: Awaited<ReturnType<typeof probeProviderConnection>>;
+            try {
+              result = await probeProviderConnection(provider, [language]);
+            } catch (error) {
+              const summary = this.safeError(error, "Provider compatibility test failed");
+              try {
+                await this.settings.modelCatalog.recordTestFailure(
+                  selection,
+                  {
+                    failedLanguages: [language],
+                    failureSummary: summary,
+                  },
+                  { requireRegistered: true },
+                );
+              } catch (recordError) {
+                this.removedModelConflict(recordError, "its compatibility test was running");
+              }
+              failed.push({ language, error: summary });
+              continue;
+            }
+            try {
+              await this.settings.modelCatalog.recordTestSuccess(
+                selection,
+                {
+                  testedLanguages: [language],
+                },
+                { requireRegistered: true },
+              );
+            } catch (recordError) {
+              this.removedModelConflict(recordError, "its compatibility test was running");
+            }
             passed.push(language);
             results.push(result);
-          } catch (error) {
-            const summary = this.safeError(error, "Provider compatibility test failed");
-            await this.settings.modelCatalog.recordTestFailure(selection, {
-              failedLanguages: [language],
-              failureSummary: summary,
-            });
-            failed.push({ language, error: summary });
           }
-        }
-      });
-      const first = results[0];
-      sendJson(response, 200, {
-        ok: passed.length > 0,
-        provider: first?.provider ?? selection.provider,
-        model: first?.model ?? selection.model,
-        ...(body.language === undefined ? {} : { language: body.language }),
-        usage: results.length === 1 ? results[0]?.usage ?? null : null,
-        testedLanguages: passed,
-        failedLanguages: failed.map((result) => result.language),
-        failures: failed,
-        protocolVersion: first?.protocolVersion ?? null,
-        ...(passed.length > 0 || failed[0] === undefined ? {} : { error: failed[0].error }),
-      });
+        });
+        const first = results[0];
+        sendJson(response, 200, {
+          ok: passed.length > 0,
+          provider: first?.provider ?? selection.provider,
+          model: first?.model ?? selection.model,
+          ...(body.language === undefined ? {} : { language: body.language }),
+          usage: results.length === 1 ? (results[0]?.usage ?? null) : null,
+          testedLanguages: passed,
+          failedLanguages: failed.map((result) => result.language),
+          failures: failed,
+          protocolVersion: first?.protocolVersion ?? null,
+          ...(passed.length > 0 || failed[0] === undefined ? {} : { error: failed[0].error }),
+        });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
@@ -342,59 +471,101 @@ export class DungeonWebController {
     }
 
     if (url.pathname === "/api/llm/connections/test" && method === "POST") {
-      const body = z.object({ provider: LlmProviderIdSchema.optional() }).parse(await readJsonBody(request));
-      const results = body.provider === undefined
-        ? await this.settings.testConnections()
-        : [await this.settings.testProviderConnection(body.provider)];
+      const body = z
+        .object({ provider: LlmProviderIdSchema.optional() })
+        .parse(await readJsonBody(request));
+      const results =
+        body.provider === undefined
+          ? await this.settings.testConnections()
+          : [await this.settings.testProviderConnection(body.provider)];
       sendJson(response, 200, { results, llm: await this.settings.llmPresentation() });
       return true;
     }
 
     if (url.pathname === "/api/llm/models" && method === "POST") {
       const selection = ModelSelectionSchema.parse(await readJsonBody(request));
-      this.settings.requirePublicSelection(selection);
-      const snapshot = await this.settings.modelCatalog.addModel(selection);
-      sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      const releaseModel = this.reserveModelUse(selection);
+      try {
+        this.settings.requirePublicSelection(selection);
+        const snapshot = await this.settings.modelCatalog.addModel(selection);
+        sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
     if (url.pathname === "/api/llm/models" && method === "PUT") {
       const body = ModelEnabledRequestSchema.parse(await readJsonBody(request));
       const selection = this.settings.selection(body);
-      this.settings.requirePublicSelection(selection);
-      const snapshot = await this.settings.modelCatalog.setEnabled(selection, body.enabled);
-      sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      const releaseModel = this.reserveModelUse(selection);
+      try {
+        this.settings.requirePublicSelection(selection);
+        const snapshot = await this.settings.modelCatalog.setEnabled(selection, body.enabled);
+        sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
     if (url.pathname === "/api/llm/models" && method === "DELETE") {
       const selection = ModelSelectionSchema.parse(await readJsonBody(request));
-      const snapshot = await this.settings.modelSnapshot();
-      const registered = snapshot.providers
-        .find((provider) => provider.id === selection.provider)
-        ?.models.find((model) => model.model === selection.model);
-      if (registered === undefined) throw new WebApiError(404, `Model ${selection.provider}/${selection.model} was not found`);
-      if (registered.candidate) throw new WebApiError(400, "Known models cannot be removed");
-      if (snapshot.defaultModel?.provider === selection.provider && snapshot.defaultModel.model === selection.model) {
-        throw new WebApiError(409, "Choose a different default model before removing this model");
+      const releaseRemoval = this.reserveModelRemoval(selection);
+      try {
+        const snapshot = await this.settings.modelSnapshot();
+        const registered = snapshot.providers
+          .find((provider) => provider.id === selection.provider)
+          ?.models.find((model) => model.model === selection.model);
+        if (registered === undefined)
+          throw new WebApiError(
+            404,
+            `Model ${selection.provider}/${selection.model} was not found`,
+          );
+        if (registered.candidate) throw new WebApiError(400, "Known models cannot be removed");
+        if (
+          snapshot.defaultModel?.provider === selection.provider &&
+          snapshot.defaultModel.model === selection.model
+        ) {
+          throw new WebApiError(409, "Choose a different default model before removing this model");
+        }
+        const saved = await this.settings.modelCatalog.removeModel(selection, async () => {
+          const campaign = (await (await this.catalog()).listCampaigns()).find(
+            (entry) =>
+              entry.providerConfig?.provider === selection.provider &&
+              entry.providerConfig.model === selection.model,
+          );
+          if (campaign)
+            throw new WebApiError(
+              409,
+              `Model is used by campaign ${campaign.title} and cannot be removed`,
+            );
+          const draftUsesModel = [...this.drafts.values()].some(
+            (draft) =>
+              draft.config.provider === selection.provider &&
+              draft.config.model === selection.model,
+          );
+          if (draftUsesModel)
+            throw new WebApiError(409, "Model is used by a campaign preview and cannot be removed");
+        });
+        sendJson(response, 200, { saved: true, defaultModel: saved.defaultModel });
+      } finally {
+        releaseRemoval();
       }
-      const campaign = (await (await this.catalog()).listCampaigns()).find((entry) =>
-        entry.providerConfig?.provider === selection.provider && entry.providerConfig.model === selection.model);
-      if (campaign) throw new WebApiError(409, `Model is used by campaign ${campaign.title} and cannot be removed`);
-      const draftUsesModel = [...this.drafts.values()].some((draft) =>
-        draft.config.provider === selection.provider && draft.config.model === selection.model);
-      if (draftUsesModel) throw new WebApiError(409, "Model is used by a campaign preview and cannot be removed");
-      const saved = await this.settings.modelCatalog.removeModel(selection);
-      sendJson(response, 200, { saved: true, defaultModel: saved.defaultModel });
       return true;
     }
 
     if (url.pathname === "/api/llm/default" && method === "PUT") {
       const selection = ModelSelectionSchema.parse(await readJsonBody(request));
-      this.settings.requirePublicSelection(selection);
-      this.settings.requireProviderKey(selection);
-      await this.settings.modelCatalog.setDefault(selection);
-      sendJson(response, 200, { saved: true, defaultModel: selection });
+      const releaseModel = this.reserveModelUse(selection);
+      try {
+        this.settings.requirePublicSelection(selection);
+        this.settings.requireProviderKey(selection);
+        await this.settings.modelCatalog.setDefault(selection);
+        sendJson(response, 200, { saved: true, defaultModel: selection });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
@@ -407,10 +578,13 @@ export class DungeonWebController {
     }
 
     if (url.pathname === "/api/config/world" && method === "PUT") {
-      const body = z.object({
-        language: LanguageCodeSchema.optional(),
-        markdown: z.string().min(1).max(500_000),
-      }).strict().parse(await readJsonBody(request));
+      const body = z
+        .object({
+          language: LanguageCodeSchema.optional(),
+          markdown: z.string().min(1).max(500_000),
+        })
+        .strict()
+        .parse(await readJsonBody(request));
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       await saveWorldProfile(this.root, language, body.markdown);
       sendJson(response, 200, { saved: true, language, source: "localized_override" });
@@ -442,45 +616,66 @@ export class DungeonWebController {
     if (url.pathname === "/api/campaigns/draft" && method === "POST") {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
       const language = body.language ?? (await loadAppConfig(this.root)).language;
-      const requestedSelection = body.config === undefined
-        ? this.settings.effectivePublicDefault(await this.settings.modelSnapshot())
-        : this.settings.selection(body.config);
+      const requestedSelection =
+        body.config === undefined
+          ? this.settings.effectivePublicDefault(await this.settings.modelSnapshot())
+          : this.settings.selection(body.config);
       if (requestedSelection === null) {
-        throw new WebApiError(409, "Test a compatible model and choose it as the default before creating a campaign");
-      }
-      const config = await this.settings.availableConfig(requestedSelection, language);
-      const worldRules = body.worldRules ?? (await resolveWorldProfile(this.root, language)).markdown;
-      const defaults = campaignSetupDefaults(language);
-      const premise = body.premise.trim() || defaults.premise;
-      const character = body.character.trim() || defaults.characterConcept;
-      const operationId = `draft:${randomUUID()}`;
-      const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
-        const engine = new DungeonEngine(
-          new StateStore(path.join(this.dataRoot, ".drafts", operationId)),
-          await this.settings.provider(config, language),
+        throw new WebApiError(
+          409,
+          "Test a compatible model and choose it as the default before creating a campaign",
         );
-        const generated = await engine.generateSetupWithMetadata({
-          premise,
-          character,
-          language,
-          worldRules,
+      }
+      const releaseModel = this.reserveModelUse(requestedSelection);
+      try {
+        const config = await this.settings.availableConfig(requestedSelection, language);
+        const worldRules =
+          body.worldRules ?? (await resolveWorldProfile(this.root, language)).markdown;
+        const defaults = campaignSetupDefaults(language);
+        const premise = body.premise.trim() || defaults.premise;
+        const character = body.character.trim() || defaults.characterConcept;
+        const operationId = `draft:${randomUUID()}`;
+        const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
+          const engine = new DungeonEngine(
+            new StateStore(path.join(this.dataRoot, ".drafts", operationId)),
+            await this.settings.provider(config, language),
+          );
+          const generated = await engine.generateSetupWithMetadata({
+            premise,
+            character,
+            language,
+            worldRules,
+          });
+          return {
+            setup: generated.setup,
+            generation: generated.generation,
+            language,
+            worldRules,
+            config,
+            premise,
+            character,
+          };
         });
-        return { setup: generated.setup, generation: generated.generation, language, worldRules, config, premise, character };
-      });
-      const draftId = randomUUID();
-      this.drafts.set(draftId, draft);
-      while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value!);
-      sendJson(response, 200, {
-        draftId,
-        setup: setupPreview(draft.setup),
-        config: this.settings.presentedSelection(config),
-        language,
-      });
+        const draftId = randomUUID();
+        this.drafts.set(draftId, draft);
+        while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value!);
+        sendJson(response, 200, {
+          draftId,
+          setup: setupPreview(draft.setup),
+          config: this.settings.presentedSelection(config),
+          language,
+        });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
     if (url.pathname === "/api/campaigns/confirm" && method === "POST") {
-      const body = z.object({ draftId: z.string().uuid() }).strict().parse(await readJsonBody(request));
+      const body = z
+        .object({ draftId: z.string().uuid() })
+        .strict()
+        .parse(await readJsonBody(request));
       const draft = this.drafts.get(body.draftId);
       if (!draft) {
         const replay = await this.confirmedCampaignResponse(body.draftId);
@@ -488,16 +683,28 @@ export class DungeonWebController {
         sendJson(response, 200, replay);
         return true;
       }
-      const created = await (await this.catalog()).createCampaign({
-        setup: draft.setup,
-        openingGeneration: draft.generation,
-        language: draft.language,
-        worldRules: draft.worldRules,
-        setupInput: { premise: draft.premise, character: draft.character },
-      }, {
-        providerConfig: draft.config,
-        requestId: body.draftId,
-      });
+      let created: Awaited<ReturnType<CampaignCatalog["createCampaign"]>>;
+      try {
+        created = await this.settings.modelCatalog.withRegisteredModel(
+          this.settings.selection(draft.config),
+          async () =>
+            (await this.catalog()).createCampaign(
+              {
+                setup: draft.setup,
+                openingGeneration: draft.generation,
+                language: draft.language,
+                worldRules: draft.worldRules,
+                setupInput: { premise: draft.premise, character: draft.character },
+              },
+              {
+                providerConfig: draft.config,
+                requestId: body.draftId,
+              },
+            ),
+        );
+      } catch (error) {
+        this.removedModelConflict(error, "the campaign preview was awaiting confirmation");
+      }
       if (this.drafts.get(body.draftId) === draft) this.drafts.delete(body.draftId);
       sendJson(response, 200, {
         state: created.state,
@@ -521,19 +728,24 @@ export class DungeonWebController {
     const { campaignId, action } = route;
 
     if (action === "status" && method === "GET") {
-      sendJson(response, 200, { campaign: await this.campaignPresentation(await this.requireSummary(campaignId)) });
+      sendJson(response, 200, {
+        campaign: await this.campaignPresentation(await this.requireSummary(campaignId)),
+      });
       return true;
     }
 
     if (action === "setup" && method === "GET") {
       const summary = await this.requireSummary(campaignId);
       const store = await this.readStore(summary);
-      sendJson(response, 200, { setup: await store.campaignStartSettings() ?? null });
+      sendJson(response, 200, { setup: (await store.campaignStartSettings()) ?? null });
       return true;
     }
 
     if (action === "play" && method === "POST") {
-      const body = z.object({ action: z.string().trim().min(1).max(10_000) }).strict().parse(await readJsonBody(request));
+      const body = z
+        .object({ action: z.string().trim().min(1).max(10_000) })
+        .strict()
+        .parse(await readJsonBody(request));
       const result = await this.runCampaign(campaignId, async (engine) => {
         const question = parseQuestionCommand(body.action);
         if (question) return engine.ask(question);
@@ -553,34 +765,52 @@ export class DungeonWebController {
     }
 
     if (action === "discard" && method === "POST") {
-      await this.runCampaign(campaignId, async (engine) => { await engine.discardPendingTurn(); });
+      await this.runCampaign(campaignId, async (engine) => {
+        await engine.discardPendingTurn();
+      });
       sendJson(response, 200, { discarded: true });
       return true;
     }
 
     if (action === "archive" && method === "POST") {
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
-      await this.operations.run(campaignId, async () => { await (await this.catalog()).archiveCampaign(campaignId); });
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Another operation is still running for this campaign");
+      await this.operations.run(campaignId, async () => {
+        await (await this.catalog()).archiveCampaign(campaignId);
+      });
       sendJson(response, 200, { archived: true });
       return true;
     }
 
     if (action === "title" && method === "PUT") {
-      const body = z.object({ title: z.string().trim().min(1).max(200) }).strict().parse(await readJsonBody(request));
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      const body = z
+        .object({ title: z.string().trim().min(1).max(200) })
+        .strict()
+        .parse(await readJsonBody(request));
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Another operation is still running for this campaign");
       const campaign = await this.operations.run(campaignId, async () =>
-        (await this.catalog()).renameCampaign(campaignId, body.title));
+        (await this.catalog()).renameCampaign(campaignId, body.title),
+      );
       sendJson(response, 200, { campaign: await this.campaignPresentation(campaign) });
       return true;
     }
 
     if (action === "delete" && method === "DELETE") {
-      const body = z.object({ title: z.string().min(1) }).strict().parse(await readJsonBody(request));
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
+      const body = z
+        .object({ title: z.string().min(1) })
+        .strict()
+        .parse(await readJsonBody(request));
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Another operation is still running for this campaign");
       const summary = await this.requireSummary(campaignId);
-      if (!summary.archived) throw new WebApiError(409, "Archive the campaign before permanently deleting it");
-      if (body.title !== summary.title) throw new WebApiError(409, "Campaign title confirmation does not match");
-      await this.operations.run(campaignId, async () => { await (await this.catalog()).deleteArchivedCampaign(campaignId); });
+      if (!summary.archived)
+        throw new WebApiError(409, "Archive the campaign before permanently deleting it");
+      if (body.title !== summary.title)
+        throw new WebApiError(409, "Campaign title confirmation does not match");
+      await this.operations.run(campaignId, async () => {
+        await (await this.catalog()).deleteArchivedCampaign(campaignId);
+      });
       this.costCache.delete(campaignId);
       sendJson(response, 200, { deleted: true });
       return true;
@@ -589,26 +819,57 @@ export class DungeonWebController {
     if (action === "config" && method === "PUT") {
       const requested = SetupModelConfigSchema.parse(await readJsonBody(request));
       const selection = this.settings.selection(requested);
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Another operation is still running for this campaign");
-      const saved = await this.operations.run(campaignId, async () => {
-        const store = await this.activeStore(campaignId);
-        if (await store.getPending()) {
-          throw new WebApiError(409, "Resolve or discard the pending turn before changing the model");
+      const releaseModel = this.reserveModelUse(selection);
+      try {
+        if (this.operations.isBusy(campaignId))
+          throw new WebApiError(409, "Another operation is still running for this campaign");
+        let saved: ProviderConfig;
+        try {
+          this.settings.requirePublicSelection(selection);
+          this.settings.requireProviderKey(selection);
+          const config = await this.settings.configForSelection(selection);
+          saved = await this.settings.modelCatalog.withRegisteredModel(
+            selection,
+            async (registration) =>
+              this.operations.run(campaignId, async () => {
+                const store = await this.activeStore(campaignId);
+                if (await store.getPending()) {
+                  throw new WebApiError(
+                    409,
+                    "Resolve or discard the pending turn before changing the model",
+                  );
+                }
+                const manifest = await store.readManifest();
+                registration.assertAvailable(manifest.language);
+                return (await this.catalog()).updateProviderConfig(campaignId, config);
+              }),
+          );
+        } catch (error) {
+          // Campaign state conflicts retain priority over selection errors while
+          // the mutating path itself keeps one lock order: model, then campaign.
+          const store = await this.activeStore(campaignId);
+          if (await store.getPending()) {
+            throw new WebApiError(
+              409,
+              "Resolve or discard the pending turn before changing the model",
+            );
+          }
+          throw error;
         }
-        const manifest = await store.readManifest();
-        const config = await this.settings.availableConfig(selection, manifest.language);
-        const catalog = await this.catalog();
-        return catalog.updateProviderConfig(campaignId, config);
-      });
-      sendJson(response, 200, { config: this.settings.presentedSelection(saved) });
+        sendJson(response, 200, { config: this.settings.presentedSelection(saved) });
+      } finally {
+        releaseModel();
+      }
       return true;
     }
 
     if (action === "inspect" && method === "GET") {
       const view = url.searchParams.get("view") as StateView | null;
-      if (!view || !STATE_VIEWS.includes(view)) throw new WebApiError(400, "Invalid inspection view");
+      if (!view || !STATE_VIEWS.includes(view))
+        throw new WebApiError(400, "Invalid inspection view");
       const summary = await this.requireSummary(campaignId);
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign state is temporarily busy");
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Campaign state is temporarily busy");
       const inspection = await (await this.readStore(summary)).inspect(view);
       sendJson(response, 200, { inspection });
       return true;
@@ -616,7 +877,8 @@ export class DungeonWebController {
 
     if (action === "transcript" && method === "GET") {
       const summary = await this.requireSummary(campaignId);
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign transcript is temporarily busy");
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Campaign transcript is temporarily busy");
       const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
       sendJson(response, 200, { playerName: snapshot.playerName, turns: snapshot.turns });
       return true;
@@ -624,9 +886,11 @@ export class DungeonWebController {
 
     if (action === "export" && method === "GET") {
       const format = url.searchParams.get("format") ?? "markdown";
-      if (format !== "markdown") throw new WebApiError(400, `Unsupported campaign export format: ${format}`);
+      if (format !== "markdown")
+        throw new WebApiError(400, `Unsupported campaign export format: ${format}`);
       const summary = await this.requireSummary(campaignId);
-      if (this.operations.isBusy(campaignId)) throw new WebApiError(409, "Campaign export is temporarily busy");
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Campaign export is temporarily busy");
       const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
       sendTextDownload(
         response,
@@ -671,10 +935,14 @@ export function createDungeonWebServer(options: WebServerOptions): Server {
       sendJson(response, statusFor(error), { error: controller.safeError(error) });
     }
   };
-  return createServer((request, response) => { void handle(request, response); });
+  return createServer((request, response) => {
+    void handle(request, response);
+  });
 }
 
-export async function startDungeonWebServer(options: WebServerOptions & { port?: number }): Promise<Server> {
+export async function startDungeonWebServer(
+  options: WebServerOptions & { port?: number },
+): Promise<Server> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4317;
   const server = createDungeonWebServer(options);

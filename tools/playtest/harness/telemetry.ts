@@ -4,10 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { classifyFailure } from "../../../src/llm/failures.js";
 import { requestDiagnosticsFor } from "../../../src/llm/request-diagnostics.js";
-import {
-  attemptMetadataFor,
-  structuredFailureDetails,
-} from "../../../src/llm/structured-error.js";
+import { attemptMetadataFor, structuredFailureDetails } from "../../../src/llm/structured-error.js";
 import {
   outputBudgetForPhase,
   type FrozenModelExecutionProfile,
@@ -30,24 +27,15 @@ import {
   reservePlaytestCallCost,
   settlePlaytestCallCost,
 } from "./cost-ledger.js";
-import {
-  PlaytestCallRecordSchema,
-  type PlaytestCallRecord,
-} from "./contracts.js";
+import { PlaytestCallRecordSchema, type PlaytestCallRecord } from "./contracts.js";
 import {
   attributePlaytestFailure,
   type FailureAttribution,
   type PlaytestCallLane,
 } from "./failure-attribution.js";
 import { appendPlaytestJsonLine, hashPlaytestValue } from "./files.js";
-import {
-  createDiagnosticBundle,
-  writeDiagnosticBundle,
-} from "./replay.js";
-import {
-  PlaytestProviderScheduler,
-  scheduledCallTimingFor,
-} from "./scheduler.js";
+import { createDiagnosticBundle, writeDiagnosticBundle } from "./replay.js";
+import { PlaytestProviderScheduler, scheduledCallTimingFor } from "./scheduler.js";
 
 export type PlaytestTelemetryActor = "calibration" | "candidate" | "player_driver" | "judge";
 export type PlaytestTelemetryPhase = PlaytestCallRecord["phase"];
@@ -93,8 +81,13 @@ function providerPhase(
 }
 
 function requestSchema(request: StructuredRequest<unknown>): Record<string, unknown> {
-  return request.jsonSchema
-    ?? z.toJSONSchema(request.wireSchema ?? request.schema, { target: "draft-7" }) as Record<string, unknown>;
+  return (
+    request.jsonSchema ??
+    (z.toJSONSchema(request.wireSchema ?? request.schema, { target: "draft-7" }) as Record<
+      string,
+      unknown
+    >)
+  );
 }
 
 function outputBudget(
@@ -222,9 +215,10 @@ export class PlaytestTelemetryProvider implements LlmProvider {
       );
       const result = scheduled.value;
       const metadata = result.attemptMetadata;
-      const hasReportedUsage = result.usage?.billedCostUsd !== undefined
-        || result.usage?.inputTokens !== undefined
-        || result.usage?.outputTokens !== undefined;
+      const hasReportedUsage =
+        result.usage?.billedCostUsd !== undefined ||
+        result.usage?.inputTokens !== undefined ||
+        result.usage?.outputTokens !== undefined;
       const cost = estimatePlaytestCost(result.usage, this.options.price, reservationEstimate);
       this.options.costManager.commit(reservation, cost);
       costCommitted = true;
@@ -249,10 +243,19 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         systemHash: hashPlaytestValue(request.system),
         schemaHash: hashPlaytestValue(schema),
         structuredMode: metadata?.structuredMode ?? result.structuredMode,
-        schemaProjection: metadata?.schemaProjection ?? this.options.profile.structuredOutput.projection,
+        schemaProjection:
+          metadata?.schemaProjection ?? this.options.profile.structuredOutput.projection,
         outputTokenField: metadata?.outputTokenField ?? this.options.profile.outputTokenField,
-        outputTokenBudget: outputBudget(request as StructuredRequest<unknown>, metadata, this.options.profile),
-        timeoutMs: timeoutFor(request as StructuredRequest<unknown>, metadata, this.options.profile),
+        outputTokenBudget: outputBudget(
+          request as StructuredRequest<unknown>,
+          metadata,
+          this.options.profile,
+        ),
+        timeoutMs: timeoutFor(
+          request as StructuredRequest<unknown>,
+          metadata,
+          this.options.profile,
+        ),
         finishReason: metadata?.finishReason,
         truncated: metadata?.truncated,
         requestDiagnostics: result.requestDiagnostics,
@@ -261,11 +264,14 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         costBasis: hasReportedUsage ? "reported_usage" : "reserved_estimate",
         inputTokens: result.usage?.inputTokens,
         outputTokens: result.usage?.outputTokens,
-        repairKind: request.attemptKind === "schema_repair"
-          ? "schema"
-          : request.attemptKind === "transient_retry"
-            ? "transient"
-            : request.attemptKind === "domain_repair" ? "domain" : undefined,
+        repairKind:
+          request.attemptKind === "schema_repair"
+            ? "schema"
+            : request.attemptKind === "transient_retry"
+              ? "transient"
+              : request.attemptKind === "domain_repair"
+                ? "domain"
+                : undefined,
       });
       await this.persist(record);
       await settlePlaytestCallCost(reservationsPath, costReservationId);
@@ -286,9 +292,10 @@ export class PlaytestTelemetryProvider implements LlmProvider {
       const failed = structuredFailureDetails(error);
       const metadata = failed?.attemptMetadata ?? attemptMetadataFor(error);
       const timing = scheduledTiming ?? { queueWaitMs: 0, providerCallMs: 0 };
-      const hasReportedUsage = failed?.usage?.billedCostUsd !== undefined
-        || failed?.usage?.inputTokens !== undefined
-        || failed?.usage?.outputTokens !== undefined;
+      const hasReportedUsage =
+        failed?.usage?.billedCostUsd !== undefined ||
+        failed?.usage?.inputTokens !== undefined ||
+        failed?.usage?.outputTokens !== undefined;
       const cost = estimatePlaytestCost(failed?.usage, this.options.price, reservationEstimate);
       this.options.costManager.commit(reservation, cost);
       costCommitted = true;
@@ -331,10 +338,19 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         systemHash: hashPlaytestValue(request.system),
         schemaHash: hashPlaytestValue(schema),
         structuredMode: metadata?.structuredMode ?? failed?.structuredMode,
-        schemaProjection: metadata?.schemaProjection ?? this.options.profile.structuredOutput.projection,
+        schemaProjection:
+          metadata?.schemaProjection ?? this.options.profile.structuredOutput.projection,
         outputTokenField: metadata?.outputTokenField ?? this.options.profile.outputTokenField,
-        outputTokenBudget: outputBudget(request as StructuredRequest<unknown>, metadata, this.options.profile),
-        timeoutMs: timeoutFor(request as StructuredRequest<unknown>, metadata, this.options.profile),
+        outputTokenBudget: outputBudget(
+          request as StructuredRequest<unknown>,
+          metadata,
+          this.options.profile,
+        ),
+        timeoutMs: timeoutFor(
+          request as StructuredRequest<unknown>,
+          metadata,
+          this.options.profile,
+        ),
         finishReason: metadata?.finishReason,
         truncated: metadata?.truncated,
         requestDiagnostics: diagnostics,
@@ -343,11 +359,14 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         costBasis: hasReportedUsage ? "reported_usage" : "reserved_estimate",
         inputTokens: failed?.usage?.inputTokens,
         outputTokens: failed?.usage?.outputTokens,
-        repairKind: request.attemptKind === "schema_repair"
-          ? "schema"
-          : request.attemptKind === "transient_retry"
-            ? "transient"
-            : request.attemptKind === "domain_repair" ? "domain" : undefined,
+        repairKind:
+          request.attemptKind === "schema_repair"
+            ? "schema"
+            : request.attemptKind === "transient_retry"
+              ? "transient"
+              : request.attemptKind === "domain_repair"
+                ? "domain"
+                : undefined,
         failureKind,
         failureOwner: attribution.owner,
         failureFingerprint,

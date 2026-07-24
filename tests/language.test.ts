@@ -34,8 +34,12 @@ describe("language registry", () => {
     const english = campaignSetupDefaults("en");
     const russian = campaignSetupDefaults("ru");
 
-    expect(english.premise).toBe("A classical opening in a tavern, with immediate but optional possibilities.");
-    expect(english.characterConcept).toBe("Create a grounded adventurer with two useful traits and one complicating trait.");
+    expect(english.premise).toBe(
+      "A classical opening in a tavern, with immediate but optional possibilities.",
+    );
+    expect(english.characterConcept).toBe(
+      "Create a grounded adventurer with two useful traits and one complicating trait.",
+    );
     expect(russian.premise).toMatch(/[А-Яа-яЁё]/);
     expect(russian.characterConcept).toMatch(/[А-Яа-яЁё]/);
     expect(russian).not.toEqual(english);
@@ -63,7 +67,9 @@ describe("language registry", () => {
       expect(await loadAppConfig(root)).toEqual({ language: "ru" });
 
       await saveAppConfig(root, { language: "en" });
-      expect(JSON.parse(await readFile(path.join(root, "config", "app.json"), "utf8"))).toEqual({ language: "en" });
+      expect(JSON.parse(await readFile(path.join(root, "config", "app.json"), "utf8"))).toEqual({
+        language: "en",
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -57,7 +57,9 @@ export function malformedStructuredResponse(
 ): GenerationFailure {
   const message = truncated
     ? "Provider response was truncated before the root JSON value completed"
-    : error instanceof GenerationFailure ? error.message : `Provider returned malformed root JSON: ${error instanceof Error ? error.message : String(error)}`;
+    : error instanceof GenerationFailure
+      ? error.message
+      : `Provider returned malformed root JSON: ${error instanceof Error ? error.message : String(error)}`;
   const failure = new GenerationFailure("malformed_json", message, true);
   attachStructuredFailure(failure, {
     rawText,
@@ -83,10 +85,13 @@ export function decodeStructured<T>(request: StructuredRequest<T>, value: unknow
   } catch (error) {
     if (error instanceof GenerationFailure) throw error;
     const detail = error instanceof Error ? error.message : String(error);
-    throw new GenerationFailure("domain_decode_violation", `Structured response could not be decoded into the domain model: ${detail}`, true);
+    throw new GenerationFailure(
+      "domain_decode_violation",
+      `Structured response could not be decoded into the domain model: ${detail}`,
+      true,
+    );
   }
 }
-
 
 export function xaiReasoningOptions(model: string): Record<string, unknown> | undefined {
   // Grok 4.5 is always a reasoning model. xAI documents `high` as the
@@ -115,7 +120,7 @@ export function openAiReasoningOptions(model: string): Record<string, unknown> |
 
 export function redactSecrets(value: string, secrets: string[]): string {
   return secrets.reduce(
-    (redacted, secret) => secret ? redacted.replaceAll(secret, "[redacted]") : redacted,
+    (redacted, secret) => (secret ? redacted.replaceAll(secret, "[redacted]") : redacted),
     value,
   );
 }
@@ -134,9 +139,8 @@ export async function safeFetch(
   timeoutMs?: number,
 ): Promise<Response> {
   const controller = timeoutMs === undefined ? undefined : new AbortController();
-  const timeout = controller === undefined
-    ? undefined
-    : setTimeout(() => controller.abort(), timeoutMs);
+  const timeout =
+    controller === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchImpl(url, {
       ...init,
@@ -145,7 +149,11 @@ export async function safeFetch(
   } catch (error) {
     const detail = redactSecrets(error instanceof Error ? error.message : String(error), secrets);
     if (controller?.signal.aborted) {
-      throw new GenerationFailure("network", `${provider} request timed out after ${timeoutMs}ms`, true);
+      throw new GenerationFailure(
+        "network",
+        `${provider} request timed out after ${timeoutMs}ms`,
+        true,
+      );
     }
     throw new GenerationFailure("network", `${provider} network request failed: ${detail}`, true);
   } finally {
@@ -154,12 +162,39 @@ export async function safeFetch(
 }
 
 export function httpFailure(provider: string, status: number, details: string): GenerationFailure {
-  if (status === 429) return new GenerationFailure("rate_limit", `${provider} request failed (${status}): ${details}`, true, status);
-  if (status >= 500) return new GenerationFailure("network", `${provider} request failed (${status}): ${details}`, true, status);
-  if (status === 400 && /schema|response[_ -]?format|output[_ -]?config|structured output|invalid.argument|invalid argument/i.test(details)) {
-    return new GenerationFailure("schema_rejected", `${provider} rejected the exact structured-output schema (${status}): ${details}`, false, status);
+  if (status === 429)
+    return new GenerationFailure(
+      "rate_limit",
+      `${provider} request failed (${status}): ${details}`,
+      true,
+      status,
+    );
+  if (status >= 500)
+    return new GenerationFailure(
+      "network",
+      `${provider} request failed (${status}): ${details}`,
+      true,
+      status,
+    );
+  if (
+    status === 400 &&
+    /schema|response[_ -]?format|output[_ -]?config|structured output|invalid.argument|invalid argument/i.test(
+      details,
+    )
+  ) {
+    return new GenerationFailure(
+      "schema_rejected",
+      `${provider} rejected the exact structured-output schema (${status}): ${details}`,
+      false,
+      status,
+    );
   }
-  return new GenerationFailure("provider", `${provider} request failed (${status}): ${details}`, false, status);
+  return new GenerationFailure(
+    "provider",
+    `${provider} request failed (${status}): ${details}`,
+    false,
+    status,
+  );
 }
 
 export function modelLeaf(model: string): string {
@@ -177,8 +212,8 @@ export function providerSupportsTemperature(provider: string, model: string): bo
   const leaf = modelLeaf(model);
   const openAiReasoningModel = /^(?:o\d(?:[-.]|$)|gpt-5(?:[-.]|$))/i.test(leaf);
   const deepSeekReasoningModel = /^deepseek-(?:reasoner(?:[-.]|$)|v4-)/i.test(leaf);
-  const anthropicWithoutTemperature = /^claude-opus-4-8(?:[-.]|$)/i.test(leaf)
-    || leaf.toLowerCase() === "claude-sonnet-5";
+  const anthropicWithoutTemperature =
+    /^claude-opus-4-8(?:[-.]|$)/i.test(leaf) || leaf.toLowerCase() === "claude-sonnet-5";
   if (provider === "openai") return !openAiReasoningModel;
   if (provider === "deepseek") return !deepSeekReasoningModel;
   if (provider === "anthropic") return !anthropicWithoutTemperature;
@@ -211,7 +246,13 @@ export function chatUsage(value: unknown): StructuredResult<unknown>["usage"] {
   const outputTokens = finiteNonnegativeInteger(value.completion_tokens);
   const totalTokens = finiteNonnegativeInteger(value.total_tokens);
   const billedCostUsd = finiteNonnegativeNumber(value.cost);
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined && billedCostUsd === undefined) return undefined;
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    billedCostUsd === undefined
+  )
+    return undefined;
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
@@ -280,7 +321,8 @@ export function profileReasoningBody(
 ): Record<string, unknown> {
   const policy = profile.reasoning;
   if (policy.policy === "chat_reasoning_effort") return { reasoning_effort: policy.value };
-  if (policy.policy === "openrouter_reasoning_effort") return { reasoning: { effort: policy.value } };
+  if (policy.policy === "openrouter_reasoning_effort")
+    return { reasoning: { effort: policy.value } };
   if (policy.policy === "openrouter_reasoning_disabled") return { reasoning: { enabled: false } };
   if (policy.policy === "deepseek_thinking_disabled") return { thinking: { type: "disabled" } };
   if (policy.policy === "deepseek_thinking_for_repairs") {
@@ -369,10 +411,12 @@ export function openAiRequestDiagnostics(
   response?: Response,
 ): ProviderRequestDiagnostics {
   const rateLimitHeaders = response
-    ? Object.fromEntries(OPENAI_RATE_LIMIT_HEADERS.flatMap((name) => {
-        const value = safeDiagnosticHeader(response.headers, name, 128, secrets);
-        return value === undefined ? [] : [[name, value]];
-      }))
+    ? Object.fromEntries(
+        OPENAI_RATE_LIMIT_HEADERS.flatMap((name) => {
+          const value = safeDiagnosticHeader(response.headers, name, 128, secrets);
+          return value === undefined ? [] : [[name, value]];
+        }),
+      )
     : {};
   const requestId = response
     ? safeDiagnosticHeader(response.headers, "x-request-id", 512, secrets)
@@ -390,9 +434,12 @@ export function openAiRequestDiagnostics(
 
 export function xaiChatUsage(value: unknown): StructuredResult<unknown>["usage"] {
   const usage = chatUsage(value);
-  if (usage?.inputTokens === undefined
-    || usage.outputTokens === undefined
-    || usage.totalTokens === undefined) return usage;
+  if (
+    usage?.inputTokens === undefined ||
+    usage.outputTokens === undefined ||
+    usage.totalTokens === undefined
+  )
+    return usage;
   // xAI's Chat Completions envelope can report visible completion tokens
   // separately while total_tokens also includes billed hidden reasoning. Keep
   // the shared output total cost-complete without exposing reasoning content.
@@ -402,15 +449,28 @@ export function xaiChatUsage(value: unknown): StructuredResult<unknown>["usage"]
     : usage;
 }
 
-export async function readResponseObject(response: Response, provider: string): Promise<Record<string, unknown>> {
+export async function readResponseObject(
+  response: Response,
+  provider: string,
+): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
     value = await response.json();
   } catch {
-    throw new GenerationFailure("provider", `${provider} returned a non-JSON response envelope`, false, response.status);
+    throw new GenerationFailure(
+      "provider",
+      `${provider} returned a non-JSON response envelope`,
+      false,
+      response.status,
+    );
   }
   if (!isRecord(value)) {
-    throw new GenerationFailure("provider", `${provider} returned an invalid response envelope`, false, response.status);
+    throw new GenerationFailure(
+      "provider",
+      `${provider} returned an invalid response envelope`,
+      false,
+      response.status,
+    );
   }
   return value;
 }
@@ -421,7 +481,11 @@ export function structuredContentBlock(
   rawText: string,
   usage: StructuredResult<unknown>["usage"],
 ): GenerationFailure {
-  const failure = new GenerationFailure("content_block", `${provider} refused or blocked the request: ${detail}`, false);
+  const failure = new GenerationFailure(
+    "content_block",
+    `${provider} refused or blocked the request: ${detail}`,
+    false,
+  );
   attachStructuredFailure(failure, {
     rawText,
     parsedResponse: null,
@@ -450,7 +514,6 @@ export interface ChatCompletionsOptions {
   executionProfile?: FrozenModelExecutionProfile;
 }
 
-
 export async function generateChatCompletions<T>(
   request: StructuredRequest<T>,
   options: ChatCompletionsOptions,
@@ -458,10 +521,11 @@ export async function generateChatCompletions<T>(
   const exactSchema = request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema);
   const profile = options.executionProfile;
   if (profile) assertProfileTarget(profile, options.id, options.model);
-  const projectionId = profile?.structuredOutput.projection ?? options.schemaProjection ?? "identity_v1";
+  const projectionId =
+    profile?.structuredOutput.projection ?? options.schemaProjection ?? "identity_v1";
   const projection = profile
     ? projectSchemaById(exactSchema, projectionId)
-    : options.projectSchema?.(exactSchema) ?? { schema: exactSchema };
+    : (options.projectSchema?.(exactSchema) ?? { schema: exactSchema });
   const jsonObjectWithLocalSchema = profile
     ? profile.structuredOutput.mode === "json_object_local_schema"
     : options.jsonObjectWithLocalSchema === true;
@@ -469,12 +533,21 @@ export async function generateChatCompletions<T>(
   const secrets = [options.apiKey, encodeURIComponent(options.apiKey)];
   const diagnosticTimestamp = new Date().toISOString();
   const clientRequestId = options.id === "openai" ? randomUUID() : undefined;
-  const temperature = profile === undefined
-    ? requestTemperature(options.id, options.model, request.temperature ?? options.defaults.temperature)
-    : profileTemperature(profile);
+  const temperature =
+    profile === undefined
+      ? requestTemperature(
+          options.id,
+          options.model,
+          request.temperature ?? options.defaults.temperature,
+        )
+      : profileTemperature(profile);
   const outputTokenField = profile?.outputTokenField ?? options.maxTokensField;
   if (outputTokenField === "maxOutputTokens") {
-    throw new GenerationFailure("schema_rejected", "Chat Completions cannot use maxOutputTokens", false);
+    throw new GenerationFailure(
+      "schema_rejected",
+      "Chat Completions cannot use maxOutputTokens",
+      false,
+    );
   }
   const outputTokenBudget = configuredOutputBudget(request, options.defaults, profile);
   const timeoutMs = configuredTimeout(request, profile);
@@ -502,9 +575,15 @@ export async function generateChatCompletions<T>(
     messages: [
       {
         role: "system",
-        content: jsonObjectWithLocalSchema || options.reinforceSchemaInSystem
-          ? localSchemaSystemPrompt(request.system, options.label, request.schemaName, projection.schema)
-          : request.system,
+        content:
+          jsonObjectWithLocalSchema || options.reinforceSchemaInSystem
+            ? localSchemaSystemPrompt(
+                request.system,
+                options.label,
+                request.schemaName,
+                projection.schema,
+              )
+            : request.system,
       },
       { role: "user", content: request.prompt },
     ],
@@ -526,30 +605,53 @@ export async function generateChatCompletions<T>(
   body[outputTokenField] = outputTokenBudget;
 
   try {
-    const response = await safeFetch(options.fetchImpl, options.label, options.endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-        "Content-Type": "application/json",
-        ...options.headers,
-        ...(clientRequestId === undefined ? {} : { "X-Client-Request-Id": clientRequestId }),
+    const response = await safeFetch(
+      options.fetchImpl,
+      options.label,
+      options.endpoint,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${options.apiKey}`,
+          "Content-Type": "application/json",
+          ...options.headers,
+          ...(clientRequestId === undefined ? {} : { "X-Client-Request-Id": clientRequestId }),
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    }, secrets, timeoutMs);
-    const requestDiagnostics = clientRequestId === undefined
-      ? undefined
-      : openAiRequestDiagnostics(options.model, diagnosticTimestamp, clientRequestId, secrets, response);
+      secrets,
+      timeoutMs,
+    );
+    const requestDiagnostics =
+      clientRequestId === undefined
+        ? undefined
+        : openAiRequestDiagnostics(
+            options.model,
+            diagnosticTimestamp,
+            clientRequestId,
+            secrets,
+            response,
+          );
 
     try {
-      if (!response.ok) throw httpFailure(options.label, response.status, await readError(response, secrets));
+      if (!response.ok)
+        throw httpFailure(options.label, response.status, await readError(response, secrets));
       const envelope = await readResponseObject(response, options.label);
       const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
       const choice = isRecord(choices[0]) ? choices[0] : undefined;
       const message = isRecord(choice?.message) ? choice.message : undefined;
-      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
-      const responseMetadata = responseAttemptMetadata(metadata, finishReason, finishReason === "length");
+      const finishReason =
+        typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
+      const responseMetadata = responseAttemptMetadata(
+        metadata,
+        finishReason,
+        finishReason === "length",
+      );
       const usage = (options.parseUsage ?? chatUsage)(envelope.usage);
-      const refusal = typeof message?.refusal === "string" ? redactSecrets(message.refusal, secrets).slice(0, 1000) : undefined;
+      const refusal =
+        typeof message?.refusal === "string"
+          ? redactSecrets(message.refusal, secrets).slice(0, 1000)
+          : undefined;
       if (refusal) throw structuredContentBlock(options.label, refusal, refusal, usage);
       if (finishReason === "content_filter") {
         throw structuredContentBlock(options.label, "content filter", "", usage);
@@ -557,16 +659,34 @@ export async function generateChatCompletions<T>(
       const content = typeof message?.content === "string" ? message.content : undefined;
       if (!content) {
         if (finishReason === "length") {
-          throw malformedStructuredResponse("", new Error(`${options.label} exhausted its output limit before returning JSON`), usage, true, structuredMode, responseMetadata);
+          throw malformedStructuredResponse(
+            "",
+            new Error(`${options.label} exhausted its output limit before returning JSON`),
+            usage,
+            true,
+            structuredMode,
+            responseMetadata,
+          );
         }
-        throw new GenerationFailure("provider", `${options.label} returned no message content (${finishReason ?? "unknown reason"})`, false);
+        throw new GenerationFailure(
+          "provider",
+          `${options.label} returned no message content (${finishReason ?? "unknown reason"})`,
+          false,
+        );
       }
 
       let parsed: unknown;
       try {
         parsed = parseJsonText(content);
       } catch (error) {
-        throw malformedStructuredResponse(content, error, usage, finishReason === "length", structuredMode, responseMetadata);
+        throw malformedStructuredResponse(
+          content,
+          error,
+          usage,
+          finishReason === "length",
+          structuredMode,
+          responseMetadata,
+        );
       }
       try {
         const data = decodeStructured(request, projection.normalize?.(parsed) ?? parsed);
@@ -576,7 +696,9 @@ export async function generateChatCompletions<T>(
           model: options.model,
           rawText: content,
           structuredMode,
-          ...(request.protocolVersion === undefined ? {} : { protocolVersion: request.protocolVersion }),
+          ...(request.protocolVersion === undefined
+            ? {}
+            : { protocolVersion: request.protocolVersion }),
           ...(usage ? { usage } : {}),
           ...(requestDiagnostics === undefined ? {} : { requestDiagnostics }),
           attemptMetadata: responseMetadata,
@@ -607,4 +729,3 @@ export async function generateChatCompletions<T>(
     throw error;
   }
 }
-

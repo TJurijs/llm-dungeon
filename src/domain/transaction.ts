@@ -1,12 +1,7 @@
-import type {
-  ChronicleEvent,
-  Entity,
-  GameState,
-  StateOperation,
-  Thread,
-} from "../schemas.js";
+import type { ChronicleEvent, Entity, GameState, StateOperation, Thread } from "../schemas.js";
 import { applyOperations } from "./transaction-application.js";
 import { prepareOperations } from "./transaction-normalization.js";
+import { inventoryCycleEdges } from "./state-consistency.js";
 import { DomainValidationError } from "./validation-error.js";
 
 export class TransactionValidationError extends Error {
@@ -50,7 +45,9 @@ export function applyTransaction(
     const threads = structuredClone(threadsInput);
     const chronicle = structuredClone(chronicleInput);
     manifest.turn = turn;
-    applyOperations(prepared, turn, manifest, entities, threads, chronicle);
+    applyOperations(prepared, turn, manifest, entities, threads, chronicle, {
+      allowedInventoryCycleEdges: inventoryCycleEdges(entitiesInput),
+    });
     return { operations: prepared, manifest, entities, threads, chronicle };
   } catch (error) {
     if (error instanceof TransactionValidationError) throw error;

@@ -35,13 +35,18 @@ describe("web UI copy", () => {
   });
 
   it("uses a semantic campaign sidebar, streamlined setup, settings, and state dock", async () => {
-    const html = await readFile(path.join(process.cwd(), "web", "index.html"), "utf8");
+    const html = (await readFile(path.join(process.cwd(), "web", "index.html"), "utf8")).replace(
+      /\s+/g,
+      " ",
+    );
     expect(html).toContain('id="campaign-sidebar" class="sidebar"');
     expect(html).not.toContain("adapter calibration");
     expect(html).toContain('id="new-campaign"');
     expect(html).toContain('id="provider-onboarding" class="provider-onboarding" hidden');
     expect(html).toContain('data-i18n="providerOnboardingSupported"');
-    expect(html).toContain('id="empty-open-settings" class="primary" type="button" data-i18n="openSettings" hidden');
+    expect(html).toContain(
+      'id="empty-open-settings" class="primary" type="button" data-i18n="openSettings" hidden',
+    );
     expect(html).toContain("./.env");
     expect(html).toContain('id="campaign-list"');
     expect(html).toContain('id="chat-log" class="chat-log" role="log"');
@@ -81,7 +86,9 @@ describe("web UI copy", () => {
     expect(html).toContain('id="llm-providers" class="llm-provider-list"');
     expect(html).not.toContain('id="settings-api-key"');
     expect(html).not.toContain('id="settings-provider"');
-    expect(html).toContain('id="open-inspection" class="icon-button" type="button" aria-label="Campaign state" title="Campaign state"');
+    expect(html).toContain(
+      'id="open-inspection" class="icon-button" type="button" aria-label="Campaign state" title="Campaign state"',
+    );
     expect(html).toContain('id="close-sidebar" class="icon-button"');
     expect(html).toContain('class="icon-button sidebar-opener sidebar-open-button"');
     expect(html).toContain('<path d="M8.5 4v16"></path>');
@@ -101,7 +108,9 @@ describe("web UI copy", () => {
     ]);
     expect(app).toContain('$("#empty-new-campaign").hidden = !configured;');
     expect(app).toContain('$("#empty-open-settings").hidden = configured;');
-    expect(app).toContain('$("#empty-open-settings").addEventListener("click", openProviderSettings);');
+    expect(app).toContain(
+      '$("#empty-open-settings").addEventListener("click", openProviderSettings);',
+    );
     expect(copy).toContain('providerOnboardingTitle: "Welcome to llm-dungeon"');
     expect(UI_COPY.en.providerOnboardingSupported).toContain("xAI");
     expect(UI_COPY.ru.providerOnboardingSupported).toContain("xAI");
@@ -115,7 +124,12 @@ describe("web UI copy", () => {
       readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "index.html"), "utf8"),
     ]);
-    for (const removed of ["/api/evaluations", "/api/config/prompts", "Self-play auto-runs", "Prompt inspector"]) {
+    for (const removed of [
+      "/api/evaluations",
+      "/api/config/prompts",
+      "Self-play auto-runs",
+      "Prompt inspector",
+    ]) {
       expect(app).not.toContain(removed);
       expect(html).not.toContain(removed);
     }
@@ -134,11 +148,9 @@ describe("web UI copy", () => {
     expect(setup).toContain('statusBadge.setAttribute("aria-live", "polite")');
     expect(styles).toContain("@keyframes model-protocol-spin");
     expect(setup).toContain('copy.append(createElement("p", "llm-model-error", model.error))');
-    expect(setup.replaceAll("\r\n", "\n")).toContain([
-      "testingModels.delete(testKey);",
-      "      renderLlmConfiguration(true);",
-      "      restoreActionFocus();",
-    ].join("\n"));
+    expect(setup.replace(/\s+/g, " ")).toContain(
+      "testingModels.delete(testKey); renderLlmConfiguration(true); restoreActionFocus();",
+    );
   });
 
   it("does not expose or record a browser activity log", async () => {
@@ -149,39 +161,50 @@ describe("web UI copy", () => {
       readFile(path.join(process.cwd(), "web", "ui-copy.js"), "utf8"),
     ]);
     const surface = [app, setup, html, copy].join("\n");
-    for (const removed of ["open-activity", "activity-dialog", "ACTIVITY_STORAGE_KEY", "recordActivity", "activityLog"]) {
+    for (const removed of [
+      "open-activity",
+      "activity-dialog",
+      "ACTIVITY_STORAGE_KEY",
+      "recordActivity",
+      "activityLog",
+    ]) {
       expect(surface).not.toContain(removed);
     }
   });
 
   it("provides a responsive drawer, touch-sized composer controls, and reduced-motion behavior", async () => {
     const styles = await readFile(path.join(process.cwd(), "web", "styles.css"), "utf8");
+    const compactStyles = styles.replace(/\s+/g, " ");
     expect(styles).toContain("@media (max-width: 760px)");
     expect(styles).toContain("body.sidebar-open .sidebar");
-    expect(styles).toContain("min-width: 44px; min-height: 42px");
-    expect(styles).toContain(".composer:focus-within { outline: 2px solid var(--accent)");
-    expect(styles).toContain(".chat-header-actions { min-width: 0; flex: 0 0 auto;");
+    expect(compactStyles).toContain("min-width: 44px; min-height: 42px");
+    expect(compactStyles).toContain(".composer:focus-within { outline: 2px solid var(--accent)");
+    expect(compactStyles).toContain(".chat-header-actions { min-width: 0; flex: 0 0 auto;");
     expect(styles).toContain("--faint: #989a90;");
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(styles).toContain("body.inspection-open .app-shell");
-    expect(styles).toContain("body.inspection-open #open-inspection { display: none; }");
+    expect(compactStyles).toContain("body.inspection-open #open-inspection { display: none; }");
     expect(styles).toContain("body.sidebar-collapsed .app-shell");
     expect(styles).toContain("body.sidebar-collapsed .sidebar-open-button");
-    expect(styles).toContain(".icon-button.sidebar-open-button { display: none; }");
+    expect(compactStyles).toContain(".icon-button.sidebar-open-button { display: none; }");
     expect(styles).toContain("cursor: col-resize");
     expect(styles).toContain(".composer-model-picker");
     expect(styles).toContain(".llm-provider-list");
-    expect(styles).toContain(".llm-provider-list { display: grid; grid-template-columns: minmax(0, 1fr);");
+    expect(compactStyles).toContain(
+      ".llm-provider-list { display: grid; grid-template-columns: minmax(0, 1fr);",
+    );
     expect(styles).toContain(".llm-model-row");
-    expect(styles).toContain(".settings-navigation-item[aria-current=\"page\"]");
+    expect(styles).toContain('.settings-navigation-item[aria-current="page"]');
     expect(styles).toContain(".llm-provider-card[open]");
     expect(styles).toContain(".llm-provider-tools-panel");
     expect(styles).toContain(".composer-model-picker option");
     expect(styles).toContain("@media (min-width: 761px) and (max-width: 1100px)");
     expect(styles).toContain("@media (max-width: 900px)");
-    expect(styles).toContain(".inspection-resizer { display: none !important; }");
-    expect(styles).toContain(".llm-model-row.is-custom .llm-model-copy { flex-wrap: wrap; }");
-    expect(styles).toContain(".llm-model-error { min-width: 0; flex: 1 0 100%;");
+    expect(compactStyles).toContain(".inspection-resizer { display: none !important; }");
+    expect(compactStyles).toContain(
+      ".llm-model-row.is-custom .llm-model-copy { flex-wrap: wrap; }",
+    );
+    expect(compactStyles).toContain(".llm-model-error { min-width: 0; flex: 1 0 100%;");
   });
 
   it("uses meaningful transcript identities and offers permanent deletion only beside archived campaigns", async () => {
@@ -191,55 +214,130 @@ describe("web UI copy", () => {
       readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
       readFile(path.join(process.cwd(), "web", "index.html"), "utf8"),
     ]);
-    expect(chatEntryPresentation({ title: "You", text: "Act", mode: "normal" })).toMatchObject({ type: "user", icon: "player" });
-    expect(chatEntryPresentation({ title: "D100 check", text: "Roll", mode: "normal" })).toMatchObject({ type: "check", icon: "◆" });
-    expect(generationTooltip({ provider: "openrouter", model: "moonshotai/kimi-k2.6", costUsd: 0.0042, costBasis: "exact" }))
-      .toBe("openrouter · moonshotai/kimi-k2.6 · $0.0042");
-    expect(generationTooltip({ provider: "gemini", model: "gemini-3.5-flash", costUsd: 0.024, costBasis: "estimated" }))
-      .toBe("gemini · gemini-3.5-flash · ≈$0.02");
+    const compactStyles = styles.replace(/\s+/g, " ");
+    expect(chatEntryPresentation({ title: "You", text: "Act", mode: "normal" })).toMatchObject({
+      type: "user",
+      icon: "player",
+    });
+    expect(
+      chatEntryPresentation({ title: "D100 check", text: "Roll", mode: "normal" }),
+    ).toMatchObject({ type: "check", icon: "◆" });
+    expect(
+      generationTooltip({
+        provider: "openrouter",
+        model: "moonshotai/kimi-k2.6",
+        costUsd: 0.0042,
+        costBasis: "exact",
+      }),
+    ).toBe("openrouter · moonshotai/kimi-k2.6 · $0.0042");
+    expect(
+      generationTooltip({
+        provider: "gemini",
+        model: "gemini-3.5-flash",
+        costUsd: 0.024,
+        costBasis: "estimated",
+      }),
+    ).toBe("gemini · gemini-3.5-flash · ≈$0.02");
     expect(chat).toContain('if (presentation.type === "user" && playerName) return playerName;');
     expect(chat).toContain('if (presentation.type === "question") return labels.answerNoTurn;');
-    expect(app).toContain('body.playerName.trim()');
-    expect(app).toContain('deleteButton.dataset.deleteCampaignId = campaign.campaignId');
+    expect(app).toContain("body.playerName.trim()");
+    expect(app).toContain("deleteButton.dataset.deleteCampaignId = campaign.campaignId");
     expect(app).toContain('method: "DELETE"');
     expect(app).toContain("event.target.value !== confirmationTitleValue(campaign.title)");
     expect(app).not.toContain('confirm(formatTemplate("deleteCampaignConfirm"');
-    expect(app).not.toContain("confirm(t(\"archiveConfirm\"))");
+    expect(app).not.toContain('confirm(t("archiveConfirm"))');
     expect(app).toContain('campaignApiPath(campaignId, "setup")');
     expect(app).toContain('campaignApiPath(campaign.campaignId, "title")');
+    expect(app).toContain("editingCampaignId = campaign.campaignId");
+    expect(app).toContain("const campaign = campaignById(editingCampaignId)");
+    expect(app).toContain("cancelCampaignTitleEdit({ restoreFocus: false })");
     expect(html).toContain('id="edit-campaign-title"');
     expect(html).toContain('id="campaign-title-form"');
     expect(app).toContain('$("#archive-campaign-dialog").showModal()');
     expect(styles).toContain(".delete-campaign-button svg");
     expect(styles).toContain(".edit-campaign-title svg");
-    expect(styles).toContain("#delete-campaign-warning { white-space: pre-wrap;");
+    expect(compactStyles).toContain("#delete-campaign-warning { white-space: pre-wrap;");
   });
 
   it("keeps model IDs reversible and selects only tested, enabled models with keys", () => {
     const value = modelValue("openrouter", "google/gemini-3.5-flash");
-    expect(modelChoice(value)).toEqual({ provider: "openrouter", model: "google/gemini-3.5-flash" });
+    expect(modelChoice(value)).toEqual({
+      provider: "openrouter",
+      model: "google/gemini-3.5-flash",
+    });
     expect(modelChoice("invalid")).toBeNull();
     const llm = {
       providers: [
         {
-          id: "openrouter", label: "OpenRouter", envKey: "OPENROUTER_API_KEY", keyPresent: true,
+          id: "openrouter",
+          label: "OpenRouter",
+          envKey: "OPENROUTER_API_KEY",
+          keyPresent: true,
           models: [
-            { id: "ready", label: "Ready", status: "compatible", enabled: true, available: true, testedLanguages: ["en", "ru"] },
-            { id: "off", label: "Off", status: "compatible", enabled: false, available: true, testedLanguages: ["en", "ru"] },
-            { id: "failed", label: "Failed", status: "failed", enabled: false, available: false, testedLanguages: [] },
-            { id: "retired", label: "Retired", status: "compatible", enabled: true, available: true, testedLanguages: ["en", "ru"], hidden: true },
+            {
+              id: "ready",
+              label: "Ready",
+              status: "compatible",
+              enabled: true,
+              available: true,
+              testedLanguages: ["en", "ru"],
+            },
+            {
+              id: "off",
+              label: "Off",
+              status: "compatible",
+              enabled: false,
+              available: true,
+              testedLanguages: ["en", "ru"],
+            },
+            {
+              id: "failed",
+              label: "Failed",
+              status: "failed",
+              enabled: false,
+              available: false,
+              testedLanguages: [],
+            },
+            {
+              id: "retired",
+              label: "Retired",
+              status: "compatible",
+              enabled: true,
+              available: true,
+              testedLanguages: ["en", "ru"],
+              hidden: true,
+            },
           ],
         },
         {
-          id: "openai", label: "OpenAI", envKey: "OPENAI_API_KEY", keyPresent: false,
-          models: [{ id: "no-key", label: "No key", status: "compatible", enabled: true, available: true, testedLanguages: ["en", "ru"] }],
+          id: "openai",
+          label: "OpenAI",
+          envKey: "OPENAI_API_KEY",
+          keyPresent: false,
+          models: [
+            {
+              id: "no-key",
+              label: "No key",
+              status: "compatible",
+              enabled: true,
+              available: true,
+              testedLanguages: ["en", "ru"],
+            },
+          ],
         },
       ],
     };
     expect(llmModelEntries(llm)).toHaveLength(4);
     expect(llmModelEntries(llm, { includeHidden: true })).toHaveLength(5);
-    expect(llmModelEntries(llm, { availableOnly: true, requireKey: true, language: "ru" }))
-      .toEqual([expect.objectContaining({ provider: "openrouter", model: "ready", envKey: "OPENROUTER_API_KEY" })]);
+    expect(llmModelEntries(llm, { availableOnly: true, requireKey: true, language: "ru" })).toEqual(
+      [
+        expect.objectContaining({
+          provider: "openrouter",
+          model: "ready",
+          envKey: "OPENROUTER_API_KEY",
+        }),
+      ],
+    );
   });
 
   it("uses global world and tested model defaults for streamlined campaign setup", async () => {
@@ -248,8 +346,9 @@ describe("web UI copy", () => {
       readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
     ]);
+    const compactSetup = setup.replace(/\s+/g, " ");
     expect(setup).toContain('$("#setup-world")');
-    expect(setup).toContain('...(worldRules.trim() ? { worldRules } : {})');
+    expect(setup).toContain("...(worldRules.trim() ? { worldRules } : {})");
     expect(setup).toContain('$("#setup-provider")');
     expect(setup).toContain('$("#setup-model")');
     expect(setup).toContain("config,");
@@ -275,9 +374,13 @@ describe("web UI copy", () => {
     expect(setup).toContain('provider.id === "openai" && model.keyAccess === "not_allowed"');
     expect(setup).toContain('createElement("span", "model-key-restriction", "(!)")');
     expect(setup).toContain('marker.title = t("modelNotAllowedByKey")');
-    expect(setup).not.toContain('speedMeasuredHint');
-    expect(setup).toContain('if (model.recommended) heading.append(createElement("span", "model-recommended", t("recommended")))');
-    expect(setup).toContain('if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")))');
+    expect(setup).not.toContain("speedMeasuredHint");
+    expect(compactSetup).toContain(
+      'if (model.recommended) heading.append(createElement("span", "model-recommended", t("recommended")))',
+    );
+    expect(compactSetup).toContain(
+      'if (provider.recommended) title.append(createElement("span", "provider-recommended", t("recommended")))',
+    );
     expect(setup).toContain('createElement("details", "llm-provider-tools")');
     expect(setup).toContain("createOverflowIcon");
     expect(setup).toContain('row.classList.add("is-default")');
@@ -298,37 +401,48 @@ describe("web UI copy", () => {
     expect(setup).toContain("if (!model.known)");
     expect(setup).toContain('t(model.status === "untested" ? "testModel" : "retestModel")');
     expect(setup).toContain('${supported ? "is-supported" : "is-unsupported"}');
-    expect(setup).toContain('model.quality?.[language]');
-    expect(setup).not.toContain('model.adapterStatus');
-    expect(setup).toContain('model.technicalStatus?.[language]');
+    expect(setup).toContain("model.quality?.[language]");
+    expect(setup).not.toContain("model.adapterStatus");
+    expect(setup).toContain("model.technicalStatus?.[language]");
     expect(setup).toContain('const primaryLanguage = "en"');
     expect(setup).toContain('createElement("details", "model-language-details")');
+    expect(setup).toContain('presentedModel.status === "stale" && !model.known');
     expect(setup).toContain('statusBadge.dataset.llmAction = "test"');
-    expect(setup).toContain('statusBadge.dataset.tooltip = `${protocolLabel} · ${t("retestModel")}`');
+    expect(setup).toContain(
+      'statusBadge.dataset.tooltip = `${protocolLabel} · ${t("retestModel")}`',
+    );
     expect(setup).not.toContain('["calibration", "legendCalibration"]');
     expect(styles).toContain(".model-protocol-retest");
     expect(setup).toContain('const summary = createElement("summary", "model-language-summary");');
     expect(setup).toContain("summary.append(technicalGroup, qualityGroup);");
-    expect(setup).not.toContain('`+${additionalLanguages.length}`');
-    expect(setup).toContain('createTechnicalSignal(model, language)');
-    expect(setup).toContain('createQualitySignal(model, language)');
-    expect(setup).toContain('recoveries >= 5 ? "recovery-high" : recoveries >= 2 ? "recovery-medium" : "recovery-low"');
+    expect(setup).not.toContain("`+${additionalLanguages.length}`");
+    expect(setup).toContain("createTechnicalSignal(model, language)");
+    expect(setup).toContain("createQualitySignal(model, language)");
+    expect(compactSetup).toContain(
+      'recoveries >= 5 ? "recovery-high" : recoveries >= 2 ? "recovery-medium" : "recovery-low"',
+    );
     expect(styles).toContain(".technical-playable_with_recovery.recovery-low");
     expect(styles).toContain(".technical-playable_with_recovery.recovery-medium");
     expect(styles).toContain(".technical-playable_with_recovery.recovery-high");
     expect(UI_COPY.en.technicalRecovery).toBe("Recoverable");
-    expect(setup).not.toContain('`${language.toUpperCase()} ${label}`');
+    expect(setup).not.toContain("`${language.toUpperCase()} ${label}`");
     expect(setup).not.toContain('createElement("strong", "model-language-name"');
     expect(styles).toContain(".model-language-menu");
+    expect(setup).toContain("const requestId = ++scenarioSeedSequence");
+    expect(setup).toContain(
+      'requestId !== scenarioSeedSequence || $("#setup-language").value !== language',
+    );
     expect(styles).toContain(".model-language-summary .model-signal");
     expect(setup).not.toContain("legacyQuality");
-    expect(setup).not.toContain('model.recommendationEligibility?.eligible');
+    expect(setup).not.toContain("model.recommendationEligibility?.eligible");
     expect(setup).not.toContain('t("certificationPending")');
     expect(setup).toContain("return status.llm?.defaultModel ?? null");
     expect(setup).not.toContain("status.llm?.defaultModel ?? (status.config");
     expect(setup).not.toContain("apiKey");
     expect(setup).not.toContain("/api/config/provider");
-    expect(setup).toContain('runSetupOperation($("#generate-campaign"), t("working"), initializeSetup)');
+    expect(setup).toContain(
+      'runSetupOperation($("#generate-campaign"), t("working"), initializeSetup)',
+    );
     expect(setup).toContain("if (requestId !== setupGenerationSequence) return;");
     expect(setup).toContain("withIconButtonBusy");
     expect(setup).not.toContain('applyLocale($("#setup-language").value)');
@@ -337,12 +451,15 @@ describe("web UI copy", () => {
     expect(app).not.toContain("selectedCampaign()?.language ?? next.language");
     expect(app).toContain("function interfaceTranslator()");
     expect(app).not.toContain("function campaignTranslator");
-    expect(setup).toContain('$("#campaign-setup-form").addEventListener("input", invalidateDraft)');
-    expect(app).toContain("const currentConfig = campaign?.config ?? status.llm?.defaultModel ?? status.config;");
+    expect(setup).toContain('$("#campaign-setup-form").addEventListener("input", (event) => {');
+    expect(setup).toContain('["premise", "character", "setup-world"].includes(event.target?.id)');
+    expect(app).toContain(
+      "const currentConfig = campaign?.config ?? status.llm?.defaultModel ?? status.config;",
+    );
     expect(app).toContain("hasConfiguredProviderKey(status.llm, status.keyStatus)");
     expect(app).toContain('setupSettings.selectSettingsSection("providers")');
     expect(app).toContain("recommendedCard.open = true");
-    expect(app).toContain('body: JSON.stringify(choice)');
+    expect(app).toContain("body: JSON.stringify(choice)");
     expect(app).toContain('option.hidden ? t("legacyModel") : t("needsTest")');
     expect(app).not.toContain("campaignModelConfig");
   });
@@ -350,7 +467,7 @@ describe("web UI copy", () => {
   it("keeps composer drafts campaign-scoped and coalesces a fresh post-mutation poll", async () => {
     const app = await readFile(path.join(process.cwd(), "web", "app.js"), "utf8");
     expect(app).toContain("const actionDrafts = new Map();");
-    expect(app).toContain("if (selectedCampaignId !== campaignId) saveActionDraft(selectedCampaignId);");
+    expect(app).toContain("saveActionDraft(selectedCampaignId);");
     expect(app).toContain("restoreActionDraft(campaignId);");
     expect(app).toContain("if (ensureFresh) statusRefreshQueued = true;");
     expect(app).toContain("} while (statusRefreshQueued);");
@@ -361,32 +478,63 @@ describe("web UI copy", () => {
     const values = new Map<string, string>();
     const storage = {
       getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => { values.set(key, value); },
-      removeItem: (key: string) => { values.delete(key); },
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      },
     };
     const history = new BrowserChatHistory(storage);
     history.append("campaign:one", { title: "You", text: "Open the door" });
-    history.append("campaign:two", { title: "DM · Answer — no turn", text: "It is oak.", mode: "success" });
+    history.append("campaign:two", {
+      title: "DM · Answer — no turn",
+      text: "It is oak.",
+      mode: "success",
+    });
 
-    expect(history.entries("campaign:one")).toEqual([expect.objectContaining({ text: "Open the door" })]);
-    expect(history.entries("campaign:two")).toEqual([expect.objectContaining({ text: "It is oak." })]);
+    expect(history.entries("campaign:one")).toEqual([
+      expect.objectContaining({ text: "Open the door" }),
+    ]);
+    expect(history.entries("campaign:two")).toEqual([
+      expect.objectContaining({ text: "It is oak." }),
+    ]);
     expect(values.size).toBe(2);
-    expect(chatEntryPresentation(history.entries("campaign:one")[0])).toMatchObject({ type: "user" });
-    expect(chatEntryPresentation(history.entries("campaign:two")[0])).toMatchObject({ type: "question" });
-    history.replace("campaign:one", [{ title: "DM", text: "Reconciled", kind: "gameplay", turn: 1 }]);
-    expect(history.entries("campaign:one")).toEqual([expect.objectContaining({ text: "Reconciled", turn: 1 })]);
+    expect(chatEntryPresentation(history.entries("campaign:one")[0])).toMatchObject({
+      type: "user",
+    });
+    expect(chatEntryPresentation(history.entries("campaign:two")[0])).toMatchObject({
+      type: "question",
+    });
+    history.replace("campaign:one", [
+      { title: "DM", text: "Reconciled", kind: "gameplay", turn: 1 },
+    ]);
+    expect(history.entries("campaign:one")).toEqual([
+      expect.objectContaining({ text: "Reconciled", turn: 1 }),
+    ]);
     history.remove("campaign:one");
     expect(history.entries("campaign:one")).toEqual([]);
   });
 
   it("labels only measurable campaign costs and marks estimates", () => {
     expect(campaignCostText(undefined, "Cost")).toBe("");
-    expect(campaignCostText({ totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 0, basis: "exact" }, "Cost")).toBe("Cost $0.1250");
-    expect(campaignCostText({ totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 1, basis: "estimated" }, "Cost")).toBe("Cost ≈$0.1250");
+    expect(
+      campaignCostText(
+        { totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 0, basis: "exact" },
+        "Cost",
+      ),
+    ).toBe("Cost $0.1250");
+    expect(
+      campaignCostText(
+        { totalUsd: 0.125, pricedTurns: 2, unpricedTurns: 1, basis: "estimated" },
+        "Cost",
+      ),
+    ).toBe("Cost ≈$0.1250");
   });
 
   it("keeps every visible line of a persisted title typeable for deletion confirmation", () => {
-    expect(confirmationTitleValue("First\r\nSecond\rThird\nFourth"))
-      .toBe("First\nSecond\nThird\nFourth");
+    expect(confirmationTitleValue("First\r\nSecond\rThird\nFourth")).toBe(
+      "First\nSecond\nThird\nFourth",
+    );
   });
 });

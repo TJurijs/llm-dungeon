@@ -27,7 +27,8 @@ export class GenerationFailure extends Error {
 
 export function classifyFailure(error: unknown): { kind: FailureKind; retryable: boolean } {
   if (error instanceof GenerationFailure) return error;
-  if (error instanceof ProtocolDecodeError) return { kind: "domain_decode_violation", retryable: true };
+  if (error instanceof ProtocolDecodeError)
+    return { kind: "domain_decode_violation", retryable: true };
   if (error instanceof ZodError) return { kind: "wire_schema_violation", retryable: true };
   if (error instanceof TypeError) return { kind: "network", retryable: true };
   const message = error instanceof Error ? error.message : String(error);
@@ -37,7 +38,11 @@ export function classifyFailure(error: unknown): { kind: FailureKind; retryable:
   if (/unknown .* reference|ambiguous .* reference|unknown entity|unknown thread/i.test(message)) {
     return { kind: "reference_violation", retryable: true };
   }
-  if (/consistency|inventory .* negative|duplicate|already exists|not a location|must change/i.test(message)) {
+  if (
+    /consistency|inventory .* negative|duplicate|already exists|not a location|must change/i.test(
+      message,
+    )
+  ) {
     return { kind: "invariant_violation", retryable: true };
   }
   return { kind: "provider", retryable: false };

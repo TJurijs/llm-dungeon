@@ -15,10 +15,13 @@ export function inspectionTitle(inspection: PlayerStateInspection): string {
 export function renderInspection(inspection: PlayerStateInspection): string {
   const copy = languageDefinition(inspection.language).inspection;
   if (inspection.view === "character") {
-    const inventory = inspection.inventory.map((item) =>
-      `${item.quantity} × ${item.name} (${item.status})${item.description ? ` — ${item.description}` : ""}`);
-    const relationships = inspection.relationships.map((relationship) =>
-      `${relationship.name} — ${relationship.summary}`);
+    const inventory = inspection.inventory.map(
+      (item) =>
+        `${item.quantity} × ${item.name} (${item.status})${item.description ? ` — ${item.description}` : ""}`,
+    );
+    const relationships = inspection.relationships.map(
+      (relationship) => `${relationship.name} — ${relationship.summary}`,
+    );
     return [
       inspection.name,
       inspection.description,
@@ -30,7 +33,9 @@ export function renderInspection(inspection: PlayerStateInspection): string {
       section(copy.knowledge, inspection.facts.knowledge, copy.none),
       section(copy.history, inspection.facts.history, copy.none),
       section(copy.relationships, relationships, copy.none),
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   if (inspection.view === "location") {
@@ -43,18 +48,23 @@ export function renderInspection(inspection: PlayerStateInspection): string {
       section(copy.establishedFacts, inspection.facts.established, copy.none),
       section(copy.knowledge, inspection.facts.knowledge, copy.none),
       section(copy.history, inspection.facts.history, copy.none),
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   if (!inspection.threads.length) return copy.noThreads;
-  return (["active", "resolved", "failed"] as const).map((status) => {
-    const title = status === "active" ? copy.active : status === "resolved" ? copy.resolved : copy.failed;
-    return section(
-      title,
-      inspection.threads
-        .filter((thread) => thread.status === status)
-        .map((thread) => `${thread.title} — ${thread.summary}`),
-      copy.none,
-    );
-  }).join("\n\n");
+  return (["active", "resolved", "failed"] as const)
+    .map((status) => {
+      const title =
+        status === "active" ? copy.active : status === "resolved" ? copy.resolved : copy.failed;
+      return section(
+        title,
+        inspection.threads
+          .filter((thread) => thread.status === status)
+          .map((thread) => `${thread.title} — ${thread.summary}`),
+        copy.none,
+      );
+    })
+    .join("\n\n");
 }

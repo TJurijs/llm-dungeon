@@ -31,7 +31,9 @@ function transcriptOpening(markdown: string): string {
   return markdown.slice(contentStart, nextTurn < 0 ? undefined : nextTurn).trim();
 }
 
-function parseEvaluationTurns(jsonLines: string): Array<z.infer<typeof EvaluationTranscriptTurnSchema>> {
+function parseEvaluationTurns(
+  jsonLines: string,
+): Array<z.infer<typeof EvaluationTranscriptTurnSchema>> {
   return jsonLines
     .split("\n")
     .filter((line) => line.trim().length > 0)
@@ -71,7 +73,8 @@ export async function evaluationTranscriptPresentation(
   const runDir = path.join(evaluationsRoot, "runs", safeRunId);
   const manifest = await readLegacyEvaluationManifest(path.join(runDir, "manifest.json"));
   const session = manifest.sessions.find((candidate) => candidate.id === safeSessionId);
-  if (!session) throw new Error(`Evaluation session ${safeSessionId} is not present in run ${safeRunId}`);
+  if (!session)
+    throw new Error(`Evaluation session ${safeSessionId} is not present in run ${safeRunId}`);
   let jsonLines = "";
   try {
     jsonLines = await readFile(path.join(runDir, "sessions", safeSessionId, "turns.jsonl"), "utf8");

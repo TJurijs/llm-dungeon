@@ -1,6 +1,7 @@
 Kroll, a free mul — one of the human-dwarf crossbreeds bred for labor and the killing-floor. He stands a head taller than most humans, slab-muscled and hairless, his hide marked with old arena brands and the pale seams of scars. In the pits of Urik he was an enforcer as much as a fighter: the one sent to break the unruly, hold the line, and end things quickly for the crowd. He won his freedom and now sells his strength as a caravan guard, crossing the Tablelands with the merchant trains.
 
 What he is good at, in the fiction:
+
 - **Raw physical power** — few can match a mul's strength; he shifts, breaks, and overpowers where others merely strain.
 - **Tirelessness** — like all muls he labors, marches, and fights far past the point most would collapse, and he weathers heat, thirst, and exhaustion better than any human.
 - **Violence** — long practiced in close, brutal work: grappling, breaking, intimidation, and controlling a frightened or hostile crowd.

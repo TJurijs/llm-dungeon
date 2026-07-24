@@ -30,7 +30,7 @@ class LanguageProbeProvider implements LlmProvider {
     this.schemaNames.push(request.schemaName);
     let value: unknown;
     if (request.schemaName.startsWith("connection_campaign_setup_")) {
-      const encoded = request.prompt.slice(request.prompt.indexOf("{") );
+      const encoded = request.prompt.slice(request.prompt.indexOf("{"));
       value = JSON.parse(encoded);
       if (this.breakRussian && request.schemaName.endsWith("_ru")) {
         (value as { campaignTitle: string }).campaignTitle = "Wrong language";
@@ -74,8 +74,9 @@ describe("provider compatibility probe", () => {
   });
 
   it("rejects schema-valid output that does not preserve a language marker", async () => {
-    await expect(probeProviderConnection(new LanguageProbeProvider(true)))
-      .rejects.toThrow("did not preserve the ru campaign setup marker");
+    await expect(probeProviderConnection(new LanguageProbeProvider(true))).rejects.toThrow(
+      "did not preserve the ru campaign setup marker",
+    );
   });
 
   it("can probe one gameplay language independently", async () => {

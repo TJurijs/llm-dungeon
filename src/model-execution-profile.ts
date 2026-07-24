@@ -31,23 +31,25 @@ export const OutputTokenFieldSchema = z.enum([
 export type OutputTokenField = z.infer<typeof OutputTokenFieldSchema>;
 
 const StructuredOutputPolicySchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("native_strict_json_schema"),
-    projection: z.literal("identity_v1"),
-  }).strict(),
-  z.object({
-    mode: z.literal("projected_strict_json_schema"),
-    projection: z.enum([
-      "openai_strict_v1",
-      "gemini_compatible_v1",
-      "anthropic_compatible_v1",
-    ]),
-  }).strict(),
-  z.object({
-    mode: z.literal("json_object_local_schema"),
-    projection: z.literal("identity_v1"),
-    reinforceSchema: z.literal(true),
-  }).strict(),
+  z
+    .object({
+      mode: z.literal("native_strict_json_schema"),
+      projection: z.literal("identity_v1"),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("projected_strict_json_schema"),
+      projection: z.enum(["openai_strict_v1", "gemini_compatible_v1", "anthropic_compatible_v1"]),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("json_object_local_schema"),
+      projection: z.literal("identity_v1"),
+      reinforceSchema: z.literal(true),
+    })
+    .strict(),
 ]);
 
 const TemperaturePolicySchema = z.discriminatedUnion("policy", [
@@ -57,51 +59,63 @@ const TemperaturePolicySchema = z.discriminatedUnion("policy", [
 
 const ReasoningPolicySchema = z.discriminatedUnion("policy", [
   z.object({ policy: z.literal("omitted") }).strict(),
-  z.object({
-    policy: z.literal("chat_reasoning_effort"),
-    value: z.enum(["none", "low"]),
-  }).strict(),
-  z.object({
-    policy: z.literal("openrouter_reasoning_effort"),
-    value: z.enum(["none", "low"]),
-  }).strict(),
+  z
+    .object({
+      policy: z.literal("chat_reasoning_effort"),
+      value: z.enum(["none", "low"]),
+    })
+    .strict(),
+  z
+    .object({
+      policy: z.literal("openrouter_reasoning_effort"),
+      value: z.enum(["none", "low"]),
+    })
+    .strict(),
   z.object({ policy: z.literal("openrouter_reasoning_disabled") }).strict(),
   z.object({ policy: z.literal("deepseek_thinking_disabled") }).strict(),
   z.object({ policy: z.literal("deepseek_thinking_for_repairs") }).strict(),
   z.object({ policy: z.literal("gemini_thinking_low") }).strict(),
 ]);
 
-export const PhaseBudgetsSchema = z.object({
-  setup: z.number().int().min(256).max(32_000),
-  decision: z.number().int().min(256).max(32_000),
-  lockedResolution: z.number().int().min(256).max(32_000),
-  repair: z.number().int().min(256).max(32_000),
-}).strict();
+export const PhaseBudgetsSchema = z
+  .object({
+    setup: z.number().int().min(256).max(32_000),
+    decision: z.number().int().min(256).max(32_000),
+    lockedResolution: z.number().int().min(256).max(32_000),
+    repair: z.number().int().min(256).max(32_000),
+  })
+  .strict();
 export type PhaseBudgets = z.infer<typeof PhaseBudgetsSchema>;
 
-export const TimeoutPolicySchema = z.object({
-  setupMs: z.number().int().min(1_000).max(600_000),
-  decisionMs: z.number().int().min(1_000).max(600_000),
-  lockedResolutionMs: z.number().int().min(1_000).max(600_000),
-  repairMs: z.number().int().min(1_000).max(600_000),
-}).strict();
+export const TimeoutPolicySchema = z
+  .object({
+    setupMs: z.number().int().min(1_000).max(600_000),
+    decisionMs: z.number().int().min(1_000).max(600_000),
+    lockedResolutionMs: z.number().int().min(1_000).max(600_000),
+    repairMs: z.number().int().min(1_000).max(600_000),
+  })
+  .strict();
 export type TimeoutPolicy = z.infer<typeof TimeoutPolicySchema>;
 
-export const ModelExecutionProfileDraftSchema = z.object({
-  schemaVersion: z.literal(MODEL_EXECUTION_PROFILE_VERSION),
-  key: z.object({
-    provider: ProviderConfigSchema.shape.provider,
-    model: z.string().trim().min(1).max(300),
-    route: z.string().trim().min(1).max(100),
-  }).strict(),
-  structuredOutput: StructuredOutputPolicySchema,
-  temperature: TemperaturePolicySchema,
-  reasoning: ReasoningPolicySchema,
-  outputTokenField: OutputTokenFieldSchema,
-  outputBudgets: PhaseBudgetsSchema,
-  timeout: TimeoutPolicySchema,
-  adapterRevision: z.number().int().positive(),
-}).strict();
+export const ModelExecutionProfileDraftSchema = z
+  .object({
+    schemaVersion: z.literal(MODEL_EXECUTION_PROFILE_VERSION),
+    key: z
+      .object({
+        provider: ProviderConfigSchema.shape.provider,
+        model: z.string().trim().min(1).max(300),
+        route: z.string().trim().min(1).max(100),
+      })
+      .strict(),
+    structuredOutput: StructuredOutputPolicySchema,
+    temperature: TemperaturePolicySchema,
+    reasoning: ReasoningPolicySchema,
+    outputTokenField: OutputTokenFieldSchema,
+    outputBudgets: PhaseBudgetsSchema,
+    timeout: TimeoutPolicySchema,
+    adapterRevision: z.number().int().positive(),
+  })
+  .strict();
 export type ModelExecutionProfileDraft = z.infer<typeof ModelExecutionProfileDraftSchema>;
 
 export const ModelExecutionProfileSchema = ModelExecutionProfileDraftSchema.extend({
@@ -152,13 +166,16 @@ function draft(
 
 /** Uncalibrated starting variants only; these are not certification evidence. */
 export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProfileDraft[] = [
-  ...["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash-lite"].map((model) => draft(
-    { provider: "gemini", model, route: "direct" },
-    { mode: "projected_strict_json_schema", projection: "gemini_compatible_v1" },
-    { policy: "fixed", value: 0.8 },
-    { policy: "gemini_thinking_low" },
-    "maxOutputTokens",
-  )),
+  ...["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash-lite"].map(
+    (model) =>
+      draft(
+        { provider: "gemini", model, route: "direct" },
+        { mode: "projected_strict_json_schema", projection: "gemini_compatible_v1" },
+        { policy: "fixed", value: 0.8 },
+        { policy: "gemini_thinking_low" },
+        "maxOutputTokens",
+      ),
+  ),
   draft(
     { provider: "openrouter", model: "qwen/qwen3.7-plus", route: "openrouter" },
     { mode: "native_strict_json_schema", projection: "identity_v1" },
@@ -173,39 +190,47 @@ export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProf
     { policy: "chat_reasoning_effort", value: "low" },
     "max_tokens",
   ),
-  ...["gpt-5.4", "gpt-5.6-terra"].map((model) => draft(
-    { provider: "openai", model, route: "direct" },
-    { mode: "projected_strict_json_schema", projection: "openai_strict_v1" },
-    { policy: "omitted" },
-    { policy: "chat_reasoning_effort", value: "none" },
-    "max_completion_tokens",
-  )),
-  ...["deepseek-v4-flash", "deepseek-v4-pro"].map((model) => draft(
-    { provider: "deepseek", model, route: "direct" },
-    { mode: "json_object_local_schema", projection: "identity_v1", reinforceSchema: true },
-    { policy: "omitted" },
-    { policy: "deepseek_thinking_for_repairs" },
-    "max_tokens",
-  )),
+  ...["gpt-5.4", "gpt-5.6-terra"].map((model) =>
+    draft(
+      { provider: "openai", model, route: "direct" },
+      { mode: "projected_strict_json_schema", projection: "openai_strict_v1" },
+      { policy: "omitted" },
+      { policy: "chat_reasoning_effort", value: "none" },
+      "max_completion_tokens",
+    ),
+  ),
+  ...["deepseek-v4-flash", "deepseek-v4-pro"].map((model) =>
+    draft(
+      { provider: "deepseek", model, route: "direct" },
+      { mode: "json_object_local_schema", projection: "identity_v1", reinforceSchema: true },
+      { policy: "omitted" },
+      { policy: "deepseek_thinking_for_repairs" },
+      "max_tokens",
+    ),
+  ),
   // Anthropic Messages uses output_config json_schema with the compatible
   // projection. Temperature and reasoning are omitted so one provider-level
   // starting draft is valid across Haiku (which allows temperature) and the
   // Opus 4.8 / Sonnet 5 family (which reject sampling controls).
-  ...["claude-haiku-4-5", "claude-sonnet-5"].map((model) => draft(
-    { provider: "anthropic", model, route: "direct" },
-    { mode: "projected_strict_json_schema", projection: "anthropic_compatible_v1" },
-    { policy: "omitted" },
-    { policy: "omitted" },
-    "max_tokens",
-  )),
+  ...["claude-haiku-4-5", "claude-sonnet-5"].map((model) =>
+    draft(
+      { provider: "anthropic", model, route: "direct" },
+      { mode: "projected_strict_json_schema", projection: "anthropic_compatible_v1" },
+      { policy: "omitted" },
+      { policy: "omitted" },
+      "max_tokens",
+    ),
+  ),
 ];
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => [key, canonicalize(item)]));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
 }
 
 function executionDraft(profile: ModelExecutionProfileDraft): ModelExecutionProfileDraft {
@@ -224,7 +249,9 @@ function executionDraft(profile: ModelExecutionProfileDraft): ModelExecutionProf
 
 export function modelExecutionProfileFingerprint(profile: ModelExecutionProfileDraft): string {
   const executionContent = executionDraft(profile);
-  return createHash("sha256").update(JSON.stringify(canonicalize(executionContent))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(executionContent)))
+    .digest("hex");
 }
 
 /** Recursively freeze a value and everything it references, in place. */
@@ -236,7 +263,9 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function freezeModelExecutionProfile(profile: ModelExecutionProfile): FrozenModelExecutionProfile {
+export function freezeModelExecutionProfile(
+  profile: ModelExecutionProfile,
+): FrozenModelExecutionProfile {
   const parsed = ModelExecutionProfileSchema.parse(profile);
   const frozen = FrozenModelExecutionProfileSchema.parse({
     ...parsed,
@@ -257,23 +286,30 @@ export function freezeModelExecutionProfile(profile: ModelExecutionProfile): Fro
  * that calibration fixed. Use `playtest promote` to generate/update entries
  * from real local evidence rather than hand-editing this file.
  */
-const SHIPPED_PROFILE_EVIDENCE_URL = new URL("../defaults/model-execution-profiles.json", import.meta.url);
+const SHIPPED_PROFILE_EVIDENCE_URL = new URL(
+  "../defaults/model-execution-profiles.json",
+  import.meta.url,
+);
 
-const ShippedProfileEvidenceSchema = z.object({
-  provider: ProviderConfigSchema.shape.provider,
-  model: z.string().trim().min(1).max(300),
-  route: z.string().trim().min(1).max(100),
-  calibratedAt: z.string().datetime({ offset: true }),
-  evidenceRef: z.string().trim().min(1).max(500),
-  outputBudgets: PhaseBudgetsSchema.optional(),
-  timeout: TimeoutPolicySchema.optional(),
-}).strict();
+const ShippedProfileEvidenceSchema = z
+  .object({
+    provider: ProviderConfigSchema.shape.provider,
+    model: z.string().trim().min(1).max(300),
+    route: z.string().trim().min(1).max(100),
+    calibratedAt: z.string().datetime({ offset: true }),
+    evidenceRef: z.string().trim().min(1).max(500),
+    outputBudgets: PhaseBudgetsSchema.optional(),
+    timeout: TimeoutPolicySchema.optional(),
+  })
+  .strict();
 export type ShippedProfileEvidence = z.infer<typeof ShippedProfileEvidenceSchema>;
 
-const ShippedProfileEvidenceFileSchema = z.object({
-  version: z.literal(1),
-  profiles: z.array(ShippedProfileEvidenceSchema),
-}).strict();
+const ShippedProfileEvidenceFileSchema = z
+  .object({
+    version: z.literal(1),
+    profiles: z.array(ShippedProfileEvidenceSchema),
+  })
+  .strict();
 
 export const SHIPPED_PROFILE_EVIDENCE: readonly ShippedProfileEvidence[] =
   ShippedProfileEvidenceFileSchema.parse(
@@ -283,11 +319,16 @@ export const SHIPPED_PROFILE_EVIDENCE: readonly ShippedProfileEvidence[] =
 /** Frozen release evidence used until a local calibration supersedes it. */
 export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProfile[] =
   SHIPPED_PROFILE_EVIDENCE.map((evidence) => {
-    const candidate = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((profile) =>
-      profile.key.provider === evidence.provider
-      && profile.key.model === evidence.model
-      && profile.key.route === evidence.route);
-    if (!candidate) throw new Error(`Missing shipped execution profile draft for ${evidence.provider}/${evidence.model}`);
+    const candidate = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+      (profile) =>
+        profile.key.provider === evidence.provider &&
+        profile.key.model === evidence.model &&
+        profile.key.route === evidence.route,
+    );
+    if (!candidate)
+      throw new Error(
+        `Missing shipped execution profile draft for ${evidence.provider}/${evidence.model}`,
+      );
     return freezeModelExecutionProfile({
       ...candidate,
       ...(evidence.outputBudgets ? { outputBudgets: evidence.outputBudgets } : {}),
@@ -299,16 +340,16 @@ export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProf
 
 function comparableVariables(profile: ModelExecutionProfileDraft): Record<string, unknown> {
   return {
-    "structuredOutput": profile.structuredOutput,
-    "temperature": profile.temperature,
-    "reasoning": profile.reasoning,
-    "outputTokenField": profile.outputTokenField,
+    structuredOutput: profile.structuredOutput,
+    temperature: profile.temperature,
+    reasoning: profile.reasoning,
+    outputTokenField: profile.outputTokenField,
     "outputBudgets.setup": profile.outputBudgets.setup,
     "outputBudgets.decision": profile.outputBudgets.decision,
     "outputBudgets.lockedResolution": profile.outputBudgets.lockedResolution,
     "outputBudgets.repair": profile.outputBudgets.repair,
-    "timeout": profile.timeout,
-    "route": profile.key.route,
+    timeout: profile.timeout,
+    route: profile.key.route,
   };
 }
 
@@ -323,8 +364,11 @@ export function changedCalibrationVariables(
   }
   const leftVariables = comparableVariables(first);
   const rightVariables = comparableVariables(second);
-  return Object.keys(leftVariables).filter((key) =>
-    JSON.stringify(canonicalize(leftVariables[key])) !== JSON.stringify(canonicalize(rightVariables[key])));
+  return Object.keys(leftVariables).filter(
+    (key) =>
+      JSON.stringify(canonicalize(leftVariables[key])) !==
+      JSON.stringify(canonicalize(rightVariables[key])),
+  );
 }
 
 export function assertSingleCalibrationVariableChange(
@@ -333,7 +377,9 @@ export function assertSingleCalibrationVariableChange(
 ): string {
   const changes = changedCalibrationVariables(left, right);
   if (changes.length !== 1) {
-    throw new Error(`Calibration variants must change exactly one variable; changed ${changes.length}: ${changes.join(", ") || "none"}`);
+    throw new Error(
+      `Calibration variants must change exactly one variable; changed ${changes.length}: ${changes.join(", ") || "none"}`,
+    );
   }
   return changes[0]!;
 }
@@ -357,9 +403,8 @@ export function outputBudgetForPhase(
 ): number {
   const parsed = executionDraft(profile);
   if (phase !== "repair") return parsed.outputBudgets[budgetKey(phase)];
-  const failedBudget = repairOfPhase === undefined
-    ? 0
-    : parsed.outputBudgets[budgetKey(repairOfPhase)];
+  const failedBudget =
+    repairOfPhase === undefined ? 0 : parsed.outputBudgets[budgetKey(repairOfPhase)];
   return Math.max(parsed.outputBudgets.repair, failedBudget);
 }
 

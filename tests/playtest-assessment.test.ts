@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { resolveCheck } from "../src/mechanics.js";
 import { assessCoverage, buildMechanicalAudit } from "../tools/playtest/harness/audit.js";
-import { assessPlaytest, buildCandidateTechnicalSnapshot } from "../tools/playtest/harness/assessment.js";
+import {
+  assessPlaytest,
+  buildCandidateTechnicalSnapshot,
+} from "../tools/playtest/harness/assessment.js";
 import {
   PlaytestCallRecordSchema,
   PlaytestTurnRecordSchema,
@@ -18,55 +21,107 @@ import {
 import { CERTIFICATION_PACKAGE, CERTIFICATION_SCRIPT } from "../tools/playtest/harness/packages.js";
 
 function check(turn: number, roll: number) {
-  return resolveCheck({
-    name: `Certification check ${turn}`,
-    difficulty: 50,
-    modifiers: [],
-    successStakes: "The intended bounded result succeeds.",
-    failureStakes: "The intended bounded result fails proportionally.",
-    failureCampaignStatus: "none",
-  }, roll);
+  return resolveCheck(
+    {
+      name: `Certification check ${turn}`,
+      difficulty: 50,
+      modifiers: [],
+      successStakes: "The intended bounded result succeeds.",
+      failureStakes: "The intended bounded result fails proportionally.",
+      failureCampaignStatus: "none",
+    },
+    roll,
+  );
 }
 
 function certificationTurns(): PlaytestTurnRecord[] {
   const operationsByTurn: Record<number, unknown[]> = {
     2: [
-      { type: "transfer_item", fromId: "npc:mara-venn", toId: "player:hero", itemId: "item:moonleaf-tonic", quantity: 1 },
-      { type: "transfer_item", fromId: "player:hero", toId: "npc:mara-venn", itemId: "item:silver-marks", quantity: 3 },
-      { type: "set_relationship", sourceId: "npc:mara-venn", targetId: "player:hero", summary: "Trust strengthened by a fair purchase." },
+      {
+        type: "transfer_item",
+        fromId: "npc:mara-venn",
+        toId: "player:hero",
+        itemId: "item:moonleaf-tonic",
+        quantity: 1,
+      },
+      {
+        type: "transfer_item",
+        fromId: "player:hero",
+        toId: "npc:mara-venn",
+        itemId: "item:silver-marks",
+        quantity: 3,
+      },
+      {
+        type: "set_relationship",
+        sourceId: "npc:mara-venn",
+        targetId: "player:hero",
+        summary: "Trust strengthened by a fair purchase.",
+      },
       { type: "advance_time", minutes: 5, timeLabel: "Early evening" },
     ],
     5: [
       { type: "move_entity", targetId: "player:hero", locationId: "location:old-sluice" },
       { type: "advance_time", minutes: 20, timeLabel: "Rainy evening" },
     ],
-    6: [{ type: "add_fact", targetId: "player:hero", section: "knowledge", factId: "generated:evidence", text: "The ledger bears Serik's violet ink." }],
-    7: [{ type: "add_condition", targetId: "player:hero", condition: "Bruised shoulder from the counterweight" }],
-    8: [{ type: "change_inventory", ownerId: "player:hero", itemId: "item:moonleaf-tonic", quantityDelta: -1 }],
-    10: [{ type: "resolve_thread", threadId: "thread:missing-ledger-turn-0", outcome: "The ledger evidence settles Mara's promise.", status: "resolved" }],
-  };
-  return CERTIFICATION_SCRIPT.map((script) => PlaytestTurnRecordSchema.parse({
-    turn: script.turn,
-    scriptedTurnId: script.id,
-    action: script.branches.at(-1)!.action.en,
-    narration: `Resolved certification turn ${script.turn}.`,
-    summary: `Turn ${script.turn} summary.`,
-    playerVisibleDurationMs: 100,
-    driver: "scripted",
-    expectedCheckPolicy: script.checkPolicy,
-    assignedNaturalRoll: script.naturalRoll,
-    ...([3, 6, 7].includes(script.turn) ? { check: check(script.turn, script.naturalRoll) } : {}),
-    operations: operationsByTurn[script.turn] ?? [],
-    status: "completed",
-    invariantStatus: "passed",
-    ...(script.turn === 10 ? {
-      contextObservation: {
-        fullNarrationTurns: [9],
-        summaryTurns: [2, 3, 4, 5, 6, 7, 8, 9],
-        durableEntityIds: ["item:customs-ledger", "thread:missing-ledger-turn-0"],
+    6: [
+      {
+        type: "add_fact",
+        targetId: "player:hero",
+        section: "knowledge",
+        factId: "generated:evidence",
+        text: "The ledger bears Serik's violet ink.",
       },
-    } : {}),
-  }));
+    ],
+    7: [
+      {
+        type: "add_condition",
+        targetId: "player:hero",
+        condition: "Bruised shoulder from the counterweight",
+      },
+    ],
+    8: [
+      {
+        type: "change_inventory",
+        ownerId: "player:hero",
+        itemId: "item:moonleaf-tonic",
+        quantityDelta: -1,
+      },
+    ],
+    10: [
+      {
+        type: "resolve_thread",
+        threadId: "thread:missing-ledger-turn-0",
+        outcome: "The ledger evidence settles Mara's promise.",
+        status: "resolved",
+      },
+    ],
+  };
+  return CERTIFICATION_SCRIPT.map((script) =>
+    PlaytestTurnRecordSchema.parse({
+      turn: script.turn,
+      scriptedTurnId: script.id,
+      action: script.branches.at(-1)!.action.en,
+      narration: `Resolved certification turn ${script.turn}.`,
+      summary: `Turn ${script.turn} summary.`,
+      playerVisibleDurationMs: 100,
+      driver: "scripted",
+      expectedCheckPolicy: script.checkPolicy,
+      assignedNaturalRoll: script.naturalRoll,
+      ...([3, 6, 7].includes(script.turn) ? { check: check(script.turn, script.naturalRoll) } : {}),
+      operations: operationsByTurn[script.turn] ?? [],
+      status: "completed",
+      invariantStatus: "passed",
+      ...(script.turn === 10
+        ? {
+            contextObservation: {
+              fullNarrationTurns: [9],
+              summaryTurns: [2, 3, 4, 5, 6, 7, 8, 9],
+              durableEntityIds: ["item:customs-ledger", "thread:missing-ledger-turn-0"],
+            },
+          }
+        : {}),
+    }),
+  );
 }
 
 function call(overrides: Partial<PlaytestCallRecord> = {}): PlaytestCallRecord {
@@ -101,15 +156,26 @@ function validJudgment(turns: PlaytestTurnRecord[]): PlaytestJudgment {
     qualityStatus: "high",
     overallScore: 8,
     scores: {
-      narrative: 8, agency: 8, persistence: 8, checks: 8, sandbox: 8,
-      npcContinuity: 8, secrecy: 8, pacing: 8, language: 8,
+      narrative: 8,
+      agency: 8,
+      persistence: 8,
+      checks: 8,
+      sandbox: 8,
+      npcContinuity: 8,
+      secrecy: 8,
+      pacing: 8,
+      language: 8,
     },
     executiveSummary: "The controlled game remained coherent and persistent.",
     strengths: ["The candidate maintained state authority."],
     issues: [],
     coverageJudgments: CERTIFICATION_PACKAGE.coverageRequirements
       .filter((requirement) => requirement.mode === "judge")
-      .map((requirement) => ({ requirementId: requirement.id, passed: true, evidence: "Observed in the relevant turn." })),
+      .map((requirement) => ({
+        requirementId: requirement.id,
+        passed: true,
+        evidence: "Observed in the relevant turn.",
+      })),
     turnAudits: turns.map((turn) => ({
       turn: turn.turn,
       durableConsequences: turn.operations.map((_, operationIndex) => ({
@@ -146,14 +212,25 @@ describe("playtest deterministic assessment", () => {
   it("fails exact check, roll, state, and compaction coverage deterministically", () => {
     const turns = certificationTurns();
     turns[2] = PlaytestTurnRecordSchema.parse({ ...turns[2]!, check: undefined });
-    turns[8] = PlaytestTurnRecordSchema.parse({ ...turns[8]!, operations: [{ type: "add_trait", targetId: "player:hero", trait: "teleportation" }] });
+    turns[8] = PlaytestTurnRecordSchema.parse({
+      ...turns[8]!,
+      operations: [{ type: "add_trait", targetId: "player:hero", trait: "teleportation" }],
+    });
     turns[9] = PlaytestTurnRecordSchema.parse({ ...turns[9]!, contextObservation: undefined });
     const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
     expect(coverage.deterministicPassed).toBe(false);
-    expect(coverage.entries.find((entry) => entry.requirementId === "t3-check")?.status).toBe("failed");
-    expect(coverage.entries.find((entry) => entry.requirementId === "t3-roll-100")?.status).toBe("failed");
-    expect(coverage.entries.find((entry) => entry.requirementId === "t9-no-state")?.status).toBe("failed");
-    expect(coverage.entries.find((entry) => entry.requirementId === "t10-compaction")?.status).toBe("failed");
+    expect(coverage.entries.find((entry) => entry.requirementId === "t3-check")?.status).toBe(
+      "failed",
+    );
+    expect(coverage.entries.find((entry) => entry.requirementId === "t3-roll-100")?.status).toBe(
+      "failed",
+    );
+    expect(coverage.entries.find((entry) => entry.requirementId === "t9-no-state")?.status).toBe(
+      "failed",
+    );
+    expect(coverage.entries.find((entry) => entry.requirementId === "t10-compaction")?.status).toBe(
+      "failed",
+    );
   });
 
   it("separates valid terminal completion and missing coverage from candidate technical health", () => {
@@ -163,18 +240,21 @@ describe("playtest deterministic assessment", () => {
     });
     expect(terminalCoverage.deterministicPassed).toBe(true);
     expect(terminalCoverage.notExercised).toBeGreaterThan(0);
-    expect(terminalCoverage.entries.find((entry) => entry.requirementId === "t8-consumption")?.status)
-      .toBe("not_exercised");
-    expect(buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
-      adapterStatus: "calibrated",
-      executionProfileCurrent: true,
-      turns: terminalTurns,
-      calls: [],
-      coverage: terminalCoverage,
-      evidenceComplete: true,
-      legitimateTerminal: true,
-    })).toMatchObject({
+    expect(
+      terminalCoverage.entries.find((entry) => entry.requirementId === "t8-consumption")?.status,
+    ).toBe("not_exercised");
+    expect(
+      buildCandidateTechnicalSnapshot({
+        playtestPackage: CERTIFICATION_PACKAGE,
+        adapterStatus: "calibrated",
+        executionProfileCurrent: true,
+        turns: terminalTurns,
+        calls: [],
+        coverage: terminalCoverage,
+        evidenceComplete: true,
+        legitimateTerminal: true,
+      }),
+    ).toMatchObject({
       status: "clean",
       turnsCompleted: 7,
       turnsRequired: 10,
@@ -188,15 +268,17 @@ describe("playtest deterministic assessment", () => {
     });
     const failedCoverage = assessCoverage(CERTIFICATION_PACKAGE, completedTurnsWithCoverageFailure);
     expect(failedCoverage.deterministicPassed).toBe(false);
-    expect(buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
-      adapterStatus: "calibrated",
-      executionProfileCurrent: true,
-      turns: completedTurnsWithCoverageFailure,
-      calls: [],
-      coverage: failedCoverage,
-      evidenceComplete: true,
-    }).status).toBe("clean");
+    expect(
+      buildCandidateTechnicalSnapshot({
+        playtestPackage: CERTIFICATION_PACKAGE,
+        adapterStatus: "calibrated",
+        executionProfileCurrent: true,
+        turns: completedTurnsWithCoverageFailure,
+        calls: [],
+        coverage: failedCoverage,
+        evidenceComplete: true,
+      }).status,
+    ).toBe("clean");
   });
 
   it("excludes judge, player, route, account, and application failures from candidate technical health", () => {
@@ -206,9 +288,28 @@ describe("playtest deterministic assessment", () => {
       call(),
       call({ id: "route", success: false, failureKind: "network", failureOwner: "provider_route" }),
       call({ id: "retry", sequence: 2, repairKind: "transient" }),
-      call({ id: "player", actor: "player_driver", phase: "player_action", success: false, failureKind: "provider", failureOwner: "player_driver" }),
-      call({ id: "judge", actor: "judge", phase: "final_judge", success: false, failureKind: "provider", failureOwner: "judge" }),
-      call({ id: "application", success: false, failureKind: "application", failureOwner: "application" }),
+      call({
+        id: "player",
+        actor: "player_driver",
+        phase: "player_action",
+        success: false,
+        failureKind: "provider",
+        failureOwner: "player_driver",
+      }),
+      call({
+        id: "judge",
+        actor: "judge",
+        phase: "final_judge",
+        success: false,
+        failureKind: "provider",
+        failureOwner: "judge",
+      }),
+      call({
+        id: "application",
+        success: false,
+        failureKind: "application",
+        failureOwner: "application",
+      }),
     ];
     const technical = buildCandidateTechnicalSnapshot({
       playtestPackage: CERTIFICATION_PACKAGE,
@@ -234,8 +335,11 @@ describe("playtest deterministic assessment", () => {
     const baseline = certificationTurns();
     const candidateTurns = [...baseline];
     candidateTurns[8] = PlaytestTurnRecordSchema.parse({
-      ...candidateTurns[8]!, status: "failed", invariantStatus: "not_checked",
-      failureOwner: "candidate_model", error: "invalid authoritative reference",
+      ...candidateTurns[8]!,
+      status: "failed",
+      invariantStatus: "not_checked",
+      failureOwner: "candidate_model",
+      error: "invalid authoritative reference",
     });
     const candidate = buildCandidateTechnicalSnapshot({
       playtestPackage: CERTIFICATION_PACKAGE,
@@ -251,8 +355,11 @@ describe("playtest deterministic assessment", () => {
 
     const externalTurns = [...baseline];
     externalTurns[8] = PlaytestTurnRecordSchema.parse({
-      ...externalTurns[8]!, status: "failed", invariantStatus: "not_checked",
-      failureOwner: "application", error: "filesystem failure",
+      ...externalTurns[8]!,
+      status: "failed",
+      invariantStatus: "not_checked",
+      failureOwner: "application",
+      error: "filesystem failure",
     });
     const external = buildCandidateTechnicalSnapshot({
       playtestPackage: CERTIFICATION_PACKAGE,
@@ -275,7 +382,12 @@ describe("playtest deterministic assessment", () => {
       executionProfileCurrent: true,
       turns,
       calls: [
-        call({ id: "malformed", success: false, failureKind: "schema", failureOwner: "candidate_model" }),
+        call({
+          id: "malformed",
+          success: false,
+          failureKind: "schema",
+          failureOwner: "candidate_model",
+        }),
         call({ id: "repaired", sequence: 2, repairKind: "schema" }),
       ],
       coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
@@ -289,26 +401,121 @@ describe("playtest deterministic assessment", () => {
     });
   });
 
-  it("keeps repeated successful bounded recoveries recoverable instead of unstable", () => {
+  it("marks successful recoveries beyond the package limit unstable", () => {
     const turns = certificationTurns();
     const technical = buildCandidateTechnicalSnapshot({
       playtestPackage: CERTIFICATION_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
-      calls: Array.from({ length: 5 }, (_, index) => call({
-        id: `domain-repair-${index + 1}`,
-        sequence: index + 1,
-        repairKind: "domain",
-      })),
+      calls: Array.from({ length: 5 }, (_, index) =>
+        call({
+          id: `domain-repair-${index + 1}`,
+          sequence: index + 1,
+          repairKind: "domain",
+        }),
+      ),
       coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
       evidenceComplete: true,
     });
 
     expect(technical).toMatchObject({
-      status: "playable_with_recovery",
+      status: "unstable",
       domainRepairs: 5,
-      reasons: ["the candidate completed after 5 bounded recoveries"],
+      reasons: ["candidate-owned domain repairs 5 exceed limit 1"],
+    });
+  });
+
+  it("enforces every candidate-owned failure and repair limit", () => {
+    const turns = certificationTurns();
+    const technical = buildCandidateTechnicalSnapshot({
+      playtestPackage: CERTIFICATION_PACKAGE,
+      adapterStatus: "calibrated",
+      executionProfileCurrent: true,
+      turns,
+      calls: [
+        call({
+          id: "schema-failure-1",
+          sequence: 1,
+          success: false,
+          failureKind: "schema",
+          failureOwner: "candidate_model",
+        }),
+        call({ id: "schema-repair-1", sequence: 2, repairKind: "schema" }),
+        call({
+          id: "schema-failure-2",
+          sequence: 3,
+          success: false,
+          failureKind: "schema",
+          failureOwner: "candidate_model",
+        }),
+        call({ id: "schema-repair-2", sequence: 4, repairKind: "schema" }),
+        call({
+          id: "transient-failure-1",
+          sequence: 5,
+          success: false,
+          failureKind: "provider",
+          failureOwner: "candidate_model",
+        }),
+        call({ id: "transient-retry-1", sequence: 6, repairKind: "transient" }),
+        call({
+          id: "transient-failure-2",
+          sequence: 7,
+          success: false,
+          failureKind: "provider",
+          failureOwner: "candidate_model",
+        }),
+        call({ id: "transient-retry-2", sequence: 8, repairKind: "transient" }),
+        call({ id: "domain-repair-1", sequence: 9, repairKind: "domain" }),
+        call({ id: "domain-repair-2", sequence: 10, repairKind: "domain" }),
+      ],
+      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      evidenceComplete: true,
+    });
+
+    expect(technical.status).toBe("unstable");
+    expect(technical.reasons).toEqual([
+      "candidate-owned schema repairs 2 exceed limit 1",
+      "candidate-owned transient retries 2 exceed limit 1",
+      "candidate-owned domain repairs 2 exceed limit 1",
+      "candidate-owned failures 4 exceed limit 1",
+    ]);
+  });
+
+  it("does not apply candidate limits to recovered provider-route retries", () => {
+    const turns = certificationTurns();
+    const technical = buildCandidateTechnicalSnapshot({
+      playtestPackage: CERTIFICATION_PACKAGE,
+      adapterStatus: "calibrated",
+      executionProfileCurrent: true,
+      turns,
+      calls: [
+        call({
+          id: "route-failure-1",
+          sequence: 1,
+          success: false,
+          failureKind: "network",
+          failureOwner: "provider_route",
+        }),
+        call({ id: "route-retry-1", sequence: 2, repairKind: "transient" }),
+        call({
+          id: "route-failure-2",
+          sequence: 3,
+          success: false,
+          failureKind: "network",
+          failureOwner: "provider_route",
+        }),
+        call({ id: "route-retry-2", sequence: 4, repairKind: "transient" }),
+      ],
+      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      evidenceComplete: true,
+    });
+
+    expect(technical).toMatchObject({
+      status: "clean",
+      transientRetries: 2,
+      candidateOwnedFailures: 0,
+      excludedFailureCounts: { provider_route: 2 },
     });
   });
 
@@ -328,13 +535,22 @@ describe("playtest deterministic assessment", () => {
     expect(failedJudge.technical).toEqual(technical);
     expect(failedJudge.qualityStatus).toBe("awaiting_judgment");
 
-    const judgment = playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).parse(validJudgment(turns));
+    const judgment = playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).parse(
+      validJudgment(turns),
+    );
     const completed = assessPlaytest("certification", technical, { status: "completed", judgment });
     expect(completed.technical).toEqual(technical);
     expect(completed.qualityStatus).toBe("high");
-    const failedRerun = assessPlaytest("certification", technical, { status: "failed" }, completed.qualityStatus);
+    const failedRerun = assessPlaytest(
+      "certification",
+      technical,
+      { status: "failed" },
+      completed.qualityStatus,
+    );
     expect(failedRerun.qualityStatus).toBe("awaiting_judgment");
-    expect(assessPlaytest("stress", technical, { status: "completed", judgment }).qualityStatus).toBe("unrated");
+    expect(
+      assessPlaytest("stress", technical, { status: "completed", judgment }).qualityStatus,
+    ).toBe("unrated");
   });
 
   it("uses the expanded blind rubric and complete operation/coverage audits", () => {
@@ -342,11 +558,15 @@ describe("playtest deterministic assessment", () => {
     const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
     const audit = buildMechanicalAudit(turns);
     const judgment = validJudgment(turns);
-    expect(playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse(judgment).success).toBe(true);
-    expect(playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse({
-      ...judgment,
-      coverageJudgments: judgment.coverageJudgments.slice(1),
-    }).success).toBe(false);
+    expect(
+      playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse(judgment).success,
+    ).toBe(true);
+    expect(
+      playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse({
+        ...judgment,
+        coverageJudgments: judgment.coverageJudgments.slice(1),
+      }).success,
+    ).toBe(false);
     const system = playtestJudgeSystemPrompt("en");
     expect(system).toContain("technical status was frozen");
     expect(system).toContain("NPC continuity");
@@ -363,7 +583,8 @@ describe("playtest deterministic assessment", () => {
     expect(prompt).not.toContain("gemini-3.5-flash");
     expect(prompt).toContain("DETERMINISTIC COVERAGE (AUTHORITATIVE)");
     expect(prompt).toContain("account for every committed operationIndex");
-    expect(renderPlaytestJudgment("certification-v1", judgment, "fake-judge", "judge-model"))
-      .toContain("NPC continuity");
+    expect(
+      renderPlaytestJudgment("certification-v1", judgment, "fake-judge", "judge-model"),
+    ).toContain("NPC continuity");
   });
 });

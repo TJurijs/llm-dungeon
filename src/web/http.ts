@@ -3,7 +3,10 @@ import { isIP } from "node:net";
 import { z } from "zod";
 
 export class WebApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
     this.name = "WebApiError";
   }
@@ -24,7 +27,11 @@ export function statusFor(error: unknown): number {
   if (error instanceof z.ZodError) return 400;
   const message = asError(error);
   if (/was not found/i.test(message)) return 404;
-  if (/locked by another running process|another operation is still running|archived and cannot|read-only|unfinished request|uncommitted turn|campaign has ended/i.test(message)) {
+  if (
+    /locked by another running process|another operation is still running|archived and cannot|read-only|unfinished request|uncommitted turn|campaign has ended/i.test(
+      message,
+    )
+  ) {
     return 409;
   }
   return 400;
@@ -62,8 +69,10 @@ export function sendTextDownload(
   text: string,
   filename: string,
 ): void {
-  const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  const encodedFilename = encodeURIComponent(filename).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
   response.writeHead(status, {
     "Content-Type": "text/markdown; charset=utf-8",
     "Content-Disposition": `attachment; filename="llm-dungeon-campaign.md"; filename*=UTF-8''${encodedFilename}`,
@@ -77,22 +86,42 @@ function requestHostname(value: string | undefined): string | undefined {
   if (!value || value.length > 512) return undefined;
   try {
     const parsed = new URL(`http://${value}`);
-    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    ) {
       return undefined;
     }
-    return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    return parsed.hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.$/, "");
   } catch {
     return undefined;
   }
 }
 
 function configuredHostname(value: string): string | undefined {
-  const normalized = value.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  if (!normalized || normalized.includes("/") || normalized.includes("@") || /\s/.test(normalized)) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  if (
+    !normalized ||
+    normalized.includes("/") ||
+    normalized.includes("@") ||
+    /\s/.test(normalized)
+  ) {
     return undefined;
   }
   if (isIP(normalized) !== 0) return normalized;
-  return /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?))*$/.test(normalized)
+  return /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?))*$/.test(
+    normalized,
+  )
     ? normalized
     : undefined;
 }
@@ -115,13 +144,14 @@ export function rejectUntrustedHost(
 ): boolean {
   const requested = requestHostname(request.headers.host);
   const configured = configuredHostname(configuredHost);
-  const trusted = requested !== undefined && configured !== undefined && (
-    isLoopbackHostname(configured)
+  const trusted =
+    requested !== undefined &&
+    configured !== undefined &&
+    (isLoopbackHostname(configured)
       ? isLoopbackHostname(requested)
       : isWildcardHostname(configured)
         ? isLoopbackHostname(requested) || isIP(requested) !== 0
-        : requested === configured
-  );
+        : requested === configured);
   if (trusted) return false;
   sendJson(response, 421, { error: "Request host is not allowed" });
   return true;

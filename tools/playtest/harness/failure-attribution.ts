@@ -23,13 +23,15 @@ export const PlaytestCallLaneSchema = z.enum([
 ]);
 export type PlaytestCallLane = z.infer<typeof PlaytestCallLaneSchema>;
 
-export const FailureAttributionSchema = z.object({
-  owner: FailureOwnerSchema,
-  lane: PlaytestCallLaneSchema,
-  failureKind: z.string().min(1),
-  reason: z.string().min(1),
-  candidateStatusImpact: z.enum(["counts", "excluded", "inconclusive"]),
-}).strict();
+export const FailureAttributionSchema = z
+  .object({
+    owner: FailureOwnerSchema,
+    lane: PlaytestCallLaneSchema,
+    failureKind: z.string().min(1),
+    reason: z.string().min(1),
+    candidateStatusImpact: z.enum(["counts", "excluded", "inconclusive"]),
+  })
+  .strict();
 export type FailureAttribution = z.infer<typeof FailureAttributionSchema>;
 
 export interface FailureAttributionContext {
@@ -44,7 +46,10 @@ function laneOutputOwner(lane: PlaytestCallLane): FailureOwner {
   return "candidate_model";
 }
 
-function impact(owner: FailureOwner, lane: PlaytestCallLane): FailureAttribution["candidateStatusImpact"] {
+function impact(
+  owner: FailureOwner,
+  lane: PlaytestCallLane,
+): FailureAttribution["candidateStatusImpact"] {
   if (lane !== "candidate") return "excluded";
   if (owner === "candidate_model") return "counts";
   return "inconclusive";
@@ -72,37 +77,74 @@ export function attributePlaytestFailure(
 ): FailureAttribution {
   const metadata = context.attemptMetadata ?? attemptMetadataFor(error);
   if (context.stage === "persistence" || context.stage === "application") {
-    return attribution("application", context.lane, "application", "application_or_persistence_failure");
+    return attribution(
+      "application",
+      context.lane,
+      "application",
+      "application_or_persistence_failure",
+    );
   }
 
   if (error instanceof GenerationFailure && (error.status === 401 || error.status === 403)) {
-    return attribution("account_access", context.lane, error.kind, "authentication_or_model_access");
+    return attribution(
+      "account_access",
+      context.lane,
+      error.kind,
+      "authentication_or_model_access",
+    );
   }
 
   const classified = classifyFailure(error);
   if (classified.kind === "rate_limit" || classified.kind === "network") {
-    return attribution("provider_route", context.lane, classified.kind, "provider_route_or_network_failure");
+    return attribution(
+      "provider_route",
+      context.lane,
+      classified.kind,
+      "provider_route_or_network_failure",
+    );
   }
   if (classified.kind === "schema_rejected") {
-    return attribution("adapter_configuration", context.lane, classified.kind, "provider_rejected_structured_output_configuration");
+    return attribution(
+      "adapter_configuration",
+      context.lane,
+      classified.kind,
+      "provider_rejected_structured_output_configuration",
+    );
   }
   if (metadata?.truncated) {
-    return attribution("adapter_configuration", context.lane, classified.kind, "output_budget_truncation");
+    return attribution(
+      "adapter_configuration",
+      context.lane,
+      classified.kind,
+      "output_budget_truncation",
+    );
   }
-  if (classified.kind === "malformed_json"
-    || classified.kind === "wire_schema_violation"
-    || classified.kind === "domain_decode_violation"
-    || classified.kind === "reference_violation"
-    || classified.kind === "invariant_violation"
-    || classified.kind === "content_block") {
+  if (
+    classified.kind === "malformed_json" ||
+    classified.kind === "wire_schema_violation" ||
+    classified.kind === "domain_decode_violation" ||
+    classified.kind === "reference_violation" ||
+    classified.kind === "invariant_violation" ||
+    classified.kind === "content_block"
+  ) {
     const owner = laneOutputOwner(context.lane);
     return attribution(owner, context.lane, classified.kind, "lane_model_output_failure");
   }
   if (context.stage === "domain_validation") {
-    return attribution(laneOutputOwner(context.lane), context.lane, classified.kind, "typed_domain_validation_failure");
+    return attribution(
+      laneOutputOwner(context.lane),
+      context.lane,
+      classified.kind,
+      "typed_domain_validation_failure",
+    );
   }
   if (context.lane === "judge" || context.lane === "player_driver") {
-    return attribution(laneOutputOwner(context.lane), context.lane, classified.kind, "lane_provider_failure");
+    return attribution(
+      laneOutputOwner(context.lane),
+      context.lane,
+      classified.kind,
+      "lane_provider_failure",
+    );
   }
   return attribution("inconclusive", context.lane, classified.kind, "insufficient_typed_evidence");
 }

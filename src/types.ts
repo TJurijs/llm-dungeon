@@ -1,10 +1,5 @@
 import type { z } from "zod";
-import type {
-  GameState,
-  ResolvedTurn,
-  SetupResult,
-  StateOperation,
-} from "./schemas.js";
+import type { GameState, ResolvedTurn, SetupResult, StateOperation } from "./schemas.js";
 import type { LanguageCode } from "./language.js";
 import type { CheckResult } from "./mechanics.js";
 import type { PendingTurn } from "./persistence/pending.js";
@@ -43,7 +38,8 @@ export interface StructuredRequest<T> {
   retryBackoffMs?: number;
 }
 
-export type StructuredAttemptKind = "initial" | "schema_repair" | "transient_retry" | "domain_repair";
+export type StructuredAttemptKind =
+  "initial" | "schema_repair" | "transient_retry" | "domain_repair";
 
 export interface ProviderAttemptMetadata {
   provider: string;

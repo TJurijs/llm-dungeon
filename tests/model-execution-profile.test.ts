@@ -10,8 +10,9 @@ import {
 } from "../src/model-execution-profile.js";
 
 function selectedProfile() {
-  const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find((profile) =>
-    profile.key.provider === "openai" && profile.key.model === "gpt-5.6-terra");
+  const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+    (profile) => profile.key.provider === "openai" && profile.key.model === "gpt-5.6-terra",
+  );
   if (!base) throw new Error("Missing OpenAI default execution profile");
   return {
     ...base,
@@ -22,8 +23,11 @@ function selectedProfile() {
 
 describe("model execution profiles", () => {
   it("ships strict uncalibrated defaults for every curated route", () => {
-    expect(DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.map((profile) =>
-      `${profile.key.provider}/${profile.key.model}/${profile.key.route}`)).toEqual([
+    expect(
+      DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.map(
+        (profile) => `${profile.key.provider}/${profile.key.model}/${profile.key.route}`,
+      ),
+    ).toEqual([
       "gemini/gemini-3.5-flash/direct",
       "gemini/gemini-3.1-flash-lite/direct",
       "gemini/gemini-3.6-flash/direct",
@@ -37,10 +41,12 @@ describe("model execution profiles", () => {
       "anthropic/claude-haiku-4-5/direct",
       "anthropic/claude-sonnet-5/direct",
     ]);
-    expect(() => ModelExecutionProfileDraftSchema.parse({
-      ...DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0],
-      arbitraryProviderBody: { unsafe: true },
-    })).toThrow();
+    expect(() =>
+      ModelExecutionProfileDraftSchema.parse({
+        ...DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0],
+        arbitraryProviderBody: { unsafe: true },
+      }),
+    ).toThrow();
   });
 
   it("freezes execution content by fingerprint while ignoring evidence bookkeeping", () => {
@@ -67,10 +73,12 @@ describe("model execution profiles", () => {
     const temperatureVariant = { ...original, temperature: { policy: "omitted" as const } };
     expect(changedCalibrationVariables(original, temperatureVariant)).toEqual(["temperature"]);
     expect(assertSingleCalibrationVariableChange(original, temperatureVariant)).toBe("temperature");
-    expect(() => assertSingleCalibrationVariableChange(original, {
-      ...temperatureVariant,
-      outputBudgets: { ...original.outputBudgets, decision: 8_000 },
-    })).toThrow("exactly one variable");
+    expect(() =>
+      assertSingleCalibrationVariableChange(original, {
+        ...temperatureVariant,
+        outputBudgets: { ...original.outputBudgets, decision: 8_000 },
+      }),
+    ).toThrow("exactly one variable");
   });
 
   it("escalates only explicit truncation through bounded phase steps", () => {

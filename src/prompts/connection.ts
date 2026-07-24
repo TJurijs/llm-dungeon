@@ -1,7 +1,8 @@
 import type { SetupResult } from "../schemas.js";
 import type { LanguageCode } from "../language.js";
 
-export const CONNECTION_SYSTEM_PROMPT = "Return the requested structured response exactly. This is a provider compatibility test; do not add commentary.";
+export const CONNECTION_SYSTEM_PROMPT =
+  "Return the requested structured response exactly. This is a provider compatibility test; do not add commentary.";
 
 export const CONNECTION_SETUP_PROBE: SetupResult = {
   campaignTitle: "Schema Probe",
@@ -23,20 +24,22 @@ export const CONNECTION_SETUP_PROBE: SetupResult = {
     conditions: [],
     inventory: [],
   },
-  entities: [{
-    id: "location:probe-room",
-    kind: "location",
-    name: "Probe Room",
-    status: "active",
-    tags: [],
-    description: "A test location.",
-    establishedFacts: [],
-    secrets: [],
-    playerKnowledge: [],
-    traits: [],
-    conditions: [],
-    inventory: [],
-  }],
+  entities: [
+    {
+      id: "location:probe-room",
+      kind: "location",
+      name: "Probe Room",
+      status: "active",
+      tags: [],
+      description: "A test location.",
+      establishedFacts: [],
+      secrets: [],
+      playerKnowledge: [],
+      traits: [],
+      conditions: [],
+      inventory: [],
+    },
+  ],
   threads: [],
 };
 
@@ -82,7 +85,8 @@ export function connectionSetupPrompt(setup: unknown): string {
   return `Return exactly this campaign setup object: ${JSON.stringify(setup)}`;
 }
 
-export const CONNECTION_GAMEPLAY_PROMPT = "Return decision=resolved, narration and summary set to \"Schema enforcement verified.\", effects=[], modifiers=[], every other string empty, difficulty=0, and failureCampaignStatus=none. Include every schema field exactly once and never use null.";
+export const CONNECTION_GAMEPLAY_PROMPT =
+  'Return decision=resolved, narration and summary set to "Schema enforcement verified.", effects=[], modifiers=[], every other string empty, difficulty=0, and failureCampaignStatus=none. Include every schema field exactly once and never use null.';
 
 export function connectionGameplayPrompt(marker: string): string {
   return `Return decision=resolved, narration and summary set to ${JSON.stringify(marker)}, effects=[], modifiers=[], every other string empty, difficulty=0, and failureCampaignStatus=none. Include every schema field exactly once and never use null.`;

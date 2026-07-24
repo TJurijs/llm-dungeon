@@ -164,10 +164,12 @@ describe("focused diagnostic replay", () => {
       retryBackoffMs: 250,
     });
     expect(await readFile(statePath, "utf8")).toBe('{"turn":7}\n');
-    expect(await readFocusedReplayManifest(path.join(result.directory, "manifest.json")))
-      .toMatchObject({ status: "completed", totalEstimatedCostUsd: 0.005 });
-    expect(await readFile(path.join(result.directory, "attempts.jsonl"), "utf8"))
-      .not.toContain("replayed");
+    expect(
+      await readFocusedReplayManifest(path.join(result.directory, "manifest.json")),
+    ).toMatchObject({ status: "completed", totalEstimatedCostUsd: 0.005 });
+    expect(await readFile(path.join(result.directory, "attempts.jsonl"), "utf8")).not.toContain(
+      "replayed",
+    );
   });
 
   it("does not call a provider after cancellation or when reservation exceeds the ceiling", async () => {
@@ -319,11 +321,19 @@ describe("focused diagnostic replay", () => {
       ...legacyRequest
     } = current.request;
     const target = path.join(root, "legacy-diagnostic.json");
-    await writeFile(target, `${JSON.stringify({
-      ...current,
-      schemaVersion: 1,
-      request: legacyRequest,
-    }, null, 2)}\n`, "utf8");
+    await writeFile(
+      target,
+      `${JSON.stringify(
+        {
+          ...current,
+          schemaVersion: 1,
+          request: legacyRequest,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     await expect(readDiagnosticBundle(target)).resolves.toMatchObject({
       schemaVersion: 2,
@@ -336,19 +346,20 @@ describe("focused diagnostic replay", () => {
     const bundle = diagnostic();
     const scheduler = new PlaytestProviderScheduler(2, { gemini: 1 });
     const activity = { active: 0, maximum: 0 };
-    const run = (replayId: string) => new FocusedReplayRunner().run(
-      bundle,
-      { schema: AnswerSchema },
-      [DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!],
-      () => new DelayedReplayProvider(activity),
-      {
-        costManager: new PlaytestCostManager(1),
-        price: PRICE,
-        scheduler,
-        artifactsRoot: root,
-        replayId,
-      },
-    );
+    const run = (replayId: string) =>
+      new FocusedReplayRunner().run(
+        bundle,
+        { schema: AnswerSchema },
+        [DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!],
+        () => new DelayedReplayProvider(activity),
+        {
+          costManager: new PlaytestCostManager(1),
+          price: PRICE,
+          scheduler,
+          artifactsRoot: root,
+          replayId,
+        },
+      );
 
     await Promise.all([run("scheduled-a"), run("scheduled-b")]);
     expect(activity.maximum).toBe(1);

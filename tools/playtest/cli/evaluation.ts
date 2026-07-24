@@ -22,9 +22,14 @@ export function positiveNumber(value: string): number {
 }
 
 export function profilePool(value: string): ProfileId[] {
-  return ProfileIdSchema.array().min(1).parse(
-    value.split(",").map((profile) => profile.trim()).filter(Boolean),
-  );
+  return ProfileIdSchema.array()
+    .min(1)
+    .parse(
+      value
+        .split(",")
+        .map((profile) => profile.trim())
+        .filter(Boolean),
+    );
 }
 
 /**

@@ -66,7 +66,8 @@ export function projectPlayerInspection(
       facts: playerVisibleFacts(player),
       relationships: player.relationships.map((relationship) => {
         const target = entities.get(relationship.targetId);
-        if (!target) throw new Error(`Inspection relationship on ${player.name} has an invalid target`);
+        if (!target)
+          throw new Error(`Inspection relationship on ${player.name} has an invalid target`);
         return { name: target.name, summary: relationship.summary };
       }),
     };
