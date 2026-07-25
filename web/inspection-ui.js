@@ -25,14 +25,34 @@ function appendList(parent, heading, values, t) {
   parent.append(section);
 }
 
-function traitParts(value) {
+export function traitParts(value) {
   const withoutId = value.replace(/^trait:[^:]+:\s*/, "").trim();
-  const separator = withoutId.indexOf(" — ");
+  const colonSeparator = withoutId.indexOf(": ");
+  const dashSeparator = withoutId.indexOf(" — ");
+  const separator =
+    colonSeparator >= 0 && (dashSeparator < 0 || colonSeparator < dashSeparator)
+      ? colonSeparator
+      : dashSeparator;
   if (separator < 0) return { title: withoutId, description: "" };
   return {
     title: withoutId.slice(0, separator).trim(),
-    description: withoutId.slice(separator + 3).trim(),
+    description: withoutId.slice(separator + (separator === colonSeparator ? 2 : 3)).trim(),
   };
+}
+
+export function createTraitElement(value) {
+  const { title, description } = traitParts(value);
+  if (!description) {
+    const staticTrait = element("div", "trait-item trait-item-static");
+    staticTrait.append(element("h5", "trait-title", title));
+    return staticTrait;
+  }
+  const trait = element("details", "trait-item");
+  trait.append(
+    element("summary", "trait-title", title),
+    element("p", "trait-description", description),
+  );
+  return trait;
 }
 
 function appendTraits(parent, traits, t) {
@@ -44,19 +64,7 @@ function appendTraits(parent, traits, t) {
   } else {
     const list = element("div", "trait-list");
     for (const item of items) {
-      const { title, description } = traitParts(item);
-      if (!description) {
-        const staticTrait = element("div", "trait-item trait-item-static");
-        staticTrait.append(element("h5", "trait-title", title));
-        list.append(staticTrait);
-        continue;
-      }
-      const trait = element("details", "trait-item");
-      trait.append(
-        element("summary", "trait-title", title),
-        element("p", "trait-description", description),
-      );
-      list.append(trait);
+      list.append(createTraitElement(item));
     }
     section.append(list);
   }

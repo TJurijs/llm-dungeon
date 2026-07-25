@@ -7,6 +7,7 @@ import {
   CampaignStateCache,
   scheduleIdleTask,
 } from "../web/campaign-state.js";
+import { traitParts } from "../web/inspection-ui.js";
 import { UI_COPY, localeCopy } from "../web/ui-copy.js";
 import {
   campaignCostText,
@@ -19,6 +20,21 @@ import {
 } from "../web/ui-utils.js";
 
 describe("web UI copy", () => {
+  it("splits both durable and generated capability traits into a heading and description", () => {
+    expect(traitParts("Signal Sense — Perceives hidden electronic signal patterns.")).toEqual({
+      title: "Signal Sense",
+      description: "Perceives hidden electronic signal patterns.",
+    });
+    expect(
+      traitParts(
+        "Капитан фронтира: Метод — личное руководство. Эффект — координация экипажа.",
+      ),
+    ).toEqual({
+      title: "Капитан фронтира",
+      description: "Метод — личное руководство. Эффект — координация экипажа.",
+    });
+  });
+
   it("caches one coherent campaign state, deduplicates loads, and ignores invalidated responses", async () => {
     const cache = new CampaignStateCache();
     const state = {
@@ -288,15 +304,23 @@ describe("web UI copy", () => {
   });
 
   it("makes character traits expandable and keeps known details compact", async () => {
-    const [inspection, styles] = await Promise.all([
+    const [inspection, setupSettings, styles] = await Promise.all([
       readFile(path.join(process.cwd(), "web", "inspection-ui.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
     ]);
 
+    expect(inspection).toContain("export function createTraitElement(value)");
     expect(inspection).toContain('element("details", "trait-item")');
     expect(inspection).toContain('element("summary", "trait-title", title)');
+    expect(inspection).toContain("list.append(createTraitElement(item))");
+    expect(setupSettings).toContain('import { createTraitElement } from "./inspection-ui.js"');
+    expect(setupSettings).toContain("(trait) => createTraitElement(trait)");
+    expect(setupSettings).not.toContain("trait-chip");
     expect(inspection).toContain('appendFacts(card, inspection.facts, t, true)');
     expect(inspection).toContain('element("details", "inspection-known-details")');
+    expect(styles).toContain(".campaign-preview .narrative-text");
+    expect(styles).toContain(".campaign-preview .trait-list");
     expect(styles).toContain(".known-details-scroll");
     expect(styles).toContain("max-height: 16rem");
     expect(styles).toContain("overflow-y: auto");

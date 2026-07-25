@@ -87,10 +87,16 @@
       "provider": "openrouter",
       "model": "moonshotai/kimi-k3",
       "route": "openrouter",
-      "calibratedAt": "2026-07-25T18:15:22.418Z",
-      "evidenceRef": "playtests/calibration/kimi-k3-openrouter-20260725",
+      "calibratedAt": "2026-07-25T22:30:14.803Z",
+      "evidenceRef": "playtests/calibration/kimi-k3-openrouter-16k-20260726-r2",
       "temperature": {
         "policy": "omitted"
+      },
+      "outputBudgets": {
+        "setup": 16000,
+        "decision": 4000,
+        "lockedResolution": 4000,
+        "repair": 8000
       }
     }
   ]

@@ -162,6 +162,8 @@ export interface CalibrationOptions {
   maxCost: number;
   inputCost?: number | undefined;
   outputCost?: number | undefined;
+  scenarioSeed?: string | undefined;
+  language?: LanguageCode | undefined;
 }
 
 export interface CompatibilityProbeOptions {
@@ -281,6 +283,8 @@ export class PlaytestCli {
       maxCostUsd: options.maxCost,
       ...(variants ? { variants } : {}),
       ...(options.evidenceId ? { evidenceId: options.evidenceId } : {}),
+      ...(options.scenarioSeed ? { scenarioSeed: options.scenarioSeed } : {}),
+      ...(options.language ? { language: options.language } : {}),
       ...(options.inputCost === undefined
         ? {}
         : {

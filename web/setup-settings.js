@@ -1,4 +1,5 @@
 import { formatTemplate, llmModelEntries } from "./ui-utils.js";
+import { createTraitElement } from "./inspection-ui.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -334,7 +335,7 @@ export function createSetupSettingsController(dependencies) {
     $("#preview-opening").textContent = setup.openingNarration;
     $("#preview-scenario").textContent = setup.scenarioMarkdown;
     $("#preview-traits").replaceChildren(
-      ...(setup.player.traits || []).map((trait) => createElement("span", "trait-chip", trait)),
+      ...(setup.player.traits || []).map((trait) => createTraitElement(trait)),
     );
     $("#campaign-setup-form").hidden = true;
     $("#campaign-preview").hidden = false;

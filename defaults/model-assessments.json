@@ -5,11 +5,13 @@
       "provider": "anthropic",
       "model": "claude-sonnet-5",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "1d869b770d7806777b6ac8d3563c8daebc78dbe3e2ccd28367d58b72916954ab",
       "calibrationReference": "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
       "calibratedAt": "2026-07-22T10:32:41.463Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -19,6 +21,7 @@
           "recordedAt": "2026-07-22T10:56:12.399Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -33,11 +36,13 @@
       "provider": "gemini",
       "model": "gemini-3.5-flash",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "957a28d5a3284d58a23032d92e2ed3e68c69c506c33722f14d722527f85a412e",
       "calibrationReference": "playtests/calibration/gemini-3.5-flash-initial",
       "calibratedAt": "2026-07-19T14:58:25.697Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -47,6 +52,7 @@
           "recordedAt": "2026-07-19T22:33:20.118Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -61,11 +67,13 @@
       "provider": "gemini",
       "model": "gemini-3.1-flash-lite",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "af8ddfd75ce068f9aca9573ca43bf38a4915f3b91f1f47040aa5a38dcbee4caa",
       "calibrationReference": "playtests/calibration/gemini-3.1-flash-lite-initial",
       "calibratedAt": "2026-07-19T20:01:51.243Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -75,6 +83,7 @@
           "recordedAt": "2026-07-19T22:33:19.686Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -89,11 +98,13 @@
       "provider": "openrouter",
       "model": "qwen/qwen3.7-plus",
       "route": "openrouter",
+      "adapterRevision": 7,
       "profileFingerprint": "cde93c7e308b9ff9a0f250490bd0bc106d9c9230de7c186a1babeeafa2abbcac",
       "calibrationReference": "playtests/calibration/qwen-qwen3.7-plus-initial",
       "calibratedAt": "2026-07-19T20:43:30.760Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -103,6 +114,7 @@
           "recordedAt": "2026-07-19T20:46:53.798Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "unstable",
           "recoveryCount": 1,
@@ -117,11 +129,13 @@
       "provider": "xai",
       "model": "grok-4.5",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "c9840a035b832ebe260978af336b369447c259ab87d6e2d1b5c8bcebfd2e3360",
       "calibrationReference": "playtests/calibration/grok-4.5-initial",
       "calibratedAt": "2026-07-19T20:34:44.395Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -131,6 +145,7 @@
           "recordedAt": "2026-07-19T22:33:20.952Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -145,11 +160,13 @@
       "provider": "openai",
       "model": "gpt-5.4",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "e078d694d7e7bfec060ae40411031802e04faf8f6733f52ab299f65f7de04c83",
       "calibrationReference": "playtests/calibration/gpt-5.4-initial",
       "calibratedAt": "2026-07-19T21:04:16.063Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -159,6 +176,7 @@
           "recordedAt": "2026-07-19T22:33:20.539Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -173,11 +191,13 @@
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "11e6d104df6bfddf818aac35ab0727784ef1f636761bddfc39033e973ea6102e",
       "calibrationReference": "playtests/calibration/deepseek-v4-flash-repair-thinking-final",
       "calibratedAt": "2026-07-19T22:15:29.409Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 3,
@@ -187,6 +207,7 @@
           "recordedAt": "2026-07-19T22:31:21.677Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 2,
@@ -201,11 +222,13 @@
       "provider": "deepseek",
       "model": "deepseek-v4-pro",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "9947b705d9ad3bdad4d86084782f952896bf991b9516f7b239111d30ccc64da7",
       "calibrationReference": "playtests/calibration/deepseek-v4-pro-initial",
       "calibratedAt": "2026-07-19T22:41:54.139Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 2,
@@ -215,6 +238,7 @@
           "recordedAt": "2026-07-19T22:46:47.960Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "playable_with_recovery",
           "recoveryCount": 1,
@@ -229,11 +253,13 @@
       "provider": "gemini",
       "model": "gemini-3.6-flash",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "7236eec0db8dc08b79907bd94f5c9c1f9eeb9df06879317d7beb27228502e521",
       "calibrationReference": "playtests/calibration/2026-07-23T13-08-03-881Z-9719563c-5e5e-45db-ac0d-aac6227476c1",
       "calibratedAt": "2026-07-23T13:08:27.843Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -243,6 +269,7 @@
           "recordedAt": "2026-07-23T13:17:25.453Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -257,11 +284,13 @@
       "provider": "gemini",
       "model": "gemini-3.5-flash-lite",
       "route": "direct",
+      "adapterRevision": 7,
       "profileFingerprint": "a48c91c1bf7e47cdccf7f2efff14c14df075aa3edfbe36a58ff8d462360362c4",
       "calibrationReference": "playtests/calibration/2026-07-23T13-10-16-915Z-695442f6-e0d0-43de-8339-dade16f61889",
       "calibratedAt": "2026-07-23T13:10:29.133Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -271,6 +300,7 @@
           "recordedAt": "2026-07-23T16:35:56.120Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "clean",
           "recoveryCount": 0,
@@ -285,27 +315,30 @@
       "provider": "openrouter",
       "model": "moonshotai/kimi-k3",
       "route": "openrouter",
-      "profileFingerprint": "a0f66cf6ffde38d6af91970fbadd2e42fcc29e0adf44d72decaaafe201fd0a29",
-      "calibrationReference": "playtests/calibration/kimi-k3-openrouter-20260725",
-      "calibratedAt": "2026-07-25T18:15:22.418Z",
+      "adapterRevision": 7,
+      "profileFingerprint": "343cd1bab3a61da21f71119d5c916dea372c41d4d607d7b9e33e3384778ffb67",
+      "calibrationReference": "playtests/calibration/kimi-k3-openrouter-16k-20260726-r2",
+      "calibratedAt": "2026-07-25T22:30:14.803Z",
       "certifications": [
         {
+          "packageVersion": "3",
           "language": "en",
           "technicalStatus": "clean",
           "recoveryCount": 0,
           "qualityStatus": "high",
           "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784/jobs/job-001",
-          "recordedAt": "2026-07-25T18:39:02.211Z"
+          "reference": "playtests/runs/2026-07-25T22-30-54-504Z-9c3762f3-e9b7-4475-8693-e6d3265dc283/jobs/job-001",
+          "recordedAt": "2026-07-25T22:45:33.157Z"
         },
         {
+          "packageVersion": "3",
           "language": "ru",
           "technicalStatus": "clean",
           "recoveryCount": 0,
           "qualityStatus": "high",
           "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784/jobs/job-002",
-          "recordedAt": "2026-07-25T18:39:34.262Z"
+          "reference": "playtests/runs/2026-07-25T22-30-54-504Z-9c3762f3-e9b7-4475-8693-e6d3265dc283/jobs/job-002",
+          "recordedAt": "2026-07-25T22:45:50.886Z"
         }
       ]
     }

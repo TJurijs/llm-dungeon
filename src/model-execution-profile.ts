@@ -5,7 +5,7 @@ import { ProviderConfigSchema } from "./schemas.js";
 
 export const MODEL_EXECUTION_PROFILE_VERSION = 1 as const;
 /** Increment whenever profile interpretation or a named projection changes. */
-export const MODEL_EXECUTION_ADAPTER_REVISION = 8 as const;
+export const MODEL_EXECUTION_ADAPTER_REVISION = 7 as const;
 
 export const ModelGenerationPhaseSchema = z.enum([
   "setup",

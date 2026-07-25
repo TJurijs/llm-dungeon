@@ -16,7 +16,9 @@ import {
 import { defaultDraftFor } from "./harness/default-drafts.js";
 import { inferTokenPrice } from "../../src/pricing.js";
 import { createProvider } from "../../src/providers.js";
+import { loadScenarioSeed } from "../../src/scenario-seeds.js";
 import { ProviderConfigSchema, type ProviderConfig } from "../../src/schemas.js";
+import { LanguageCodeSchema, type LanguageCode } from "../../src/language.js";
 import { structuredFailureDetails } from "../../src/llm/structured-error.js";
 import {
   CalibrationEvidenceStore,
@@ -188,6 +190,8 @@ export interface CalibrateModelOptions {
   evidenceId?: string | undefined;
   maxCostUsd: number;
   cost?: PlaytestModelCost | undefined;
+  scenarioSeed?: string | undefined;
+  language?: LanguageCode | undefined;
 }
 
 export interface CalibrateModelResult {
@@ -294,6 +298,13 @@ export async function calibrateModel(
   const evidenceId = calibrationEvidenceId(options.evidenceId ?? safeCalibrationEvidenceId(now()));
   const evidenceStore = new CalibrationEvidenceStore(path.join(playtestsRoot, "calibration"));
   const cost = new PlaytestCostManager(options.maxCostUsd);
+  const seed = options.scenarioSeed
+    ? await loadScenarioSeed(
+        projectRoot,
+        options.scenarioSeed,
+        LanguageCodeSchema.parse(options.language ?? "en"),
+      )
+    : undefined;
   const attempts = await runCalibrationVariants(
     variants,
     (variant) => {
@@ -310,7 +321,23 @@ export async function calibrateModel(
       );
       return new CalibrationCostProvider(provider, provisional, cost, price);
     },
-    { evidenceId, evidenceStore, now },
+    {
+      evidenceId,
+      evidenceStore,
+      now,
+      ...(seed
+        ? {
+            probeOptions: {
+              setupInput: {
+                worldRules: seed.worldRules,
+                premise: seed.premise,
+                character: seed.character,
+                language: LanguageCodeSchema.parse(seed.language),
+              },
+            },
+          }
+        : {}),
+    },
   );
   const selectedAttempt = selectCalibrationProfile(attempts);
   const profiles = new ModelExecutionProfileStore(projectRoot);

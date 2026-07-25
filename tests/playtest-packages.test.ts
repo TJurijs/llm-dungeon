@@ -48,7 +48,7 @@ describe("versioned playtest packages", () => {
       "mechanics-v1",
       "tuning-v1",
     ]);
-    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([4, 1, 1, 1, 1, 1]);
+    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([3, 1, 1, 1, 1, 1]);
     expect(packages.map((playtestPackage) => playtestPackage.purpose)).toEqual([
       "certification",
       "autoplay",

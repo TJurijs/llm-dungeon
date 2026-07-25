@@ -127,6 +127,13 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
       [],
     )
     .option("--evidence-id <id>", "stable safe ID for retained calibration evidence")
+    .option(
+      "--scenario-seed <id>",
+      "production setup seed used to reproduce setup-size truncation",
+    )
+    .option("--language <code>", "scenario-seed language", (value) =>
+      LanguageCodeSchema.parse(value.toLowerCase()),
+    )
     .option("--input-cost <usd>", "custom input USD per million tokens", positiveNumber)
     .option("--output-cost <usd>", "custom output USD per million tokens", positiveNumber)
     .requiredOption("--max-cost <usd>", "hard calibration cost ceiling", positiveNumber)
@@ -135,6 +142,8 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
         target: options.target,
         variants: options.variant,
         evidenceId: options.evidenceId,
+        scenarioSeed: options.scenarioSeed,
+        language: options.language,
         maxCost: options.maxCost,
         inputCost: options.inputCost,
         outputCost: options.outputCost,

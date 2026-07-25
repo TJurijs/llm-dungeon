@@ -1011,6 +1011,9 @@ body.inspection-open #open-inspection {
 .campaign-preview {
   max-width: 720px;
   margin-inline: auto;
+  font-family: inherit;
+  font-size: 0.94rem;
+  line-height: 1.55;
 }
 .preview-eyebrow,
 .eyebrow {
@@ -1024,6 +1027,19 @@ body.inspection-open #open-inspection {
   margin: 0.35rem 0 1.2rem;
   font-size: 1.35rem;
 }
+.campaign-preview h2,
+.campaign-preview h3,
+.campaign-preview strong,
+.campaign-preview p,
+.campaign-preview summary,
+.campaign-preview pre {
+  font-family: inherit;
+}
+.campaign-preview #preview-player {
+  display: block;
+  font-size: 1rem;
+  line-height: 1.5;
+}
 .preview-section {
   margin-top: 1rem;
   padding-top: 1rem;
@@ -1032,26 +1048,13 @@ body.inspection-open #open-inspection {
 .preview-section p {
   color: #dcdbd2;
 }
-.narrative-text {
-  font:
-    16px/1.68 ui-serif,
-    Georgia,
-    Cambria,
-    "Times New Roman",
-    serif;
+.campaign-preview .narrative-text {
+  font: inherit;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
-.trait-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-.trait-chip {
-  padding: 0.18rem 0.46rem;
-  border: 1px solid #4b523f;
-  border-radius: 999px;
-  color: var(--accent);
-  font-size: 0.72rem;
+.campaign-preview .trait-list {
+  margin-top: 0.8rem;
 }
 .field-label {
   display: block;
@@ -1092,12 +1095,8 @@ body.inspection-open #open-inspection {
   border-radius: 9px;
   background: #151613;
   color: #cecdc4;
-  font:
-    0.76rem/1.55 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  font: inherit;
+  line-height: 1.55;
   white-space: pre-wrap;
 }
 .form-scroll.settings-shell {

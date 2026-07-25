@@ -271,7 +271,7 @@
         "en",
         "ru"
       ],
-      "note": "OpenRouter Kimi K3 compatibility verified in English and Russian before certification-v1 v3."
+      "note": "Recalibrated on production-sized Russian Far Meridian setup after confirmed 8,000-token truncation; setup budget 16,000, bilingual certification-v1 v3 clean/high."
     }
   ]
 }

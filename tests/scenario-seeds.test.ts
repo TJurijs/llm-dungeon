@@ -77,6 +77,40 @@ describe("scenario seeds", () => {
     expect(ru.character).not.toContain("голая кожа прижимается к предмету");
   });
 
+  it("ships Dead Signal with a reusable world, bounded captain, crew, and courier ship", async () => {
+    const [seed, ru] = await Promise.all([
+      loadScenarioSeed(process.cwd(), "far-meridian-dead-signal", "en"),
+      loadScenarioSeed(process.cwd(), "far-meridian-dead-signal", "ru"),
+    ]);
+
+    expect(seed.title).toBe("Far Meridian Dead Signal");
+    expect(seed.premise).toContain("Mercy's End");
+    expect(seed.premise).toContain("don't let them open the mine");
+    expect(seed.premise).toContain("definite hidden explanation");
+    expect(seed.premise).toContain("Do not decide the player's first action");
+    expect(seed.character).toContain("Tala Venn — pilot and mechanic");
+    expect(seed.character).toContain("Doctor Eli Mercer — medic and field scientist");
+    expect(seed.character).toContain("It is not a warship");
+    expect(seed.character).toContain("ancient gates at fixed points");
+    expect(seed.character).toContain("Signal Sense cannot extract complete memories");
+    expect(seed.worldRules).toContain("grounded space-western tone");
+    expect(seed.worldRules).toContain("Never invent decisions, dialogue, beliefs");
+    expect(seed.worldRules).not.toContain("Jace");
+    expect(seed.worldRules).not.toContain("Signal Sense");
+    expect(ru.language).toBe("ru");
+    expect(ru.premise).toContain("Последнему Приюту");
+    expect(ru.premise).toContain("не дай им открыть шахту");
+    expect(ru.premise).toContain("Не решай за игрока");
+    expect(ru.character).toContain("Тала Венн — пилот и механик");
+    expect(ru.character).toContain("Доктор Илай Мерсер — медик и полевой учёный");
+    expect(ru.character).toContain("Это не боевой корабль");
+    expect(ru.character).toContain("Чувство сигнала не извлекает полные воспоминания");
+    expect(ru.worldRules).toContain("приземлённый космический вестерн");
+    expect(ru.worldRules).toContain("Никогда не выдумывай за персонажа игрока");
+    expect(ru.worldRules).not.toContain("Джейс");
+    expect(ru.worldRules).not.toContain("Чувство сигнала");
+  });
+
   it("throws a not-found error for an unknown id", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-seeds-missing-"));
     await seedFiles(root, "twin-suns", "en", "EN");

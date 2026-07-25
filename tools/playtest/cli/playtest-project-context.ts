@@ -74,6 +74,8 @@ export class PlaytestProjectContext extends CliProjectContext {
       variants?: readonly ModelExecutionProfileDraft[] | undefined;
       evidenceId?: string | undefined;
       cost?: { inputPerMillion: number; outputPerMillion: number } | undefined;
+      scenarioSeed?: string | undefined;
+      language?: LanguageCode | undefined;
     },
   ): Promise<CalibrateModelResult> {
     return calibratePlaytestModel({

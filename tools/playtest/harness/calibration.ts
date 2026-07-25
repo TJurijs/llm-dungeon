@@ -11,6 +11,7 @@ import {
 import { GenerationFailure } from "../../../src/llm/failures.js";
 import { generateStructured } from "../../../src/llm/structured-generation.js";
 import { attemptMetadataFor, structuredFailureDetails } from "../../../src/llm/structured-error.js";
+import { DM_SYSTEM_PROMPT, setupPrompt, type SetupPromptInput } from "../../../src/prompts.js";
 import {
   ModelExecutionProfileDraftSchema,
   assertSingleCalibrationVariableChange,
@@ -280,7 +281,12 @@ interface ProbeCase<T> {
   validate: (result: T) => void;
 }
 
-function probeCases(): Array<ProbeCase<unknown>> {
+export interface CalibrationProbeOptions {
+  /** Optional production setup seed used to reproduce real setup-size failures. */
+  setupInput?: SetupPromptInput | undefined;
+}
+
+function probeCases(options: CalibrationProbeOptions = {}): Array<ProbeCase<unknown>> {
   const resolvedEffects = resolvedWire("Mara confirms the watch schedule while ten minutes pass.", [
     ...REAL_EFFECTS,
   ]);
@@ -297,10 +303,13 @@ function probeCases(): Array<ProbeCase<unknown>> {
       request: {
         schemaName: "calibration_campaign_setup_v1",
         schema: SetupResultSchema,
-        system:
-          "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
-        prompt: `Return exactly this representative campaign setup: ${JSON.stringify(REPRESENTATIVE_SETUP)}`,
-        temperature: 0,
+        system: options.setupInput
+          ? DM_SYSTEM_PROMPT
+          : "Return the requested structured object exactly. This is a non-scored adapter calibration probe.",
+        prompt: options.setupInput
+          ? setupPrompt(options.setupInput)
+          : `Return exactly this representative campaign setup: ${JSON.stringify(REPRESENTATIVE_SETUP)}`,
+        temperature: options.setupInput ? 0.8 : 0,
         maxOutputTokens: 8_000,
         generationPhase: "setup",
         attemptKind: "initial",
@@ -549,9 +558,10 @@ async function runCase(
 /** Runs the complete non-scored protocol suite sequentially for one route/profile. */
 export async function runModelCalibrationProbe(
   provider: LlmProvider,
+  options: CalibrationProbeOptions = {},
 ): Promise<CalibrationProbeResult> {
   const cases: CalibrationCaseResult[] = [];
-  for (const probe of probeCases()) cases.push(await runCase(provider, probe));
+  for (const probe of probeCases(options)) cases.push(await runCase(provider, probe));
   return {
     suiteVersion: CALIBRATION_SUITE_VERSION,
     provider: provider.id,
@@ -628,6 +638,7 @@ export interface CalibrationVariantRunOptions {
   now?: () => Date;
   /** Append bounded one-variable budget steps only when the last probe proves truncation. */
   autoEscalateTruncation?: boolean;
+  probeOptions?: CalibrationProbeOptions | undefined;
 }
 
 function firstTruncationEscalation(
@@ -703,7 +714,7 @@ export async function runCalibrationVariants(
         `${changedVariable} requires confirmed truncation in the immediately preceding probe`,
       );
     }
-    const probe = await runModelCalibrationProbe(providerFor(profile));
+    const probe = await runModelCalibrationProbe(providerFor(profile), options.probeOptions);
     const result = { profile, ...(changedVariable ? { changedVariable } : {}), probe };
     results.push(result);
     if (options.evidenceStore && options.evidenceId) {

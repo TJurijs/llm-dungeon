@@ -86,7 +86,7 @@ describe("playtest terminal commands", () => {
     );
 
     expect(config).toMatchObject({
-      package: { id: "certification-v1", version: 4 },
+      package: { id: "certification-v1", version: 3 },
       languages: ["en", "ru"],
       repetitions: 2,
       globalWorkerLimit: 1,
@@ -174,6 +174,7 @@ describe("playtest terminal commands", () => {
       .spyOn(PlaytestCli.prototype, "packages")
       .mockImplementation(() => undefined);
     const probe = vi.spyOn(PlaytestCli.prototype, "probe").mockResolvedValue();
+    const calibrate = vi.spyOn(PlaytestCli.prototype, "calibrate").mockResolvedValue();
     const legacy = vi.spyOn(EvaluationCli.prototype, "run").mockResolvedValue();
     try {
       const program = createPlaytestCliProgram(project);
@@ -194,6 +195,28 @@ describe("playtest terminal commands", () => {
       ]);
       await program.parseAsync(["node", "llm-dungeon-playtest", "playtest", "packages"]);
       expect(packages).toHaveBeenCalledOnce();
+
+      await program.parseAsync([
+        "node",
+        "llm-dungeon-playtest",
+        "playtest",
+        "calibrate",
+        "--target",
+        "openrouter:moonshotai/kimi-k3@openrouter",
+        "--scenario-seed",
+        "far-meridian-dead-signal",
+        "--language",
+        "ru",
+        "--max-cost",
+        "2",
+      ]);
+      expect(calibrate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scenarioSeed: "far-meridian-dead-signal",
+          language: "ru",
+          maxCost: 2,
+        }),
+      );
 
       await program.parseAsync([
         "node",
@@ -245,6 +268,7 @@ describe("playtest terminal commands", () => {
       );
     } finally {
       packages.mockRestore();
+      calibrate.mockRestore();
       probe.mockRestore();
       legacy.mockRestore();
     }

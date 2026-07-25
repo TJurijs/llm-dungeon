@@ -461,9 +461,9 @@ describe("multi-campaign Web server", () => {
       enabled: true,
       available: false,
       testedLanguages: ["en", "ru"],
-      adapterStatus: "uncalibrated",
-      technicalStatus: { en: "inconclusive", ru: "inconclusive" },
-      quality: { en: "unrated", ru: "unrated" },
+      adapterStatus: "calibrated",
+      technicalStatus: { en: "clean", ru: "clean" },
+      quality: { en: "high", ru: "high" },
       recommendationEligibility: {
         eligible: true,
         reasons: ["product_recommended_default"],
@@ -471,7 +471,7 @@ describe("multi-campaign Web server", () => {
       evidence: {
         compatibility: expect.objectContaining({ protocolVersion: 1 }),
         assessment: expect.arrayContaining([expect.objectContaining({ source: "calibration" })]),
-        certificationCurrent: { en: false, ru: false },
+        certificationCurrent: { en: true, ru: true },
       },
     });
     expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });

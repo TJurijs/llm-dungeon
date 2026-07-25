@@ -38,7 +38,48 @@ class ExactCalibrationProvider implements LlmProvider {
   ) {}
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
-    const wire = requestedObject(request.prompt);
+    const wire =
+      request.schemaName === "calibration_campaign_setup_v1" &&
+      !request.prompt.startsWith("Return exactly this representative campaign setup:")
+        ? {
+            campaignTitle: "Production Seed Calibration",
+            scenarioMarkdown: "A production-sized scenario seed.",
+            openingNarration: "The campaign begins with an actionable situation.",
+            timeLabel: "Evening",
+            player: {
+              id: "player:hero",
+              kind: "person",
+              name: "Ilya",
+              status: "active",
+              location: "location:start",
+              tags: [],
+              description: "A careful traveler.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+              traits: [],
+              conditions: [],
+              inventory: [],
+            },
+            entities: [
+              {
+                id: "location:start",
+                kind: "location",
+                name: "Starting Point",
+                status: "quiet",
+                tags: [],
+                description: "A durable starting location.",
+                establishedFacts: [],
+                secrets: [],
+                playerKnowledge: [],
+                traits: [],
+                conditions: [],
+                inventory: [],
+              },
+            ],
+            threads: [],
+          }
+        : requestedObject(request.prompt);
     const value = request.decodeResponse ? request.decodeResponse(wire) : wire;
     const phase = request.generationPhase ?? "decision";
     const attemptMetadata: ProviderAttemptMetadata = {
@@ -154,6 +195,38 @@ describe("model calibration", () => {
     expect(calibrationFailureStatus(results.filter((result) => !result.probe.passed))).toBe(
       "no_compatible_profile",
     );
+  });
+
+  it("uses a production scenario seed to prove setup truncation before escalating", async () => {
+    const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
+    const results = await runCalibrationVariants(
+      [base],
+      (profile) =>
+        new ExactCalibrationProvider(
+          profile.key.provider,
+          profile.key.model,
+          profile.outputBudgets.setup < 16_000,
+        ),
+      {
+        probeOptions: {
+          setupInput: {
+            worldRules: "Grounded frontier rules.",
+            premise: "A detailed production-sized mystery.",
+            character: "A courier captain with a small crew.",
+            language: "ru",
+          },
+        },
+      },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.probe.cases[0]).toMatchObject({
+      caseId: "representative_setup",
+      success: true,
+      attemptMetadata: { truncated: true },
+    });
+    expect(results[1]?.profile.outputBudgets.setup).toBe(16_000);
+    expect(results[1]?.probe.passed).toBe(true);
   });
 
   it("rejects unsafe evidence IDs and unbounded or multi-variable variants before any calls", async () => {
