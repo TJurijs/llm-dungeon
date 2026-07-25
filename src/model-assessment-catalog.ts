@@ -100,8 +100,12 @@ type PersistedAssessmentCatalog = z.infer<typeof PersistedAssessmentCatalogSchem
 export type AdapterAssessment = z.infer<typeof AdapterAssessmentSchema>;
 export type CertificationAssessment = z.infer<typeof CertificationAssessmentSchema>;
 
+const LEGACY_SHIPPED_ADAPTER_REVISION = 7;
+const LEGACY_SHIPPED_CERTIFICATION_VERSION = "3";
+
 const ShippedCertificationSchema = z
   .object({
+    packageVersion: z.string().min(1).default(LEGACY_SHIPPED_CERTIFICATION_VERSION),
     language: LanguageCodeSchema,
     technicalStatus: ModelTechnicalGameplayStatusSchema,
     recoveryCount: z.number().int().nonnegative(),
@@ -114,6 +118,7 @@ const ShippedCertificationSchema = z
 export type ShippedCertification = z.infer<typeof ShippedCertificationSchema>;
 
 export const ShippedModelAssessmentSchema = RouteKeySchema.extend({
+  adapterRevision: z.number().int().positive().default(LEGACY_SHIPPED_ADAPTER_REVISION),
   profileFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   calibrationReference: z.string().min(1),
   calibratedAt: z.string().datetime({ offset: true }),
@@ -137,7 +142,7 @@ function shippedAssessment(
     route: input.route,
     adapter: {
       status: "calibrated",
-      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
+      adapterRevision: input.adapterRevision,
       profileFingerprint: input.profileFingerprint,
       evidence: {
         source: "calibration",
@@ -150,13 +155,12 @@ function shippedAssessment(
     certifications: input.certifications.map(({ reference, recordedAt, ...certification }) => ({
       ...certification,
       packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
       profileFingerprint: input.profileFingerprint,
       evidence: {
         source: "certification",
         reference,
         packageId: "certification-v1",
-        packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
+        packageVersion: certification.packageVersion,
         executionProfileFingerprint: input.profileFingerprint,
         recordedAt,
       },
@@ -168,8 +172,8 @@ function shippedAssessment(
 /**
  * Shipped assessments are certification output produced by the playtest
  * harness (tools/playtest) and reviewed into defaults/model-assessments.json.
- * The compact authoring shape is expanded here so packageVersion and adapter
- * revision always reflect the current application constants.
+ * The compact authoring shape retains the exact package and adapter versions
+ * that produced the evidence so a contract change cannot silently revalidate it.
  */
 const SHIPPED_MODEL_ASSESSMENTS_URL = new URL(
   "../defaults/model-assessments.json",

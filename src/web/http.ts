@@ -68,14 +68,18 @@ export function sendTextDownload(
   status: number,
   text: string,
   filename: string,
+  contentType = "text/markdown; charset=utf-8",
 ): void {
   const encodedFilename = encodeURIComponent(filename).replace(
     /[!'()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
+  const fallbackFilename = filename.toLowerCase().endsWith(".html")
+    ? "llm-dungeon-campaign.html"
+    : "llm-dungeon-campaign.md";
   response.writeHead(status, {
-    "Content-Type": "text/markdown; charset=utf-8",
-    "Content-Disposition": `attachment; filename="llm-dungeon-campaign.md"; filename*=UTF-8''${encodedFilename}`,
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
   });

@@ -89,6 +89,7 @@ export class PlaytestProjectContext extends CliProjectContext {
     config: ProviderConfig,
     languages: readonly LanguageCode[],
     maxCostUsd: number,
+    costOverride?: { inputPerMillion: number; outputPerMillion: number },
   ): Promise<{
     passed: LanguageCode[];
     failed: Array<{ language: LanguageCode; error: string }>;
@@ -100,8 +101,12 @@ export class PlaytestProjectContext extends CliProjectContext {
       model: config.model,
       route,
     });
-    const price = inferTokenPrice(config.provider, config.model);
-    if (!price) throw new Error(`No built-in token price for ${config.provider}/${config.model}`);
+    const price = costOverride ?? inferTokenPrice(config.provider, config.model);
+    if (!price) {
+      throw new Error(
+        `No built-in token price for ${config.provider}/${config.model}; provide explicit input/output rates so the compatibility probe can enforce its cost ceiling`,
+      );
+    }
     const cost = new PlaytestCostManager(maxCostUsd);
     const provider = new CompatibilityCostProvider(
       this.createProvider(config, profile),

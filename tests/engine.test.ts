@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DungeonEngine } from "../src/engine.js";
+import { playerTurnResponse } from "../src/web/presentation.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 import { createTestStore, setupFixture } from "./helpers.js";
 
@@ -130,7 +131,41 @@ describe("turn engine", () => {
     expect(provider.calls).toBe(1);
     expect(result.turn).toBe(1);
     expect(result.check).toBeUndefined();
+    expect(playerTurnResponse(result)).toMatchObject({ checkText: null });
     expect(provider.requests[0]?.generationPhase).toBe("decision");
+  });
+
+  it.each([
+    ["automatic_success" as const, "success" as const, "The captive is already restrained."],
+    ["automatic_failure" as const, "failure" as const, "The stone wall has no opening."],
+  ])("commits %s without rolling and preserves its player-visible reason", async (kind, outcome, reason) => {
+    const store = await createTestStore();
+    const provider = new FakeProvider([
+      {
+        kind,
+        reason,
+        narration: kind === "automatic_success" ? "You secure the captive." : "The wall does not yield.",
+        turnSummary: "The certain outcome was resolved.",
+        operations: [],
+      },
+    ]);
+    let rolls = 0;
+    const result = await new DungeonEngine(store, provider, () => {
+      rolls += 1;
+      return 50;
+    }).play("I attempt it.");
+
+    expect(provider.calls).toBe(1);
+    expect(rolls).toBe(0);
+    expect(result.check).toBeUndefined();
+    expect(result.automaticOutcome).toEqual({ outcome, reason });
+    expect(playerTurnResponse(result)).toMatchObject({
+      checkText: `${outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE"} — ${reason}`,
+    });
+    expect((await store.recentTranscript()).at(-1)?.checkText).toContain(
+      outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE",
+    );
+    expect((await store.recentTranscript()).at(-1)?.checkText).toContain(reason);
   });
 
   it("answers an explicit question without rolling, persisting, or advancing a turn", async () => {
@@ -343,7 +378,7 @@ describe("turn engine", () => {
     expect(request.prompt).toContain("Any absent item is not carried");
     expect(request.prompt).toContain("distinct current-turn source and explicit receipt");
     expect(request.prompt).toContain("do not create semantic duplicates");
-    expect(request.prompt).toContain("For decision=resolved");
+    expect(request.prompt).toContain("For ordinary decision=resolved");
     expect(request.prompt).toContain("CHECK DIFFICULTY POLICY");
     expect(request.prompt).toContain("Positive values help the player character");
     expect(request.prompt).toContain("social, informational, temporal, relational");
@@ -405,6 +440,52 @@ describe("turn engine", () => {
         .get("player:hero")
         ?.facts.some((fact) => fact.text === "A hooded stranger is watching from the corner."),
     ).toBe(true);
+  });
+
+  it("repairs a checked resolution whose summary completes events missing from narration", async () => {
+    const store = await createTestStore();
+    const provider = new FakeProvider([
+      {
+        kind: "check_required",
+        check: {
+          name: "Pursue Varag through the Beast Pens",
+          difficulty: 35,
+          modifiers: [{ label: "martial power", value: 15 }],
+          successStakes:
+            "Kroll corners Varag against the outer fence, allowing Kroll and Vael to block his flight.",
+          failureStakes: "Varag escapes through the crowded pens.",
+        },
+      },
+      {
+        narration: '"Vael, cut him off!" you roar over the skittish pack beasts.',
+        turnSummary:
+          "Kroll and Guard Vael chased Varag through the beast pens and trapped him against the outer fence.",
+        operations: [],
+      },
+      {
+        narration:
+          '"Vael, cut him off!" you roar over the skittish pack beasts. You drive Varag down the narrowing lane while Vael circles the pens. Varag reaches the outer fence with nowhere left to run, and you and Vael close in from either side, trapping him there.',
+        turnSummary: "Kroll and Vael chased down Varag and cornered him at the outer fence.",
+        operations: [],
+      },
+    ]);
+
+    const result = await new DungeonEngine(store, provider, () => 27).play(
+      "Chase the man, tell Vael to do the same.",
+    );
+
+    expect(provider.calls).toBe(3);
+    expect(provider.requests[2]).toMatchObject({
+      schemaName: "domain_repair_turn_resolution_v1",
+      generationPhase: "repair",
+      repairOfPhase: "locked_resolution",
+      attemptKind: "domain_repair",
+    });
+    expect(provider.requests[2]?.prompt).toContain(
+      "Checked resolution narration must be more detailed than its summary",
+    );
+    expect(result.narration).toContain("Varag reaches the outer fence with nowhere left to run");
+    expect((await store.load()).manifest.turn).toBe(1);
   });
 
   it("repairs a checked resolution that tries to bypass the locked ending with player status", async () => {
@@ -473,7 +554,11 @@ describe("turn engine", () => {
           failureStakes: "Be noticed.",
         },
       },
-      { narration: "You slip past.", turnSummary: "The hero passed unseen.", operations: [] },
+      {
+        narration: "You slip quietly past the guarded door without drawing notice.",
+        turnSummary: "The hero passed unseen.",
+        operations: [],
+      },
     ]);
     const engine = new DungeonEngine(store, provider, () => {
       rolls += 1;

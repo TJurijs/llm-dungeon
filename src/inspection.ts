@@ -1,13 +1,23 @@
 import type { LanguageCode } from "./language.js";
 import type { Entity, GameState, Thread } from "./schemas.js";
 import type {
+  CampaignStateSnapshot,
+  CharacterInspection,
   InspectionFacts,
   InspectionInventoryItem,
+  LocationInspection,
   PlayerStateInspection,
   StateView,
+  ThreadsInspection,
 } from "./types.js";
 
 const PLAYER_VISIBLE_FACT_SECTIONS = new Set(["established", "knowledge", "history"]);
+
+export function campaignStateRevision(
+  manifest: Pick<GameState, "turn" | "updatedAt">,
+): string {
+  return `${manifest.turn}:${manifest.updatedAt}`;
+}
 
 function playerVisibleFacts(entity: Entity): InspectionFacts {
   const established: string[] = [];
@@ -43,6 +53,34 @@ function inventoryItems(owner: Entity, entities: Map<string, Entity>): Inspectio
   });
 }
 
+export function projectPlayerInspection(
+  view: "character",
+  language: LanguageCode,
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+): CharacterInspection;
+export function projectPlayerInspection(
+  view: "location",
+  language: LanguageCode,
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+): LocationInspection;
+export function projectPlayerInspection(
+  view: "threads",
+  language: LanguageCode,
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+): ThreadsInspection;
+export function projectPlayerInspection(
+  view: StateView,
+  language: LanguageCode,
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+): PlayerStateInspection;
 export function projectPlayerInspection(
   view: StateView,
   language: LanguageCode,
@@ -92,5 +130,30 @@ export function projectPlayerInspection(
     view,
     language,
     threads: threads.map(({ title, summary, status }) => ({ title, summary, status })),
+  };
+}
+
+export function projectCampaignStateSnapshot(
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+): CampaignStateSnapshot {
+  return {
+    revision: campaignStateRevision(manifest),
+    character: projectPlayerInspection(
+      "character",
+      manifest.language,
+      manifest,
+      entities,
+      threads,
+    ),
+    location: projectPlayerInspection(
+      "location",
+      manifest.language,
+      manifest,
+      entities,
+      threads,
+    ),
+    threads: projectPlayerInspection("threads", manifest.language, manifest, entities, threads),
   };
 }

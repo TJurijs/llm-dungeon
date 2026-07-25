@@ -145,12 +145,14 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .description("Refresh strict setup/gameplay compatibility for a calibrated model")
     .option("--target <target>", "provider:model[@route]; defaults to configured model")
     .option("--languages <codes>", "comma-separated gameplay languages", languageList)
+    .option("--input-cost <usd>", "custom input USD per million tokens", positiveNumber)
+    .option("--output-cost <usd>", "custom output USD per million tokens", positiveNumber)
     .requiredOption("--max-cost <usd>", "hard compatibility-probe cost ceiling", positiveNumber)
     .action((options: CompatibilityProbeOptions) => playtest.probe(options));
   playtests
     .command("promote <target>")
     .description(
-      "Sync a calibrated/certified model's local evidence into defaults/ for git (does not add it as a public candidate)",
+      "Ship a calibrated/certified model and curate it as a public non-removable candidate",
     )
     .option("--note <text>", "human provenance stored with the shipped compatibility test")
     .action((target: string, options: { note?: string }) => playtest.promote(target, options));

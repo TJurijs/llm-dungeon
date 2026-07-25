@@ -3,9 +3,15 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from "node:path";
 import { z } from "zod";
 import { CampaignCatalog, type CampaignCatalogSummary } from "./campaign-catalog.js";
-import { campaignMarkdownFilename, renderCampaignMarkdown } from "./campaign-export.js";
+import {
+  campaignHtmlFilename,
+  campaignMarkdownFilename,
+  renderCampaignHtml,
+  renderCampaignMarkdown,
+} from "./campaign-export.js";
 import { probeProviderConnection } from "./connection-probe.js";
 import { DungeonEngine } from "./engine.js";
+import { campaignStateRevision } from "./inspection.js";
 import {
   campaignSetupDefaults,
   LANGUAGES,
@@ -34,7 +40,7 @@ import {
 } from "./schemas.js";
 import { StateStore } from "./store.js";
 import type { CampaignCostSummary } from "./campaign-cost.js";
-import type { GenerationMetadata, StateView } from "./types.js";
+import type { CampaignStateSnapshot, GenerationMetadata, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
 import { CampaignOperationCoordinator } from "./web/campaign-operations.js";
 import {
@@ -81,6 +87,7 @@ interface SetupDraft {
 }
 
 interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerConfig"> {
+  stateRevision: string;
   busy: boolean;
   pending: unknown;
   campaignCost: CampaignCostSummary | null;
@@ -145,6 +152,8 @@ export class DungeonWebController {
   private readonly activeModelUses = new Map<string, number>();
   private readonly activeModelRemovals = new Set<string>();
   private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
+  private readonly stateCache = new Map<string, CampaignStateSnapshot>();
+  private readonly stateLoads = new Map<string, Promise<CampaignStateSnapshot>>();
   private campaignCatalog: CampaignCatalog | undefined;
 
   constructor(
@@ -261,12 +270,38 @@ export class DungeonWebController {
     const { providerConfig, ...manifest } = summary;
     return {
       ...manifest,
+      stateRevision: campaignStateRevision(summary),
       busy: this.operations.isBusy(summary.campaignId),
       pending: pendingStatus(await store.getPending()),
       campaignCost: await this.campaignCost(summary, store),
       config:
         providerConfig === undefined ? null : this.settings.presentedSelection(providerConfig),
     };
+  }
+
+  private async campaignState(summary: CampaignCatalogSummary): Promise<CampaignStateSnapshot> {
+    const existingLoad = this.stateLoads.get(summary.campaignId);
+    if (existingLoad) return existingLoad;
+    const load = (async () => {
+      const cached = this.stateCache.get(summary.campaignId);
+      const read = await (await this.readStore(summary)).campaignStateSnapshot(cached?.revision);
+      if (read.state) {
+        this.stateCache.set(summary.campaignId, read.state);
+        return read.state;
+      }
+      if (!cached || cached.revision !== read.revision) {
+        throw new Error("Campaign state cache revision is inconsistent");
+      }
+      return cached;
+    })();
+    this.stateLoads.set(summary.campaignId, load);
+    try {
+      return await load;
+    } finally {
+      if (this.stateLoads.get(summary.campaignId) === load) {
+        this.stateLoads.delete(summary.campaignId);
+      }
+    }
   }
 
   private async activeStore(campaignId: string): Promise<StateStore> {
@@ -812,6 +847,7 @@ export class DungeonWebController {
         await (await this.catalog()).deleteArchivedCampaign(campaignId);
       });
       this.costCache.delete(campaignId);
+      this.stateCache.delete(campaignId);
       sendJson(response, 200, { deleted: true });
       return true;
     }
@@ -865,13 +901,17 @@ export class DungeonWebController {
 
     if (action === "inspect" && method === "GET") {
       const view = url.searchParams.get("view") as StateView | null;
-      if (!view || !STATE_VIEWS.includes(view))
+      if (view !== null && !STATE_VIEWS.includes(view))
         throw new WebApiError(400, "Invalid inspection view");
       const summary = await this.requireSummary(campaignId);
       if (this.operations.isBusy(campaignId))
         throw new WebApiError(409, "Campaign state is temporarily busy");
-      const inspection = await (await this.readStore(summary)).inspect(view);
-      sendJson(response, 200, { inspection });
+      const state = await this.campaignState(summary);
+      if (view === null) {
+        sendJson(response, 200, { state });
+      } else {
+        sendJson(response, 200, { revision: state.revision, inspection: state[view] });
+      }
       return true;
     }
 
@@ -886,18 +926,28 @@ export class DungeonWebController {
 
     if (action === "export" && method === "GET") {
       const format = url.searchParams.get("format") ?? "markdown";
-      if (format !== "markdown")
+      if (!['markdown', 'md', 'html'].includes(format))
         throw new WebApiError(400, `Unsupported campaign export format: ${format}`);
       const summary = await this.requireSummary(campaignId);
       if (this.operations.isBusy(campaignId))
         throw new WebApiError(409, "Campaign export is temporarily busy");
       const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
-      sendTextDownload(
-        response,
-        200,
-        renderCampaignMarkdown(snapshot),
-        campaignMarkdownFilename(snapshot.state.title),
-      );
+      if (format === "html") {
+        sendTextDownload(
+          response,
+          200,
+          renderCampaignHtml(snapshot),
+          campaignHtmlFilename(snapshot.state.title),
+          "text/html; charset=utf-8",
+        );
+      } else {
+        sendTextDownload(
+          response,
+          200,
+          renderCampaignMarkdown(snapshot),
+          campaignMarkdownFilename(snapshot.state.title),
+        );
+      }
       return true;
     }
 

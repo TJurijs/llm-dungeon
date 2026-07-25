@@ -280,6 +280,34 @@
           "recordedAt": "2026-07-23T16:36:16.654Z"
         }
       ]
+    },
+    {
+      "provider": "openrouter",
+      "model": "moonshotai/kimi-k3",
+      "route": "openrouter",
+      "profileFingerprint": "a0f66cf6ffde38d6af91970fbadd2e42fcc29e0adf44d72decaaafe201fd0a29",
+      "calibrationReference": "playtests/calibration/kimi-k3-openrouter-20260725",
+      "calibratedAt": "2026-07-25T18:15:22.418Z",
+      "certifications": [
+        {
+          "language": "en",
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
+          "reference": "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784/jobs/job-001",
+          "recordedAt": "2026-07-25T18:39:02.211Z"
+        },
+        {
+          "language": "ru",
+          "technicalStatus": "clean",
+          "recoveryCount": 0,
+          "qualityStatus": "high",
+          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
+          "reference": "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784/jobs/job-002",
+          "recordedAt": "2026-07-25T18:39:34.262Z"
+        }
+      ]
     }
   ]
 }

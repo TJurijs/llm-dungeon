@@ -26,6 +26,7 @@ const MODEL_SPEED: Readonly<Record<string, ModelSpeedRating>> = {
   // Pro's parallel EN/RU certification averaged about 16.5 seconds per
   // player-visible turn. This is a loaded estimate, not canonical latency.
   "deepseek/deepseek-v4-pro": "average",
+  "moonshotai/kimi-k3": "slow",
   "qwen/qwen3.7-plus": "average",
   "x-ai/grok-4.5": "slow",
   "x-ai/grok-4.3": "fast",
@@ -139,6 +140,22 @@ const MODEL_SPEED_ESTIMATES: Readonly<Record<string, ModelSpeedEstimate>> = {
       packageId: "certification-v1",
       packageVersion: "3",
       recordedAt: "2026-07-19T21:04:46.949Z",
+    },
+  },
+  "moonshotai/kimi-k3": {
+    ordinaryTurnSeconds: 45.1,
+    checkedTurnSeconds: 92.4,
+    sampleTurns: 20,
+    measuredAt: "2026-07-25",
+    latencyBasis: "canonical",
+    concurrency: 1,
+    evidence: {
+      source: "certification",
+      reference:
+        "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
+      packageId: "certification-v1",
+      packageVersion: "3",
+      recordedAt: "2026-07-25T18:18:41.087Z",
     },
   },
   "qwen/qwen3.7-plus": {

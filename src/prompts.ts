@@ -6,6 +6,7 @@ export {
 } from "./prompts/appeal.js";
 export {
   ACTION_ECONOMY_POLICY,
+  CAPABILITY_POLICY,
   CURRENT_STATE_RECONCILIATION,
   DM_SYSTEM_PROMPT,
   DM_SYSTEM_SECTIONS,

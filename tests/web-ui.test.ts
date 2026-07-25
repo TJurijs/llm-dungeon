@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BrowserChatHistory, chatEntryPresentation, generationTooltip } from "../web/chat-ui.js";
+import {
+  campaignRevision,
+  CampaignStateCache,
+  scheduleIdleTask,
+} from "../web/campaign-state.js";
 import { UI_COPY, localeCopy } from "../web/ui-copy.js";
 import {
   campaignCostText,
@@ -14,6 +19,69 @@ import {
 } from "../web/ui-utils.js";
 
 describe("web UI copy", () => {
+  it("caches one coherent campaign state, deduplicates loads, and ignores invalidated responses", async () => {
+    const cache = new CampaignStateCache();
+    const state = {
+      revision: "1:now",
+      character: { view: "character" },
+      location: { view: "location" },
+      threads: { view: "threads" },
+    };
+    let calls = 0;
+    const fetchState = async () => {
+      calls += 1;
+      return { state };
+    };
+    const [first, duplicate] = await Promise.all([
+      cache.refresh("campaign:one", state.revision, fetchState),
+      cache.refresh("campaign:one", state.revision, fetchState),
+    ]);
+    expect(calls).toBe(1);
+    expect(first).toBe(state);
+    expect(duplicate).toBe(state);
+    expect(await cache.refresh("campaign:one", state.revision, fetchState)).toBe(state);
+    expect(calls).toBe(1);
+    expect(campaignRevision({ turn: 2, updatedAt: "later" })).toBe("2:later");
+    expect(campaignRevision({ stateRevision: "opaque", turn: 2, updatedAt: "later" })).toBe(
+      "opaque",
+    );
+
+    let resolveOld!: (value: { state: typeof state }) => void;
+    const oldResponse = new Promise<{ state: typeof state }>((resolve) => {
+      resolveOld = resolve;
+    });
+    const staleLoad = cache.refresh("campaign:two", "1:now", () => oldResponse);
+    cache.invalidate("campaign:two");
+    resolveOld({ state });
+    expect(await staleLoad).toBeNull();
+    expect(cache.get("campaign:two")).toBeNull();
+  });
+
+  it("schedules state prefetch through the browser idle lane with a timer fallback", () => {
+    let callback: (() => void) | undefined;
+    let cancelled = false;
+    let ran = false;
+    const cancel = scheduleIdleTask(
+      () => {
+        ran = true;
+      },
+      {
+        setTimeout(next: () => void) {
+          callback = next;
+          return 7;
+        },
+        clearTimeout(handle: number) {
+          cancelled = handle === 7;
+        },
+      },
+    );
+    expect(ran).toBe(false);
+    callback?.();
+    expect(ran).toBe(true);
+    cancel();
+    expect(cancelled).toBe(true);
+  });
+
   it("keeps complete English and Russian chat controls and a platform-specific submit shortcut", async () => {
     const app = await readFile(path.join(process.cwd(), "web", "app.js"), "utf8");
     expect(UI_COPY.ru.newCampaign).toBe("Новая кампания");
@@ -23,15 +91,25 @@ describe("web UI copy", () => {
     expect(UI_COPY.en).not.toHaveProperty("adapterUncalibrated");
     expect(UI_COPY.en.workingHint).not.toContain(":retry");
     expect(Object.keys(UI_COPY.ru).sort()).toEqual(Object.keys(UI_COPY.en).sort());
+    expect(UI_COPY.en.traits).toBe("Traits & abilities");
+    expect(UI_COPY.ru.traits).toBe("Черты и способности");
     expect(submitShortcut({ platform: "MacIntel" })).toBe("⌘ + Enter");
     expect(submitShortcut({ platform: "Win32" })).toBe("Ctrl + Enter");
     expect(UI_COPY.ru.submitHint).not.toContain("Ctrl/⌘");
     expect(localeCopy("ru", "exportCampaign")).toBe("Экспорт журнала");
+    expect(localeCopy("en", "exportMarkdown")).toBe("Markdown (.md)");
+    expect(localeCopy("en", "exportHtml")).toBe("Readable HTML (.html)");
     expect(localeCopy("unsupported", "newCampaign")).toBe("New campaign");
     expect(hasConfiguredProviderKey({ providers: [] }, {})).toBe(false);
     expect(hasConfiguredProviderKey({ providers: [{ keyPresent: true }] }, {})).toBe(true);
     expect(hasConfiguredProviderKey({ providers: [] }, { gemini: true })).toBe(true);
     expect(app).toContain('campaignApiPath(campaignId, "export")');
+    expect(app).toContain('exportCampaign("markdown")');
+    expect(app).toContain('exportCampaign("html")');
+    expect(app).toContain("renderReadableMarkdown");
+    expect(app.indexOf('campaignSetupSection(t("worldStyle")')).toBeLessThan(
+      app.indexOf('campaignSetupSection(t("language")'),
+    );
   });
 
   it("uses a semantic campaign sidebar, streamlined setup, settings, and state dock", async () => {
@@ -50,6 +128,8 @@ describe("web UI copy", () => {
     expect(html).toContain("./.env");
     expect(html).toContain('id="campaign-list"');
     expect(html).toContain('id="chat-log" class="chat-log" role="log"');
+    expect(html).toContain('id="export-campaign-markdown"');
+    expect(html).toContain('id="export-campaign-html"');
     expect(html).toContain('id="campaign-setup-form"');
     expect(html).not.toContain('id="setup-advanced"');
     expect(html).not.toContain('id="setup-world-settings"');
@@ -205,6 +285,21 @@ describe("web UI copy", () => {
       ".llm-model-row.is-custom .llm-model-copy { flex-wrap: wrap; }",
     );
     expect(compactStyles).toContain(".llm-model-error { min-width: 0; flex: 1 0 100%;");
+  });
+
+  it("makes character traits expandable and keeps known details compact", async () => {
+    const [inspection, styles] = await Promise.all([
+      readFile(path.join(process.cwd(), "web", "inspection-ui.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
+    ]);
+
+    expect(inspection).toContain('element("details", "trait-item")');
+    expect(inspection).toContain('element("summary", "trait-title", title)');
+    expect(inspection).toContain('appendFacts(card, inspection.facts, t, true)');
+    expect(inspection).toContain('element("details", "inspection-known-details")');
+    expect(styles).toContain(".known-details-scroll");
+    expect(styles).toContain("max-height: 16rem");
+    expect(styles).toContain("overflow-y: auto");
   });
 
   it("uses meaningful transcript identities and offers permanent deletion only beside archived campaigns", async () => {

@@ -7,7 +7,7 @@ import { parseAppealCommand } from "../appeal.js";
 import type { CampaignCatalogSummary } from "../campaign-catalog.js";
 import { parseQuestionCommand } from "../question.js";
 import type { LanguageCode } from "../language.js";
-import { formatCheck } from "../mechanics.js";
+import { formatAutomaticOutcome, formatCheck } from "../mechanics.js";
 import { campaignSetupDefaults } from "../language.js";
 import type { SetupResult } from "../schemas.js";
 import {
@@ -219,6 +219,10 @@ export class HumanGameCli {
     if (result.check) {
       console.log(
         `${terminalHeading("D100 check", result.check.spec.name)}\n${terminalStyle.blue(sanitizeTerminalText(formatCheck(result.check, result.state.language)))}\n`,
+      );
+    } else if (result.automaticOutcome) {
+      console.log(
+        `${terminalHeading("D100 check", result.automaticOutcome.outcome === "success" ? "Automatic success" : "Automatic failure")}\n${terminalStyle.blue(sanitizeTerminalText(formatAutomaticOutcome(result.automaticOutcome, result.state.language)))}\n`,
       );
     }
     console.log(terminalHeading(`Turn ${result.turn}`, "Dungeon Master"));

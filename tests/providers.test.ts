@@ -1338,9 +1338,9 @@ describe("provider adapters", () => {
       const body = JSON.parse(String(init?.body)) as Record<string, any>;
       const schema = body.response_format.json_schema.schema;
       expect(schema).toEqual(GAMEPLAY_WIRE_JSON_SCHEMA);
-      expect(schema.properties.narration.description).toContain("decision=check_required");
-      expect(schema.properties.effects.description).toContain("decision=check_required");
-      expect(schema.properties.summary.description).toContain("decision=check_required");
+      expect(schema.properties.narration.description).toContain("check_required");
+      expect(schema.properties.effects.description).toContain("check_required");
+      expect(schema.properties.summary.description).toContain("check_required");
       expect(schema.properties.effects.items.required).toContain("references");
       expect(schema.properties.effects.items.properties.text.description).toContain("advance_time");
       expect(schema.properties.effects).not.toHaveProperty("maxItems");
@@ -1422,6 +1422,29 @@ describe("provider adapters", () => {
         ]),
       ),
     ).toMatchObject({ kind: "resolved", operations: [{ type: "add_fact", section: "knowledge" }] });
+  });
+
+  it("decodes explicit automatic outcomes and rejects reasons on silent direct resolution", () => {
+    expect(
+      decodeTurnDecision({
+        ...resolvedWire(),
+        checkName: "The captive is already restrained.",
+        successStakes: "$automatic_success",
+      }),
+    ).toMatchObject({
+      kind: "automatic_success",
+      reason: "The captive is already restrained.",
+      narration: "Schema enforcement verified.",
+    });
+    expect(() =>
+      decodeTurnDecision({ ...resolvedWire(), checkName: "This must stay silent." }),
+    ).toThrow(/check strings/);
+    expect(() =>
+      decodeTurnDecision({
+        ...resolvedWire(),
+        failureStakes: "$automatic_failure",
+      }),
+    ).toThrow(/checkName/);
   });
 
   it("uses explicit sentinels without losing intentional empty list updates", () => {

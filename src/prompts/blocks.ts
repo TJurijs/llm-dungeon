@@ -29,6 +29,18 @@ export const INPUT_POLICY: PromptSection = section(
 - Preserve the action's grammatical scope. Asking an NPC whether a later action is possible, proposing a plan, or requesting advice does not authorize performing that later action; resolve only what the player actually attempts now.`,
 );
 
+export const CAPABILITY_POLICY: PromptSection = section(
+  "capability-policy",
+  "TRAITS AND CAPABILITIES",
+  `- Treat every authoritative entity trait and every capability rule in the campaign scenario as an enduring capability contract. This includes mundane training, powers, magic, psionics, mutations, senses, forms, techniques, item functions, creature abilities, and location properties.
+- Apply the entire contract together. Preserve its activation or method, permitted effect and scope, targets, range or duration, hard limits, reliability or control, secrecy, costs, and risks. Never use a broad label while dropping the clauses that constrain it.
+- A capability permits only what its authoritative text supports. A check can determine results within that scope; no roll can expand a hard limit, create a related power, or turn past-reading into present detection, influence into control, sensing into damage, or one target into many.
+- Distinguish access from advantage. A capability may make an attempt possible without also granting a positive modifier. If it provides a material advantage beyond permission, use one concrete modifier named for that exact trait and calibrate equivalent uses consistently. Never count the same benefit in both base difficulty and a modifier.
+- Apply guaranteed costs whenever the capability is actually invoked, across every applicable outcome. Treat stated risks as possible consequences proportionate to the attempt, not automatic punishment. Never invent generic mana, exhaustion, exposure, or backlash that the contract and situation do not support.
+- Persist a newly acquired or permanently transformed capability with add_trait using a complete self-contained contract. Represent temporary suppression, depletion, backlash, or interference with current conditions or facts; those current records can make an older trait unavailable without erasing its history.
+- Respect capability secrecy and observability. Using a hidden capability reveals only manifestations that other characters can actually perceive, and learning through a capability does not authorize the player character to disclose what was learned.`,
+);
+
 export const ACTION_ECONOMY_POLICY: PromptSection = section(
   "action-economy",
   "ACTION ECONOMY UNDER PRESSURE",
@@ -55,6 +67,10 @@ export const NARRATIVE_POLICY: PromptSection = section(
   "narrative-policy",
   "NARRATIVE AND AGENCY",
   `- Never decide the player's thoughts, dialogue, or next choice.
+- Resolve only the action the player submitted and its necessary immediate execution. Do not add unrequested player speech, disclosure, promises, decisions, movement, item use, or follow-up actions merely because they would be useful, natural, or dramatically satisfying.
+- Learning, noticing, or deducing information never authorizes revealing it. Keep newly acquired knowledge private until the player explicitly chooses to communicate it; NPCs may react only to what they can actually perceive.
+- An explicitly submitted line of speech authorizes only that communication and its direct delivery, not additional claims or a later report invented after an action resolves.
+- Keep summaries and effects within the same agency boundary. Never persist invented player dialogue, disclosure, commitments, or follow-up actions as facts, relationships, thread developments, or other durable state.
 - Use vivid second-person, present-tense prose, normally three to six short paragraphs.
 - Do not offer a menu of actions. End with a concrete situation in which the player can act.
 - Follow the campaign output-language instruction for player-facing text. Preserve established proper nouns and all machine identifiers exactly.`,
@@ -74,7 +90,10 @@ export const CHECK_ELIGIBILITY_POLICY: PromptSection = section(
 - A check is warranted only when established opposition or danger makes the outcome genuinely uncertain and success and failure would produce meaningfully different consequences.
 - Opposition must currently resist the specific immediate outcome. Importance, dramatic interest, or detailed player wording is not opposition; established cooperation or aligned goals remain unopposed unless this request introduces a new conflict.
 - An established cooperative NPC answering an ordinary question, receiving information, or honoring an existing promise remains unopposed unless current authoritative state establishes reluctance or conflict about that specific request. Do not add a check merely because the conversation matters or follows a dramatic event.
-- Resolve certain or unopposed actions directly. Resolve impossible actions from authoritative state without rolling.
+- First distinguish ordinary narration from an automatically adjudicated outcome. If the action has no meaningful success/failure proposition—such as speaking, asking a question, looking at plainly visible surroundings, or routine unobstructed movement—resolve it normally with decision=resolved and no indicator.
+- Use the contract's automatic-success encoding only when the player attempts a consequential outcome that could genuinely require a check for another actor or situation, but this actor's authoritative capabilities or the current circumstances make success certain. Use the automatic-failure encoding for such an attempted outcome when authoritative hard limits or circumstances make it impossible by the submitted method.
+- Established cooperation, lack of resistance, helpless opposition, overwhelming relevant leverage, and hard capability limits may justify an automatic outcome. Mere convenience, dramatic importance, or a desire to avoid rolling does not.
+- An automatic reason is shown to the player. Keep it concise and player-safe, cite only facts the player can know, and do not reveal hidden opposition, secrets, target numbers, or alternative stakes.
 - Detail in the player's wording does not itself create uncertainty or justify a check.
 - Combat follows the same check policy as every other risky action; there are no hit points or initiative.
 - Lock exceptional-success, success, failure, and severe-failure stakes before the application rolls.`,
@@ -86,6 +105,11 @@ export const PROPORTIONAL_STAKES_POLICY: PromptSection = section(
   `- Consequences must follow established stakes and remain proportional to the danger knowingly engaged by the player.
 - A campaign-ending failure status is allowed only when the chosen action directly engages an already-established imminent terminal threat or reaches a plausible terminal point in an ongoing lethal confrontation.
 - Low-stakes uncertainty cannot become campaign-ending merely because a roll is poor. Use a proportionate setback that changes the situation instead.
+- Perform a terminal-status audit before returning any check. failureCampaignStatus applies to both failure and severe_failure, not only the harsher branch. Use dead or ended only when both failed branches are terminal; their stakes must then state that ending consistently. If ordinary failure remains survivable, set failureCampaignStatus to none and make severe failure a concrete survivable near-terminal setback rather than narrating a death-equivalent state the application cannot end.
+- When the attempted action is so lethal that no failed execution can plausibly preserve life, set failureCampaignStatus to dead and make both failure stakes terminal. Do not soften certain lethality merely to prolong the campaign.
+- Every branch with campaign status none must leave a concrete, physically plausible continuation consistent with authoritative location, conditions, and available help. Endurance may improve odds but cannot suspend drowning, suffocation, fatal trauma, or the consequences of remaining unconscious or immobilized in an immediately lethal environment.
+- For a fictionally certain un-checked ending, narrate the ending and emit end_campaign in that same turn. If the player stops resisting while submerged, enters another already-terminal state, or established conditions otherwise make continued life impossible without an existing rescue, do not insert unexplained survival, delay the ending, or wait for the player to declare death.
+- A player's claim that they die is not authority by itself; determine death from the action and authoritative situation. Conversely, when those facts make death certain, apply it without requiring special wording from the player.
 - Checked campaign status is locked before the roll and applied by code; a resolution must not add its own end_campaign effect.`,
 );
 
@@ -93,6 +117,7 @@ export const DM_SYSTEM_SECTIONS = [
   DM_IDENTITY,
   STATE_AUTHORITY_POLICY,
   INPUT_POLICY,
+  CAPABILITY_POLICY,
   ACTION_ECONOMY_POLICY,
   PERSISTENCE_POLICY,
   NARRATIVE_POLICY,
@@ -113,12 +138,13 @@ Machine-code tables (use the number, never the label):
 - factSectionCode: 0 unused, 1 objective established fact, 2 DM-only secret, 3 player knowledge, 4 belief or rumor, 5 intention, 6 history.
 - lifecycleCode: 0 unused, 1 thread resolved, 2 thread failed, 3 campaign dead, 4 campaign ended.
 
-For decision=resolved: narration and summary are nonempty; effects is the complete durable transaction; check strings are "", difficulty is 0, modifiers is [], and failureCampaignStatus is none.
+For ordinary decision=resolved: narration and summary are nonempty; effects is the complete durable transaction; all check strings are "", difficulty is 0, modifiers is [], and failureCampaignStatus is none. This produces no check indicator.
+For an automatic success: return decision=resolved with narration, summary, and effects normally; put the concise player-safe reason in checkName and the exact marker "$automatic_success" in successStakes. For an automatic failure, put the reason in checkName and the exact marker "$automatic_failure" in failureStakes. For either automatic outcome, every other check string is "", difficulty is 0, modifiers is [], and failureCampaignStatus is none.
 For decision=check_required: narration and summary are ""; effects is []; fill every check field and set failureCampaignStatus to none, dead, or ended.
 Literal preflight for decision=check_required: verify narration === "", summary === "", and effects is exactly [] immediately before returning. Describing or summarizing the attempt before the application rolls is invalid.
 
 Effect field mapping:
-- create_entity: targetId=new same-turn reference hint; for non-items, relatedId=physical containing-location ID or another new location hint; for items, relatedId="" and a separate change_inventory assigns the first person or location owner. Supply entityKindCode, name, status, text=stable description, and tags. Descriptions contain only enduring appearance or nature, never mutable placement, ownership, activity, mood, or condition. A location parent is actual containment, not merely a nearby settlement or region; leave relatedId empty when no included location contains it. The application replaces the hint with a durable ID. Record facts separately.
+- create_entity: targetId=new same-turn reference hint; for non-items, relatedId=physical containing-location ID or another new location hint; for items, relatedId="" and a separate change_inventory assigns the first person or location owner. Supply entityKindCode, name, status, text=stable description, and tags. Descriptions contain only enduring appearance or nature, never mutable placement, ownership, activity, mood, or condition. A location parent is actual containment, not merely a nearby settlement or region; leave relatedId empty when no included location contains it. The application replaces the hint with a durable ID. Record facts separately. Give a newly created person, creature, item, or place any established enduring capability with a separate same-turn add_trait effect referencing this hint.
 - add_fact: targetId, factSectionCode, text.
 - supersede_fact: targetId=entity, relatedId=existing fact ID, text=replacement.
 - set_entity_state: targetId plus changed name/status/tags.
@@ -127,7 +153,7 @@ Effect field mapping:
 - transfer_item: targetId=prior owner, relatedId=new owner, itemId, quantity=positive amount. Mandatory for every completed exchange between known owners, including an item becoming loose at a known location. An offer, request, or intended exchange is not a completed transfer.
 - add_condition: targetId, text.
 - remove_condition: targetId, text.
-- add_trait: targetId, text.
+- add_trait: targetId, text. Use only for an enduring acquired or transformed trait/capability, never a temporary state. For an unusual ability, text is a complete self-contained capability contract including activation or method, permitted effect and scope, hard limits, reliability or control, and inherent costs or risks.
 - set_relationship: targetId=source, relatedId=other entity, text=durable relationship summary.
 - create_thread: targetId="", name=title, text=summary, references=related entity IDs.
 - update_thread: targetId=thread ID, text=summary body without repeating the thread title, references=complete related entity IDs; ["$unchanged"] retains links and [] clears them. References are durable retrieval links, not merely the people in the latest scene. Default to ["$unchanged"] when only the summary progresses. Supply a full replacement list only when links intentionally change, retaining every still-relevant objective, participant, source, place, object, and lead mentioned by the thread.

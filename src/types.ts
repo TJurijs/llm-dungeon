@@ -1,5 +1,11 @@
 import type { z } from "zod";
-import type { GameState, ResolvedTurn, SetupResult, StateOperation } from "./schemas.js";
+import type {
+  AutomaticOutcome,
+  GameState,
+  ResolvedTurn,
+  SetupResult,
+  StateOperation,
+} from "./schemas.js";
 import type { LanguageCode } from "./language.js";
 import type { CheckResult } from "./mechanics.js";
 import type { PendingTurn } from "./persistence/pending.js";
@@ -184,6 +190,18 @@ export interface ThreadsInspection {
 
 export type PlayerStateInspection = CharacterInspection | LocationInspection | ThreadsInspection;
 
+export interface CampaignStateSnapshot {
+  revision: string;
+  character: CharacterInspection;
+  location: LocationInspection;
+  threads: ThreadsInspection;
+}
+
+export interface CampaignStateSnapshotRead {
+  revision: string;
+  state?: CampaignStateSnapshot;
+}
+
 export interface TurnResult {
   turn: number;
   kind: Exclude<TurnKind, "opening">;
@@ -192,6 +210,7 @@ export interface TurnResult {
   summary: string;
   operations: StateOperation[];
   check?: CheckResult;
+  automaticOutcome?: AutomaticOutcome;
   state: GameState;
 }
 
@@ -222,6 +241,7 @@ export interface PlayerVisibleTurn {
 export interface CampaignLogSnapshot {
   state: GameState;
   playerName: string;
+  setup?: CampaignStartSettings;
   turns: PlayerVisibleTurn[];
 }
 
@@ -250,6 +270,7 @@ export interface CommittedTurn {
   action: string;
   resolved: ResolvedTurn;
   check?: CheckResult;
+  automaticOutcome?: AutomaticOutcome;
   provider: string;
   model: string;
   usage?: StructuredResult<unknown>["usage"];

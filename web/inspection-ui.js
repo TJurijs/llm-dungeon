@@ -25,17 +25,71 @@ function appendList(parent, heading, values, t) {
   parent.append(section);
 }
 
-function appendFacts(parent, facts, t) {
-  appendList(
-    parent,
-    t("knownDetails"),
-    [
-      ...stringValues(facts?.established),
-      ...stringValues(facts?.knowledge),
-      ...stringValues(facts?.history),
-    ],
-    t,
+function traitParts(value) {
+  const withoutId = value.replace(/^trait:[^:]+:\s*/, "").trim();
+  const separator = withoutId.indexOf(" — ");
+  if (separator < 0) return { title: withoutId, description: "" };
+  return {
+    title: withoutId.slice(0, separator).trim(),
+    description: withoutId.slice(separator + 3).trim(),
+  };
+}
+
+function appendTraits(parent, traits, t) {
+  const section = element("section", "inspection-traits");
+  section.append(element("h4", "", t("traits")));
+  const items = stringValues(traits);
+  if (!items.length) {
+    section.append(element("p", "inspection-empty", t("none")));
+  } else {
+    const list = element("div", "trait-list");
+    for (const item of items) {
+      const { title, description } = traitParts(item);
+      if (!description) {
+        const staticTrait = element("div", "trait-item trait-item-static");
+        staticTrait.append(element("h5", "trait-title", title));
+        list.append(staticTrait);
+        continue;
+      }
+      const trait = element("details", "trait-item");
+      trait.append(
+        element("summary", "trait-title", title),
+        element("p", "trait-description", description),
+      );
+      list.append(trait);
+    }
+    section.append(list);
+  }
+  parent.append(section);
+}
+
+function appendFacts(parent, facts, t, collapsible = false) {
+  const values = [
+    ...stringValues(facts?.established),
+    ...stringValues(facts?.knowledge),
+    ...stringValues(facts?.history),
+  ];
+  if (!collapsible) {
+    appendList(parent, t("knownDetails"), values, t);
+    return;
+  }
+
+  const section = element("section", "inspection-known-details-section");
+  const details = element("details", "inspection-known-details");
+  details.append(
+    element("summary", "inspection-section-summary", `${t("knownDetails")} (${values.length})`),
   );
+  if (!values.length) {
+    details.append(element("p", "inspection-empty", t("none")));
+  } else {
+    const scroll = element("div", "known-details-scroll");
+    const list = element("ul", "inspection-list");
+    for (const item of values) list.append(element("li", "", item));
+    scroll.append(list);
+    details.append(scroll);
+  }
+  section.append(details);
+  parent.append(section);
 }
 
 function header(inspection) {
@@ -51,7 +105,7 @@ function character(inspection, t) {
   const card = element("article", "inspection-card");
   card.append(header(inspection));
   appendList(card, t("description"), inspection.description ? [inspection.description] : [], t);
-  appendList(card, t("traits"), inspection.traits, t);
+  appendTraits(card, inspection.traits, t);
   appendList(card, t("conditions"), inspection.conditions, t);
   const inventory = element("section");
   inventory.append(element("h4", "", t("inventory")));
@@ -80,7 +134,7 @@ function character(inspection, t) {
       : [],
     t,
   );
-  appendFacts(card, inspection.facts, t);
+  appendFacts(card, inspection.facts, t, true);
   return card;
 }
 

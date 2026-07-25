@@ -50,11 +50,13 @@ describe("language registry", () => {
       character: "Character",
       inventory: "Inventory",
       features: "Features",
+      traits: "Traits & abilities",
     });
     expect(languageDefinition("ru").inspection).toMatchObject({
       character: "Персонаж",
       inventory: "Инвентарь",
       features: "Особенности",
+      traits: "Черты и способности",
     });
   });
 

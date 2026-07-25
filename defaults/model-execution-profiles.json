@@ -82,6 +82,16 @@
       "route": "direct",
       "calibratedAt": "2026-07-23T13:10:29.133Z",
       "evidenceRef": "playtests/calibration/2026-07-23T13-10-16-915Z-695442f6-e0d0-43de-8339-dade16f61889"
+    },
+    {
+      "provider": "openrouter",
+      "model": "moonshotai/kimi-k3",
+      "route": "openrouter",
+      "calibratedAt": "2026-07-25T18:15:22.418Z",
+      "evidenceRef": "playtests/calibration/kimi-k3-openrouter-20260725",
+      "temperature": {
+        "policy": "omitted"
+      }
     }
   ]
 }

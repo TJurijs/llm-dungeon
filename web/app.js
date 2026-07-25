@@ -12,6 +12,11 @@ import {
   createThinkingEntry,
 } from "./chat-ui.js";
 import { renderInspectionView, inspectionMessage } from "./inspection-ui.js";
+import {
+  campaignRevision,
+  CampaignStateCache,
+  scheduleIdleTask,
+} from "./campaign-state.js";
 import { createSetupSettingsController } from "./setup-settings.js";
 import { UI_COPY } from "./ui-copy.js";
 import {
@@ -54,7 +59,9 @@ let pendingDeleteCampaignId = null;
 let inspectionSequence = 0;
 let campaignSetupSequence = 0;
 let toastTimer;
+let cancelInspectionPrefetch = null;
 const chatHistory = new BrowserChatHistory();
+const campaignStateCache = new CampaignStateCache();
 const inFlightCampaigns = new Set();
 const savingCampaignConfigs = new Set();
 const reconciledCampaignStates = new Map();
@@ -242,7 +249,10 @@ function appendCommittedResponse(campaignId, result, { render = true } = {}) {
       { render: false },
     );
   }
-  if (result.state) updateCampaignFromState(result.state);
+  if (result.state) {
+    campaignStateCache.invalidate(campaignId);
+    updateCampaignFromState(result.state);
+  }
   if (render && selectedCampaignId === campaignId && currentView === "chat")
     renderChat({ scroll: true });
 }
@@ -250,7 +260,12 @@ function appendCommittedResponse(campaignId, result, { render = true } = {}) {
 function updateCampaignFromState(state, config) {
   const index = campaigns.findIndex((campaign) => campaign.campaignId === state.campaignId);
   const existing = index >= 0 ? campaigns[index] : {};
-  const next = { ...existing, ...state, ...(config ? { config } : {}) };
+  const next = {
+    ...existing,
+    ...state,
+    stateRevision: campaignRevision(state),
+    ...(config ? { config } : {}),
+  };
   if (index >= 0) campaigns[index] = next;
   else campaigns.unshift(next);
   campaigns = sortCampaigns(campaigns);
@@ -502,7 +517,8 @@ function renderCampaignChrome() {
   const unavailable = !campaign || campaignBusy(campaign);
   $("#open-campaign-setup").disabled = unavailable;
   $("#open-inspection").disabled = unavailable;
-  $("#export-campaign").disabled = unavailable;
+  $("#export-campaign-markdown").disabled = unavailable;
+  $("#export-campaign-html").disabled = unavailable;
   $("#archive-campaign").disabled = unavailable || campaign.archived;
   $("#edit-campaign-title").disabled = unavailable || campaign.archived;
   if (campaign) updateComposer(campaign);
@@ -772,6 +788,7 @@ async function selectCampaign(campaignId) {
   closeInspection();
   showView("chat");
   await reconcileTranscript(campaignId);
+  scheduleInspectionPrefetch();
 }
 
 function beginNewCampaign() {
@@ -925,6 +942,7 @@ async function performStatusRefresh() {
       }
     }
   }
+  scheduleInspectionPrefetch();
 }
 
 function refreshStatus({ ensureFresh = false } = {}) {
@@ -1057,6 +1075,48 @@ async function changeCampaignModel() {
   }
 }
 
+function inspectionFromState(state, view) {
+  const inspection = state?.[view];
+  return inspection?.view === view ? inspection : null;
+}
+
+function renderInspectionState(state, view = currentInspectionView) {
+  const inspection = inspectionFromState(state, view);
+  if (!inspection) return false;
+  $("#inspection-output").replaceChildren(renderInspectionView(inspection, t));
+  return true;
+}
+
+async function refreshCampaignState(campaignId) {
+  const campaign = campaignById(campaignId);
+  if (!campaign || campaignBusy(campaign)) return campaignStateCache.get(campaignId);
+  return campaignStateCache.refresh(campaignId, campaignRevision(campaign), () =>
+    api(campaignApiPath(campaignId, "inspect")),
+  );
+}
+
+function scheduleInspectionPrefetch() {
+  cancelInspectionPrefetch?.();
+  cancelInspectionPrefetch = null;
+  const campaign = selectedCampaign();
+  if (!campaign || campaignBusy(campaign)) return;
+  const campaignId = campaign.campaignId;
+  if (campaignStateCache.isFresh(campaignId, campaignRevision(campaign))) return;
+  if (document.body.classList.contains("inspection-open")) {
+    refreshCampaignState(campaignId)
+      .then((state) => {
+        if (state && selectedCampaignId === campaignId) renderInspectionState(state);
+      })
+      .catch(() => {});
+    return;
+  }
+  cancelInspectionPrefetch = scheduleIdleTask(() => {
+    cancelInspectionPrefetch = null;
+    if (selectedCampaignId !== campaignId || campaignBusy(campaignById(campaignId))) return;
+    refreshCampaignState(campaignId).catch(() => {});
+  });
+}
+
 async function loadInspection(view) {
   const campaignId = selectedCampaignId;
   if (!campaignId) return;
@@ -1066,24 +1126,32 @@ async function loadInspection(view) {
     button.setAttribute("aria-selected", String(button.dataset.view === view)),
   );
   $("#inspection-title").textContent = t(view === "threads" ? "storyThreads" : view);
-  $("#inspection-output").replaceChildren(inspectionMessage(t("loadingState")));
+  const cached = campaignStateCache.get(campaignId);
+  const renderedCached = renderInspectionState(cached, view);
+  if (!renderedCached) {
+    $("#inspection-output").replaceChildren(inspectionMessage(t("loadingState")));
+  }
+  $("#inspection-output").setAttribute("aria-busy", "true");
   try {
-    const body = await api(
-      `${campaignApiPath(campaignId, "inspect")}?view=${encodeURIComponent(view)}`,
-    );
+    const state = await refreshCampaignState(campaignId);
     if (
       requestId !== inspectionSequence ||
       selectedCampaignId !== campaignId ||
       currentInspectionView !== view
     )
       return;
-    if (!body.inspection || body.inspection.view !== view) throw new Error(t("stateError"));
-    $("#inspection-output").replaceChildren(renderInspectionView(body.inspection, t));
+    if (!state || !renderInspectionState(state, view)) throw new Error(t("stateError"));
   } catch (error) {
     if (requestId !== inspectionSequence || selectedCampaignId !== campaignId) return;
-    $("#inspection-output").replaceChildren(
-      inspectionMessage(`${t("stateError")} ${error.message}`, "error"),
-    );
+    if (!renderedCached) {
+      $("#inspection-output").replaceChildren(
+        inspectionMessage(`${t("stateError")} ${error.message}`, "error"),
+      );
+    }
+  } finally {
+    if (requestId === inspectionSequence && selectedCampaignId === campaignId) {
+      $("#inspection-output").setAttribute("aria-busy", "false");
+    }
   }
 }
 
@@ -1110,11 +1178,11 @@ function closeInspection({ restoreFocus = false } = {}) {
   if (restoreFocus) $("#open-inspection").focus({ preventScroll: true });
 }
 
-function exportCampaign() {
+function exportCampaign(format) {
   const campaignId = selectedCampaignId;
   if (!campaignId) return;
   const link = document.createElement("a");
-  link.href = `${campaignApiPath(campaignId, "export")}?format=markdown`;
+  link.href = `${campaignApiPath(campaignId, "export")}?format=${format}`;
   link.download = "";
   document.body.append(link);
   link.click();
@@ -1153,13 +1221,57 @@ function closeArchiveCampaignDialog() {
   pendingArchiveCampaignId = null;
 }
 
-function campaignSetupSection(label, value, className = "") {
+function appendInlineMarkdown(element, value) {
+  for (const part of value.split(/(\*\*[^*\n]+\*\*)/g).filter(Boolean)) {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = part.slice(2, -2);
+      element.append(strong);
+    } else {
+      element.append(document.createTextNode(part));
+    }
+  }
+}
+
+function renderReadableMarkdown(value) {
+  const content = document.createElement("div");
+  content.className = "campaign-setup-rich-text";
+  let list = null;
+  for (const line of value.replace(/\r\n/g, "\n").trim().split("\n")) {
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    if (!line.trim()) {
+      list = null;
+    } else if (heading) {
+      list = null;
+      const level = Math.min(5, heading[1].length + 3);
+      const title = document.createElement(`h${level}`);
+      appendInlineMarkdown(title, heading[2]);
+      content.append(title);
+    } else if (bullet) {
+      if (!list) {
+        list = document.createElement("ul");
+        content.append(list);
+      }
+      const item = document.createElement("li");
+      appendInlineMarkdown(item, bullet[1]);
+      list.append(item);
+    } else {
+      list = null;
+      const paragraph = document.createElement("p");
+      appendInlineMarkdown(paragraph, line.trim());
+      content.append(paragraph);
+    }
+  }
+  return content;
+}
+
+function campaignSetupSection(label, value, rich = false) {
   const section = document.createElement("section");
   const heading = document.createElement("h3");
   heading.textContent = label;
-  const content = document.createElement(className ? "pre" : "p");
-  if (className) content.className = className;
-  content.textContent = value;
+  const content = rich ? renderReadableMarkdown(value) : document.createElement("p");
+  if (!rich) content.textContent = value;
   section.append(heading, content);
   return section;
 }
@@ -1184,10 +1296,10 @@ async function openCampaignSetup() {
       status.languages.find((item) => item.code === body.setup.language)?.name ??
       body.setup.language;
     content.replaceChildren(
-      campaignSetupSection(t("premise"), body.setup.premise),
-      campaignSetupSection(t("characterConcept"), body.setup.character),
+      campaignSetupSection(t("premise"), body.setup.premise, true),
+      campaignSetupSection(t("characterConcept"), body.setup.character, true),
+      campaignSetupSection(t("worldStyle"), body.setup.worldRules, true),
       campaignSetupSection(t("language"), language),
-      campaignSetupSection(t("worldStyle"), body.setup.worldRules, "campaign-setup-markdown"),
     );
   } catch (error) {
     if (requestId === campaignSetupSequence && dialog.open) {
@@ -1230,6 +1342,7 @@ async function deleteArchivedCampaign(campaignId) {
       body: JSON.stringify({ title: campaign.title }),
     });
     chatHistory.remove(campaignId);
+    campaignStateCache.remove(campaignId);
     characterNames.delete(campaignId);
     actionDrafts.delete(campaignId);
     reconciledCampaignStates.delete(campaignId);
@@ -1327,7 +1440,8 @@ function bindEvents() {
     const button = event.target.closest("[data-view]");
     if (button) loadInspection(button.dataset.view);
   });
-  $("#export-campaign").addEventListener("click", exportCampaign);
+  $("#export-campaign-markdown").addEventListener("click", () => exportCampaign("markdown"));
+  $("#export-campaign-html").addEventListener("click", () => exportCampaign("html"));
   $("#open-campaign-setup").addEventListener("click", openCampaignSetup);
   $("#edit-campaign-title").addEventListener("click", beginCampaignTitleEdit);
   $("#campaign-title-form").addEventListener("submit", (event) => {

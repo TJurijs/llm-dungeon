@@ -14,8 +14,9 @@ import {
 import { ModelExecutionProfileStore } from "../../../src/model-execution-profile-store.js";
 import {
   MODEL_EXECUTION_ADAPTER_REVISION,
-  PhaseBudgetsSchema,
-  TimeoutPolicySchema,
+  ShippedProfileEvidenceSchema,
+  modelExecutionProfileDraftFromShippedEvidence,
+  modelExecutionProfileFingerprint,
   type ShippedProfileEvidence,
 } from "../../../src/model-execution-profile.js";
 import { CERTIFICATION_PACKAGE_VERSION } from "../../../src/certification-version.js";
@@ -53,19 +54,7 @@ export interface PromoteModelEvidenceResult {
 const ExecutionProfilesFileSchema = z
   .object({
     version: z.literal(1),
-    profiles: z.array(
-      z
-        .object({
-          provider: ProviderConfigSchema.shape.provider,
-          model: z.string(),
-          route: z.string(),
-          calibratedAt: z.string(),
-          evidenceRef: z.string(),
-          outputBudgets: PhaseBudgetsSchema.optional(),
-          timeout: TimeoutPolicySchema.optional(),
-        })
-        .strict(),
-    ),
+    profiles: z.array(ShippedProfileEvidenceSchema),
   })
   .strict();
 
@@ -80,8 +69,16 @@ const LlmModelsFileSchema = z
   .object({
     version: z.number(),
     recommended: ModelSelectionSchema,
-    providers: z.array(z.unknown()),
-    retiredModels: z.array(z.unknown()),
+    providers: z.array(
+      z
+        .object({
+          id: ProviderConfigSchema.shape.provider,
+          recommended: z.boolean(),
+          candidateModels: z.array(z.string().trim().min(1).max(300)),
+        })
+        .strict(),
+    ),
+    retiredModels: z.array(ModelSelectionSchema),
     shippedTests: z.array(
       z
         .object({
@@ -113,8 +110,9 @@ async function readJson<T>(target: string, schema: z.ZodType<T>): Promise<T> {
  * files; hand-editing them risks exactly the fingerprint drift this
  * function guards against.
  *
- * Does not touch candidateModels — offering a model publicly remains a
- * separate, deliberate decision.
+ * Promotion also adds the model to its provider's candidateModels list and
+ * removes a matching retired entry, so promoted evidence always ships as a
+ * known, non-removable public choice.
  */
 export async function promoteModelEvidence(
   options: PromoteModelEvidenceOptions,
@@ -202,14 +200,26 @@ export async function promoteModelEvidence(
     { provider: target.provider, model: target.model } as ProviderConfig,
     target.route,
   );
+  const differs = (left: unknown, right: unknown): boolean =>
+    JSON.stringify(left) !== JSON.stringify(right);
+  const structuredOutputOverride = differs(profile.structuredOutput, baseline.structuredOutput)
+    ? profile.structuredOutput
+    : undefined;
+  const temperatureOverride = differs(profile.temperature, baseline.temperature)
+    ? profile.temperature
+    : undefined;
+  const reasoningOverride = differs(profile.reasoning, baseline.reasoning)
+    ? profile.reasoning
+    : undefined;
+  const outputTokenFieldOverride = differs(profile.outputTokenField, baseline.outputTokenField)
+    ? profile.outputTokenField
+    : undefined;
   const outputBudgetsOverride =
-    JSON.stringify(profile.outputBudgets) !== JSON.stringify(baseline.outputBudgets)
+    differs(profile.outputBudgets, baseline.outputBudgets)
       ? profile.outputBudgets
       : undefined;
   const timeoutOverride =
-    JSON.stringify(profile.timeout) !== JSON.stringify(baseline.timeout)
-      ? profile.timeout
-      : undefined;
+    differs(profile.timeout, baseline.timeout) ? profile.timeout : undefined;
 
   const profileEntry: ShippedProfileEvidence = {
     provider: target.provider,
@@ -217,9 +227,22 @@ export async function promoteModelEvidence(
     route: target.route,
     calibratedAt: assessment.adapter.updatedAt,
     evidenceRef: assessment.adapter.evidence.reference,
+    ...(structuredOutputOverride ? { structuredOutput: structuredOutputOverride } : {}),
+    ...(temperatureOverride ? { temperature: temperatureOverride } : {}),
+    ...(reasoningOverride ? { reasoning: reasoningOverride } : {}),
+    ...(outputTokenFieldOverride ? { outputTokenField: outputTokenFieldOverride } : {}),
     ...(outputBudgetsOverride ? { outputBudgets: outputBudgetsOverride } : {}),
     ...(timeoutOverride ? { timeout: timeoutOverride } : {}),
   };
+
+  const reconstructedFingerprint = modelExecutionProfileFingerprint(
+    modelExecutionProfileDraftFromShippedEvidence(profileEntry),
+  );
+  if (reconstructedFingerprint !== profile.fingerprint) {
+    throw new Error(
+      `Promoted execution profile would reconstruct as ${reconstructedFingerprint}, not certified fingerprint ${profile.fingerprint}`,
+    );
+  }
 
   const assessmentEntry: ShippedModelAssessment = ShippedModelAssessmentSchema.parse({
     provider: target.provider,
@@ -285,6 +308,16 @@ export async function promoteModelEvidence(
 
   await withSerializedFileLock(`${LLM_MODELS_PATH}.lock`, "curated model data", async () => {
     const file = await readJson(LLM_MODELS_PATH, LlmModelsFileSchema);
+    const provider = file.providers.find((entry) => entry.id === target.provider);
+    if (!provider) {
+      throw new Error(`Cannot curate ${target.model}: provider ${target.provider} is not public`);
+    }
+    if (!provider.candidateModels.includes(target.model)) {
+      provider.candidateModels.push(target.model);
+    }
+    file.retiredModels = file.retiredModels.filter(
+      (entry) => entry.provider !== target.provider || entry.model !== target.model,
+    );
     const index = file.shippedTests.findIndex(
       (entry) => entry.provider === target.provider && entry.model === target.model,
     );

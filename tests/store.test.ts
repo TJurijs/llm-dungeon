@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveCheck } from "../src/mechanics.js";
+import { StateStore } from "../src/store.js";
 import {
   entityFilename,
   parseEntity,
   renderEntity,
   renderTurnLog,
 } from "../src/persistence/markdown.js";
-import { createTestStore } from "./helpers.js";
+import { createTestStore, setupFixture } from "./helpers.js";
 
 function recoveryTurnLog(): string {
   return renderTurnLog(1, {
@@ -24,6 +27,166 @@ function recoveryTurnLog(): string {
 }
 
 describe("Markdown state store", () => {
+  it("retains exact origin capability evidence without granting stale present-state claims", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "llm-dungeon-capability-origin-"));
+    const store = new StateStore(path.join(directory, "data"));
+    const premise =
+      "True-name songs exist, but each song works only on the kind of substance whose name is known.";
+    const character =
+      "Mira knows the true name of worked iron. She must sing audibly while touching it, can soften only one hand-sized worked-iron object for a few breaths, cannot affect ore or steel, and loses her voice until dawn after one use.";
+    await store.createGame({
+      setup: structuredClone(setupFixture),
+      worldRules: "A low-magic test world.",
+      setupInput: { premise, character },
+    });
+
+    const context = await store.buildContext();
+    expect(context).toContain(
+      "STARTING PREMISE AND CHARACTER CONCEPT — IMMUTABLE ORIGIN EVIDENCE",
+    );
+    expect(context).toContain(premise);
+    expect(context).toContain(character);
+    expect(context).toContain("setup compression must not silently discard them");
+    expect(context).toContain(
+      "never establish current inventory, location, relationships, conditions, success",
+    );
+
+    const legacyContext = await (await createTestStore()).buildContext();
+    expect(legacyContext).not.toContain(
+      "STARTING PREMISE AND CHARACTER CONCEPT — IMMUTABLE ORIGIN EVIDENCE",
+    );
+  });
+
+  it("keeps complete capability contracts prominent and carries recent check calibration forward", async () => {
+    const store = await createTestStore();
+    const capability =
+      "Echo Reading — bare-skin contact with an object reveals only fragmentary, unreliable impressions of strongly felt recent past events; it cannot perceive the present or future, affect minds or matter, and harmful echoes can cause mental backlash.";
+    await store.commitTurn({
+      action: "I complete my training.",
+      resolved: {
+        narration: "Your training gives shape to the strange impressions.",
+        turnSummary: "The hero acquired Echo Reading.",
+        operations: [{ type: "add_trait", targetId: "player:hero", trait: capability }],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+    const check = resolveCheck(
+      {
+        name: "Echo Reading",
+        difficulty: 50,
+        modifiers: [{ label: "Echo Reading", value: 15 }],
+        successStakes: "A fragment of the permitted past becomes clear.",
+        failureStakes: "The permitted impression remains indistinct.",
+      },
+      42,
+    );
+    await store.commitTurn({
+      action: "I touch the old seal with my bare hand and read its past.",
+      check,
+      resolved: {
+        narration: "A broken impression of an old argument surfaces and fades.",
+        turnSummary: "Echo Reading recovered one fragment of the seal's past.",
+        operations: [],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+    const itemCapability =
+      "Resonant Lockpick — while held against a mundane metal lock, it can vibrate one matching tumbler into place; it cannot affect magical seals, doors without tumblers, or more than one tumbler at a time.";
+    await store.commitTurn({
+      action: "I take the resonant lockpick.",
+      resolved: {
+        narration: "You secure the resonant lockpick in your kit.",
+        turnSummary: "The hero acquired a resonant lockpick.",
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:resonant-lockpick",
+              kind: "item",
+              name: "Resonant Lockpick",
+              status: "intact",
+              tags: ["tool"],
+              description: "A narrow tuning fork of dark metal.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
+          {
+            type: "add_trait",
+            targetId: "item:resonant-lockpick",
+            trait: itemCapability,
+          },
+          {
+            type: "change_inventory",
+            ownerId: "player:hero",
+            itemId: "item:resonant-lockpick",
+            quantityDelta: 1,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const context = await store.buildContext();
+    expect(context).toContain("RELEVANT TRAITS AND CAPABILITIES — AUTHORITATIVE CONTRACTS");
+    expect(context).toContain(JSON.stringify(capability));
+    expect(context).toContain(JSON.stringify(itemCapability));
+    expect(context).toContain("Apply every quoted entry as a whole");
+    expect(context).toContain("RECENT CHECK CALIBRATION — HISTORICAL EVIDENCE");
+    expect(context).toContain(
+      "Turn 2: Echo Reading; difficulty 50; modifiers: Echo Reading +15",
+    );
+    expect(context).toContain("never repeat a prior outcome or roll");
+
+    const character = await store.inspect("character");
+    expect(character.view).toBe("character");
+    if (character.view !== "character") throw new Error("Expected character inspection");
+    expect(character.traits).toContain(capability);
+    const loaded = await store.load();
+    const resonantLockpick = [...loaded.entities.values()].find(
+      (entity) => entity.name === "Resonant Lockpick",
+    );
+    expect(resonantLockpick?.traits).toContain(itemCapability);
+  });
+
+  it("projects every player-safe state view once per manifest revision", async () => {
+    const store = await createTestStore();
+    const initial = await store.campaignStateSnapshot();
+    expect(initial.state).toMatchObject({
+      revision: initial.revision,
+      character: { view: "character", name: "Arlen Vale" },
+      location: { view: "location", name: "The Crooked Crown" },
+      threads: { view: "threads" },
+    });
+
+    expect(await store.campaignStateSnapshot(initial.revision)).toEqual({
+      revision: initial.revision,
+    });
+
+    await store.commitTurn({
+      action: "I wait and listen.",
+      resolved: {
+        narration: "The tavern settles around you as you listen.",
+        turnSummary: "The hero paused to listen.",
+        operations: [],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+    const changed = await store.campaignStateSnapshot(initial.revision);
+    expect(changed.revision).not.toBe(initial.revision);
+    expect(changed.state).toMatchObject({
+      revision: changed.revision,
+      character: { view: "character" },
+      location: { view: "location" },
+      threads: { view: "threads" },
+    });
+  });
+
   it("migrates old manifests to English and can switch the current campaign to Russian", async () => {
     const store = await createTestStore();
     const manifestPath = path.join(store.currentDir, "manifest.json");

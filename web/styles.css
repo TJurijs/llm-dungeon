@@ -609,6 +609,15 @@ body.inspection-open #open-inspection {
   background: transparent;
   text-align: left;
 }
+.menu-label {
+  display: block;
+  padding: 0.55rem 0.7rem 0.2rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 
 .chat-scroll {
   min-height: 0;
@@ -1928,6 +1937,73 @@ button.llm-key-status[aria-busy="true"]::after {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.trait-list {
+  display: grid;
+  gap: 0.4rem;
+}
+.trait-item {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1a1b18;
+}
+.trait-title {
+  margin: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.trait-item summary {
+  padding: 0.65rem 0.75rem;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.trait-item summary::marker,
+.inspection-section-summary::marker {
+  color: var(--accent);
+}
+.trait-item[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+.trait-item-static {
+  padding: 0.65rem 0.75rem;
+}
+.trait-description {
+  margin: 0;
+  padding: 0.7rem 0.75rem 0.75rem;
+  line-height: 1.5;
+}
+.inspection-known-details {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1a1b18;
+}
+.inspection-section-summary {
+  padding: 0.65rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.inspection-known-details[open] .inspection-section-summary {
+  border-bottom: 1px solid var(--line);
+}
+.known-details-scroll {
+  max-height: 16rem;
+  padding: 0.7rem 0.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.inspection-known-details > .inspection-empty {
+  padding: 0.7rem 0.75rem;
+}
 .inspection-card p {
   color: #d4d3ca;
 }
@@ -2010,22 +2086,39 @@ button.llm-key-status[aria-busy="true"]::after {
   color: var(--text);
   white-space: pre-wrap;
 }
-.campaign-setup-markdown {
-  max-height: 320px;
-  margin: 0;
-  padding: 0.75rem;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #181916;
-  color: #d4d3ca;
-  font:
-    0.78rem/1.55 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  white-space: pre-wrap;
+.campaign-setup-rich-text {
+  color: var(--text);
+}
+.campaign-setup-rich-text > :first-child {
+  margin-top: 0;
+}
+.campaign-setup-rich-text > :last-child {
+  margin-bottom: 0;
+}
+.campaign-setup-rich-text h4,
+.campaign-setup-rich-text h5 {
+  margin: 1rem 0 0.4rem;
+  color: #dfe7d2;
+  font-size: 0.9rem;
+}
+.campaign-setup-rich-text p {
+  margin: 0.45rem 0;
+  color: #d4d5cc;
+  line-height: 1.6;
+  white-space: normal;
+}
+.campaign-setup-rich-text ul {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.55rem 0;
+  padding-left: 1.2rem;
+  color: #d4d5cc;
+}
+.campaign-setup-rich-text li::marker {
+  color: var(--accent);
+}
+.campaign-setup-rich-text strong {
+  color: var(--text);
 }
 .confirmation-actions {
   display: flex;

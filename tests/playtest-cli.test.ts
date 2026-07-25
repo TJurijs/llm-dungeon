@@ -86,7 +86,7 @@ describe("playtest terminal commands", () => {
     );
 
     expect(config).toMatchObject({
-      package: { id: "certification-v1", version: 3 },
+      package: { id: "certification-v1", version: 4 },
       languages: ["en", "ru"],
       repetitions: 2,
       globalWorkerLimit: 1,
@@ -204,6 +204,10 @@ describe("playtest terminal commands", () => {
         "gemini:gemini-3.5-flash",
         "--languages",
         "en,ru",
+        "--input-cost",
+        "3",
+        "--output-cost",
+        "15",
         "--max-cost",
         "0.25",
       ]);
@@ -211,6 +215,8 @@ describe("playtest terminal commands", () => {
         expect.objectContaining({
           target: "gemini:gemini-3.5-flash",
           languages: ["en", "ru"],
+          inputCost: 3,
+          outputCost: 15,
           maxCost: 0.25,
         }),
       );

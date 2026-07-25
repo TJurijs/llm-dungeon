@@ -56,6 +56,27 @@ describe("scenario seeds", () => {
     expect(seed.worldRules).toBe("EN world");
   });
 
+  it("ships Kroll with bounded surface telepathy in both native languages", async () => {
+    const [en, ru] = await Promise.all([
+      loadScenarioSeed(process.cwd(), "dark-sun-sealed-oasis", "en"),
+      loadScenarioSeed(process.cwd(), "dark-sun-sealed-oasis", "ru"),
+    ]);
+
+    expect(en.premise).toContain("Motherwell");
+    expect(en.character).toContain("surface drift");
+    expect(en.character).toContain("rather than a word-for-word inner voice");
+    expect(en.character).toContain("whisper a brief new thought");
+    expect(en.character).toContain("it cannot issue commands");
+    expect(en.character).not.toContain("bare skin rests against an object");
+
+    expect(ru.premise).toContain("Материнского Колодца");
+    expect(ru.character).toContain("поверхностное течение");
+    expect(ru.character).toContain("а не дословный внутренний голос");
+    expect(ru.character).toContain("шепнуть в один близкий разум короткую новую мысль");
+    expect(ru.character).toContain("не может отдавать приказы");
+    expect(ru.character).not.toContain("голая кожа прижимается к предмету");
+  });
+
   it("throws a not-found error for an unknown id", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-seeds-missing-"));
     await seedFiles(root, "twin-suns", "en", "EN");

@@ -26,6 +26,8 @@ export interface InspectionCopy {
 
 export interface MechanicsCopy {
   readonly noModifiers: string;
+  readonly automaticSuccess: string;
+  readonly automaticFailure: string;
   readonly total: string;
   readonly difficulty: string;
   readonly comparisonConnector: string;
@@ -41,6 +43,14 @@ export interface CampaignLifecycleCopy {
 
 export interface CampaignExportCopy {
   readonly documentLabel: string;
+  readonly campaignSetup: string;
+  readonly setupUnavailable: string;
+  readonly premise: string;
+  readonly characterConcept: string;
+  readonly worldStyle: string;
+  readonly language: string;
+  readonly turnLog: string;
+  readonly close: string;
   readonly status: string;
   readonly turnCount: string;
   readonly inWorldTime: string;
@@ -54,7 +64,6 @@ export interface CampaignExportCopy {
   readonly check: string;
   readonly dungeonMaster: string;
   readonly decision: string;
-  readonly summary: string;
   readonly statuses: Readonly<Record<"active" | "dead" | "ended", string>>;
 }
 

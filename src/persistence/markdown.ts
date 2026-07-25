@@ -1,17 +1,24 @@
 import matter from "gray-matter";
 import {
   ChronicleEventSchema,
+  AutomaticOutcomeSchema,
   EntitySchema,
   StateOperationSchema,
   ThreadSchema,
   type ChronicleEvent,
+  type AutomaticOutcome,
   type Entity,
   type Fact,
   type StateOperation,
   type Thread,
 } from "../schemas.js";
 import type { CommittedTurn, PlayerVisibleTurn, TurnKind } from "../types.js";
-import { CheckResultSchema, formatCheck, type CheckResult } from "../mechanics.js";
+import {
+  CheckResultSchema,
+  formatAutomaticOutcome,
+  formatCheck,
+  type CheckResult,
+} from "../mechanics.js";
 import { DEFAULT_LANGUAGE, type LanguageCode } from "../language.js";
 import { UsageSchema, type Usage } from "../usage.js";
 
@@ -417,6 +424,16 @@ export function parseTurnCheck(log: string): CheckResult | undefined {
   return CheckResultSchema.parse(JSON.parse(fenced[1]));
 }
 
+/** Decode the adjudicator's player-visible certain-outcome classification. */
+export function parseTurnAutomaticOutcome(log: string): AutomaticOutcome | undefined {
+  const parsed = matter(log);
+  const section = extractSection(parsed.content, "Automatic Outcome").trim();
+  if (!section || section === "_None._") return undefined;
+  const fenced = section.match(/^```json\s*([\s\S]*?)\s*```$/);
+  if (!fenced?.[1]) throw new Error("Turn log has invalid automatic outcome metadata");
+  return AutomaticOutcomeSchema.parse(JSON.parse(fenced[1]));
+}
+
 /** Decode private provider usage metadata without exposing narrative or operations. */
 export function parseTurnGenerationMetadata(log: string): TurnGenerationMetadata {
   const parsed = matter(log);
@@ -492,6 +509,18 @@ export function validatePreparedTurnLog(log: string): TurnOperationLedger {
     parseTurnCheck(log);
     if (kind === "appeal") throw new Error("An appeal turn cannot contain a check");
   }
+  const automaticSection = extractSection(parsed.content, "Automatic Outcome").trim();
+  // A pending commit created before automatic outcomes existed has no section;
+  // treat that legacy absence as "none" so crash recovery remains forward-compatible.
+  if (automaticSection && automaticSection !== "_None._") {
+    parseTurnAutomaticOutcome(log);
+    if (kind !== "gameplay") {
+      throw new Error("Only a gameplay turn may contain an automatic outcome");
+    }
+    if (checkSection !== "_No check._") {
+      throw new Error("A turn cannot contain both a check and an automatic outcome");
+    }
+  }
 
   return { turn, kind, operations: parseTurnOperations(log) };
 }
@@ -524,6 +553,14 @@ export function parsePlayerVisibleTurn(
       check = formatCheck(CheckResultSchema.parse(JSON.parse(fencedCheck[1])), language);
     } catch {
       // Corrupt or older private check metadata is never echoed to a player.
+    }
+  }
+  if (!check) {
+    try {
+      const automaticOutcome = parseTurnAutomaticOutcome(log);
+      if (automaticOutcome) check = formatAutomaticOutcome(automaticOutcome, language);
+    } catch {
+      // Corrupt private automatic-outcome metadata is never echoed to a player.
     }
   }
   const narration = storedSectionText(parsed.content, "Narration", encoded);
@@ -568,6 +605,12 @@ export function renderTurnLog(turn: number, committed: CommittedTurn): string {
   const kind = committed.kind ?? (turn === 0 ? "opening" : "gameplay");
   if (kind === "opening" && turn !== 0) throw new Error("Only turn zero may be an opening turn");
   if (kind === "appeal" && committed.check) throw new Error("An appeal cannot contain a check");
+  if (kind !== "gameplay" && committed.automaticOutcome) {
+    throw new Error("Only a gameplay turn may contain an automatic outcome");
+  }
+  if (committed.check && committed.automaticOutcome) {
+    throw new Error("A turn cannot contain both a check and an automatic outcome");
+  }
   if (
     committed.appealTargetTurn !== undefined &&
     (!Number.isInteger(committed.appealTargetTurn) ||
@@ -582,6 +625,9 @@ export function renderTurnLog(turn: number, committed: CommittedTurn): string {
   const check = committed.check
     ? `## Check\n\n\`\`\`json\n${JSON.stringify(committed.check, null, 2)}\n\`\`\``
     : "## Check\n\n_No check._";
+  const automaticOutcome = committed.automaticOutcome
+    ? `## Automatic Outcome\n\n\`\`\`json\n${JSON.stringify(AutomaticOutcomeSchema.parse(committed.automaticOutcome), null, 2)}\n\`\`\``
+    : "## Automatic Outcome\n\n_None._";
   const metadata = {
     contentCodec: CONTENT_CODEC,
     turn,
@@ -602,6 +648,7 @@ export function renderTurnLog(turn: number, committed: CommittedTurn): string {
       "## Player Action",
       encodeSectionText(committed.action),
       check,
+      automaticOutcome,
       "## Narration",
       encodeSectionText(committed.resolved.narration),
       "## Summary",

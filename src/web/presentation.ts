@@ -1,4 +1,4 @@
-import { formatCheck } from "../mechanics.js";
+import { formatAutomaticOutcome, formatCheck } from "../mechanics.js";
 import type { PendingTurn } from "../persistence/pending.js";
 import type { SetupResult } from "../schemas.js";
 import type { QuestionResult, TurnResult } from "../types.js";
@@ -51,6 +51,10 @@ export function playerTurnResponse(result: TurnResult | QuestionResult): unknown
     narration: result.narration,
     summary: result.summary,
     state: result.state,
-    checkText: result.check ? formatCheck(result.check, result.state.language) : null,
+    checkText: result.check
+      ? formatCheck(result.check, result.state.language)
+      : result.automaticOutcome
+        ? formatAutomaticOutcome(result.automaticOutcome, result.state.language)
+        : null,
   };
 }

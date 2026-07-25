@@ -10,6 +10,7 @@ describe("model speed ratings", () => {
     expect(modelSpeedRating("openai", "gpt-5.4")).toBe("fast");
     expect(modelSpeedRating("deepseek", "deepseek-v4-flash")).toBe("average");
     expect(modelSpeedRating("deepseek", "deepseek-v4-pro")).toBe("average");
+    expect(modelSpeedRating("openrouter", "moonshotai/kimi-k3")).toBe("slow");
     expect(modelSpeedRating("openrouter", "unmeasured/custom-model")).toBeUndefined();
   });
 
@@ -64,6 +65,20 @@ describe("model speed ratings", () => {
       latencyBasis: "loaded",
       concurrency: 2,
       evidence: { source: "certification", packageVersion: "3" },
+    });
+    expect(modelSpeedEstimate("openrouter", "moonshotai/kimi-k3")).toMatchObject({
+      ordinaryTurnSeconds: 45.1,
+      checkedTurnSeconds: 92.4,
+      sampleTurns: 20,
+      measuredAt: "2026-07-25",
+      latencyBasis: "canonical",
+      concurrency: 1,
+      evidence: {
+        source: "certification",
+        packageVersion: "3",
+        reference:
+          "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
+      },
     });
   });
 

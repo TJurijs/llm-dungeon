@@ -3,6 +3,7 @@ import {
   ResolvedTurnSchema,
   SetupResultSchema,
   TurnDecisionSchema,
+  type AutomaticOutcome,
   type ResolvedTurn,
   type SetupResult,
   type StateOperation,
@@ -75,11 +76,16 @@ class LockedOutcomeError extends Error {
 }
 
 /** Campaign status is part of the locked check and is applied by code, never inferred from narration. */
-function enforceLockedCampaignOutcome(
+function enforceLockedResolution(
   resolved: ResolvedTurn,
   check: CheckResult | undefined,
 ): ResolvedTurn {
   if (!check) return resolved;
+  if (resolved.turnSummary.trim().length >= resolved.narration.trim().length) {
+    throw new LockedOutcomeError(
+      "Checked resolution narration must be more detailed than its summary and must narrate the complete locked outcome before summarizing it",
+    );
+  }
   const endings = resolved.operations.filter((operation) => operation.type === "end_campaign");
   const failed = check.outcome === "failure" || check.outcome === "severe_failure";
   const desired = failed ? check.spec.failureCampaignStatus : "none";
@@ -295,13 +301,22 @@ export class DungeonEngine implements GameEngine {
           generationPhase: "decision",
         }),
       );
-      if (decision.data.kind === "resolved") {
+      if (decision.data.kind !== "check_required") {
+        const automaticOutcome: AutomaticOutcome | undefined =
+          decision.data.kind === "resolved"
+            ? undefined
+            : {
+                outcome:
+                  decision.data.kind === "automatic_success" ? "success" : "failure",
+                reason: decision.data.reason,
+              };
         return this.commitWithDomainRepair(
           { kind: "gameplay", action: pending.action },
-          decision.data,
+          ResolvedTurnSchema.parse(decision.data),
           undefined,
           decision,
           prompt,
+          automaticOutcome,
         );
       }
 
@@ -387,11 +402,12 @@ export class DungeonEngine implements GameEngine {
     check: CheckResult | undefined,
     result: StructuredResult<unknown>,
     originalPrompt: string,
+    automaticOutcome?: AutomaticOutcome,
   ): Promise<TurnResult> {
     try {
       const enforced =
-        request.kind === "gameplay" ? enforceLockedCampaignOutcome(resolved, check) : resolved;
-      return await this.commit(request, enforced, check, result);
+        request.kind === "gameplay" ? enforceLockedResolution(resolved, check) : resolved;
+      return await this.commit(request, enforced, check, result, automaticOutcome);
     } catch (error) {
       if (
         !(error instanceof TransactionValidationError) &&
@@ -421,9 +437,15 @@ export class DungeonEngine implements GameEngine {
       const usage = combineUsage(result.usage, corrected.usage);
       const enforced =
         request.kind === "gameplay"
-          ? enforceLockedCampaignOutcome(corrected.data, check)
+          ? enforceLockedResolution(corrected.data, check)
           : corrected.data;
-      return this.commit(request, enforced, check, { ...corrected, ...(usage ? { usage } : {}) });
+      return this.commit(
+        request,
+        enforced,
+        check,
+        { ...corrected, ...(usage ? { usage } : {}) },
+        automaticOutcome,
+      );
     }
   }
 
@@ -432,6 +454,7 @@ export class DungeonEngine implements GameEngine {
     resolved: ResolvedTurn,
     check: CheckResult | undefined,
     result: StructuredResult<unknown>,
+    automaticOutcome?: AutomaticOutcome,
   ): Promise<TurnResult> {
     const committed: CommittedTurn = {
       kind: request.kind,
@@ -444,6 +467,7 @@ export class DungeonEngine implements GameEngine {
       model: result.model,
       protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
       ...(check ? { check } : {}),
+      ...(automaticOutcome ? { automaticOutcome } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
     };
     const committedResult = await this.store.commitTurnWithResult(committed);
@@ -458,6 +482,7 @@ export class DungeonEngine implements GameEngine {
       summary: resolved.turnSummary,
       operations: committedResult.operations,
       ...(check ? { check } : {}),
+      ...(automaticOutcome ? { automaticOutcome } : {}),
       state,
     };
   }

@@ -90,7 +90,7 @@ describe("LLM provider definitions", () => {
     }
     expect(
       LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "openrouter")?.candidateModels,
-    ).toEqual(["qwen/qwen3.7-plus"]);
+    ).toEqual(["qwen/qwen3.7-plus", "moonshotai/kimi-k3"]);
     expect(
       LLM_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini")?.candidateModels,
     ).toEqual(["gemini-3.6-flash", "gemini-3.5-flash-lite"]);
@@ -111,7 +111,7 @@ describe("LLM provider definitions", () => {
 });
 
 describe("LLM model catalog persistence", () => {
-  it("ships evaluated models as current while keeping the recommended Gemini flash as default", async () => {
+  it("keeps structurally compatible models current while the recommended Gemini flash remains default", async () => {
     const root = await temporaryProject();
     const registry = catalog(root, {
       fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
@@ -144,6 +144,13 @@ describe("LLM model catalog persistence", () => {
       enabled: true,
     });
     await expect(registry.assertAvailable(grok45, "en")).resolves.toBeDefined();
+    const kimiK3 = { provider: "openrouter", model: "moonshotai/kimi-k3" } as const;
+    expect(model(snapshot, kimiK3)).toMatchObject({
+      candidate: true,
+      state: "compatible",
+      enabled: true,
+    });
+    await expect(registry.assertAvailable(kimiK3, "ru")).resolves.toBeDefined();
     expect(model(snapshot, { provider: "xai", model: "grok-4.3" })).toBeUndefined();
     for (const modelId of ["deepseek-v4-flash", "deepseek-v4-pro"]) {
       expect(model(snapshot, { provider: "deepseek", model: modelId })).toMatchObject({

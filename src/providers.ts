@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { ProviderConfigSchema, type ProviderConfig } from "./schemas.js";
-import { MODEL_EXECUTION_ADAPTER_REVISION } from "./model-execution-profile.js";
 import type { LlmProvider } from "./types.js";
 import {
   AnthropicProvider,
@@ -30,8 +29,11 @@ export {
   type ProviderExecutionOptions,
 } from "./providers/transport.js";
 
-/** Increment when provider transport or schema projection changes compatibility. */
-export const PROVIDER_ADAPTER_COMPATIBILITY_REVISION = MODEL_EXECUTION_ADAPTER_REVISION;
+/**
+ * Increment only when provider transport or schema projection changes. This is
+ * intentionally independent from narrative calibration's adapter revision.
+ */
+export const PROVIDER_ADAPTER_COMPATIBILITY_REVISION = 7 as const;
 
 export async function loadProviderConfig(configPath: string): Promise<ProviderConfig> {
   const raw = await readFile(configPath, "utf8");

@@ -153,8 +153,22 @@
               <details id="campaign-menu" class="campaign-menu">
                 <summary class="icon-button" aria-label="Campaign actions">•••</summary>
                 <div class="menu-popover">
-                  <button id="export-campaign" type="button" disabled data-i18n="exportCampaign">
-                    Export campaign log
+                  <span class="menu-label" data-i18n="exportCampaign">Export campaign log</span>
+                  <button
+                    id="export-campaign-markdown"
+                    type="button"
+                    disabled
+                    data-i18n="exportMarkdown"
+                  >
+                    Markdown (.md)
+                  </button>
+                  <button
+                    id="export-campaign-html"
+                    type="button"
+                    disabled
+                    data-i18n="exportHtml"
+                  >
+                    Readable HTML (.html)
                   </button>
                   <button
                     id="archive-campaign"

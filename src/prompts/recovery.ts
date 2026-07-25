@@ -13,7 +13,7 @@ The previous response selected decision=check_required. If that decision remains
   }
   if (decision === "resolved") {
     return `\n\nRESOLVED REPAIR CHECKLIST
-The previous response selected decision=resolved. If that decision remains warranted, narration and summary must be nonempty, effects must contain only caused durable changes, every check string must be "", difficulty must be 0, modifiers must be [], and failureCampaignStatus must be none.`;
+The previous response selected decision=resolved. If that decision remains warranted, narration and summary must be nonempty and effects must contain only caused durable changes. For ordinary resolution every check field must be neutral. For an automatic outcome preserve the exact contract marker and keep only its player-safe reason in checkName; do not reveal secrets or alternate stakes.`;
   }
   return "";
 }

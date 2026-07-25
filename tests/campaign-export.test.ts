@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { campaignMarkdownFilename, renderCampaignMarkdown } from "../src/campaign-export.js";
+import {
+  campaignHtmlFilename,
+  campaignMarkdownFilename,
+  renderCampaignHtml,
+  renderCampaignMarkdown,
+} from "../src/campaign-export.js";
 import type { GameState } from "../src/schemas.js";
 import type { CampaignLogSnapshot } from "../src/types.js";
 
@@ -26,6 +31,12 @@ describe("campaign Markdown export", () => {
     const snapshot: CampaignLogSnapshot = {
       state: state(),
       playerName: "Elian Voss",
+      setup: {
+        premise: "A royal courier disappears.",
+        character: "**Elian Voss**, a disgraced investigator.",
+        language: "en",
+        worldRules: "# The Crownlands\n\n- **Intrigue** has consequences.",
+      },
       turns: [
         {
           turn: 0,
@@ -56,15 +67,71 @@ describe("campaign Markdown export", () => {
     const markdown = renderCampaignMarkdown(snapshot);
 
     expect(markdown).toContain("# The Crooked Crown");
-    expect(markdown).toContain("## Opening");
-    expect(markdown).toContain("## Turn 1");
+    expect(markdown).toContain("## Campaign setup");
+    expect(markdown).toContain("### Character concept");
+    expect(markdown).toContain("**Elian Voss**, a disgraced investigator.");
+    expect(markdown).toContain("### Language\n\nEnglish");
+    expect(markdown.indexOf("### World and DM style")).toBeLessThan(
+      markdown.indexOf("### Language"),
+    );
+    expect(markdown).toContain("## Turn log");
+    expect(markdown).toContain("### Opening");
+    expect(markdown).toContain("### Turn 1");
+    expect(markdown).toContain("#### Elian Voss");
     expect(markdown).toContain("> I inspect the seal.\n> Carefully.");
-    expect(markdown).toContain("### D100 check");
+    expect(markdown).toContain("#### D100 check");
     expect(markdown).toContain("&lt;script&gt;bad()&lt;/script&gt;");
     expect(markdown).not.toContain("<script>");
-    expect(markdown).toContain("## Appeal 2");
+    expect(markdown).toContain("### Appeal 2");
     expect(markdown).toContain("**Reviewed turn:** 1");
-    expect(markdown).toContain("### Decision");
+    expect(markdown).toContain("#### Decision");
+    expect(markdown).not.toContain("A sealed letter arrived.");
+    expect(markdown).not.toContain("The seal was identified.");
+    expect(markdown).not.toContain("Summary");
+  });
+
+  it("renders a safe standalone reading page with chat-like turns and setup dialog", () => {
+    const snapshot: CampaignLogSnapshot = {
+      state: state(),
+      playerName: "Elian <Voss>",
+      setup: {
+        premise: "Find the **missing courier**.",
+        character: "A careful investigator.",
+        language: "en",
+        worldRules: "# Crownlands\n- Never trust raw <script>alert(1)</script> markup.",
+      },
+      turns: [
+        {
+          turn: 0,
+          kind: "opening",
+          action: "Campaign begins.",
+          narration: "Rain needles the windows.",
+          summary: "Do not export this summary.",
+        },
+        {
+          turn: 1,
+          kind: "gameplay",
+          action: "Inspect <the seal>.",
+          narration: "The wax bears a split crown.",
+          summary: "Nor this one.",
+          checkText: "Investigation succeeds.",
+        },
+      ],
+    };
+
+    const html = renderCampaignHtml(snapshot);
+
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain('class="setup-button"');
+    expect(html).toContain('<dialog id="campaign-setup">');
+    expect(html).toContain('class="entry player"');
+    expect(html).toContain('class="entry check"');
+    expect(html).toContain("Elian &lt;Voss&gt;");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).not.toContain("Do not export this summary.");
+    expect(html).not.toContain("Nor this one.");
+    expect(campaignHtmlFilename("The Crooked Crown")).toBe("The Crooked Crown.html");
   });
 
   it("uses campaign-language copy and creates filesystem-safe Unicode filenames", () => {

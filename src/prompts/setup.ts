@@ -37,6 +37,9 @@ export function setupPromptDocument(input: SetupPromptInput): PromptDocument {
       "setup-requirements",
       "SETUP REQUIREMENTS",
       `- Preserve supplied concepts faithfully; organize them rather than replacing them.
+- Treat traits as the durable home for enduring characteristics and usable capabilities, including mundane training, powers, magic, psionics, mutations, senses, forms, techniques, item functions, creature abilities, and supernatural location properties.
+- For every unusual capability supplied by the character seed, premise, or world configuration, put one self-contained capability trait on each entity that actually possesses it. Include its name, activation or method, permitted effect and scope, hard limits, reliability or control, and every inherent cost or risk. Preserve all supplied constraints together; never reduce a capability to a broad label or bury its usable definition only in tags, facts, secrets, or narration.
+- Keep setting-wide capability rules in scenarioMarkdown as well as entity-specific capability traits. Do not invent a capability merely to provide a convenient solution or broaden one beyond the supplied concept.
 - Use player:hero for the player ID.
 - Include the starting location and make player.location reference that location entity.
 - Every entity location and inventory reference must resolve to a type-compatible included entity.

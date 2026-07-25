@@ -9,10 +9,14 @@ import { ModelExecutionProfileStore } from "../src/model-execution-profile-store
 import {
   MODEL_EXECUTION_ADAPTER_REVISION,
   freezeModelExecutionProfile,
+  modelExecutionProfileDraftFromShippedEvidence,
+  modelExecutionProfileFingerprint,
   type FrozenModelExecutionProfile,
+  type ModelExecutionProfileDraft,
 } from "../src/model-execution-profile.js";
 import { CERTIFICATION_PACKAGE_VERSION } from "../src/certification-version.js";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../src/connection-probe.js";
+import { GAMEPLAY_PROTOCOL_VERSION } from "../src/llm/gameplay-protocol.js";
 
 // A synthetic model id under a real provider. LlmModelCatalog, ModelExecutionProfileStore,
 // and ModelAssessmentCatalog each merge in "shipped" release defaults from the real,
@@ -25,6 +29,7 @@ const TARGET = {
   model: "deepseek-v4-flash-promote-test",
   route: "direct",
 } as const;
+const TARGET_SELECTION = { provider: TARGET.provider, model: TARGET.model } as const;
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
@@ -32,8 +37,14 @@ function draft(
   outputBudgetsOverrides: Partial<
     Record<"setup" | "decision" | "lockedResolution" | "repair", number>
   > = {},
+  executionOverrides: Partial<
+    Pick<
+      ModelExecutionProfileDraft,
+      "structuredOutput" | "temperature" | "reasoning" | "outputTokenField"
+    >
+  > = {},
 ) {
-  return {
+  const base = {
     schemaVersion: 1 as const,
     key: TARGET,
     structuredOutput: {
@@ -59,6 +70,7 @@ function draft(
     },
     adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
   };
+  return { ...base, ...executionOverrides };
 }
 
 const roots: string[] = [];
@@ -81,8 +93,14 @@ async function tempProjectRoot(): Promise<string> {
       {
         version: 1,
         recommended: { provider: "gemini", model: "gemini-3.5-flash" },
-        providers: [],
-        retiredModels: [],
+        providers: [
+          {
+            id: "deepseek",
+            recommended: false,
+            candidateModels: ["deepseek-v4-flash"],
+          },
+        ],
+        retiredModels: [TARGET_SELECTION],
         shippedTests: [],
       },
       null,
@@ -99,9 +117,10 @@ afterEach(async () => {
 async function seedCalibrated(
   root: string,
   outputBudgetsOverrides = {},
+  executionOverrides: Parameters<typeof draft>[1] = {},
 ): Promise<FrozenModelExecutionProfile> {
   const profile = freezeModelExecutionProfile({
-    ...draft(outputBudgetsOverrides),
+    ...draft(outputBudgetsOverrides, executionOverrides),
     calibratedAt: "2026-07-20T00:00:00.000Z",
     evidenceRef: "playtests/calibration/test-run",
   });
@@ -146,7 +165,7 @@ async function seedCompatibilityProbe(
 ): Promise<void> {
   const catalog = new LlmModelCatalog(root, {
     testFingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
-    protocolVersion: 1,
+    protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
   });
   await catalog.recordTestSuccess(
     { provider: TARGET.provider, model: TARGET.model },
@@ -157,8 +176,9 @@ async function seedCompatibilityProbe(
 async function seedFullyCurrent(
   root: string,
   outputBudgetsOverrides = {},
+  executionOverrides: Parameters<typeof draft>[1] = {},
 ): Promise<FrozenModelExecutionProfile> {
-  const profile = await seedCalibrated(root, outputBudgetsOverrides);
+  const profile = await seedCalibrated(root, outputBudgetsOverrides, executionOverrides);
   await seedCertification(root, "en", profile.fingerprint);
   await seedCertification(root, "ru", profile.fingerprint);
   await seedCompatibilityProbe(root);
@@ -316,6 +336,11 @@ describe("promoteModelEvidence", () => {
       note: "test provenance",
     });
     expect(testEntry.testedLanguages.slice().sort()).toEqual(["en", "ru"]);
+    expect(
+      llmModelsFile.providers.find((provider: { id: string }) => provider.id === TARGET.provider)
+        .candidateModels,
+    ).toContain(TARGET.model);
+    expect(llmModelsFile.retiredModels).not.toContainEqual(TARGET_SELECTION);
   });
 
   it("includes budget/timeout overrides when the profile diverges from the default draft", async () => {
@@ -328,6 +353,38 @@ describe("promoteModelEvidence", () => {
     );
     const entry = profilesFile.profiles.find((e: { model: string }) => e.model === TARGET.model);
     expect(entry.outputBudgets).toMatchObject({ repair: 16_000 });
+  });
+
+  it("ships every execution override and reconstructs the certified fingerprint", async () => {
+    const root = await tempProjectRoot();
+    const profile = await seedFullyCurrent(root, {}, {
+      structuredOutput: {
+        mode: "native_strict_json_schema",
+        projection: "identity_v1",
+      },
+      temperature: { policy: "fixed", value: 0.4 },
+      reasoning: { policy: "deepseek_thinking_disabled" },
+      outputTokenField: "max_completion_tokens",
+    });
+
+    await promoteModelEvidence({ projectRoot: root, ...TARGET });
+    const profilesFile = JSON.parse(
+      await readFile(path.join(root, "defaults", "model-execution-profiles.json"), "utf8"),
+    );
+    const entry = profilesFile.profiles.find((e: { model: string }) => e.model === TARGET.model);
+
+    expect(entry).toMatchObject({
+      structuredOutput: {
+        mode: "native_strict_json_schema",
+        projection: "identity_v1",
+      },
+      temperature: { policy: "fixed", value: 0.4 },
+      reasoning: { policy: "deepseek_thinking_disabled" },
+      outputTokenField: "max_completion_tokens",
+    });
+    expect(
+      modelExecutionProfileFingerprint(modelExecutionProfileDraftFromShippedEvidence(entry)),
+    ).toBe(profile.fingerprint);
   });
 
   it("is idempotent: re-running upserts in place instead of duplicating entries", async () => {
@@ -354,6 +411,11 @@ describe("promoteModelEvidence", () => {
     );
     expect(
       llmModelsFile.shippedTests.filter((e: { model: string }) => e.model === TARGET.model),
+    ).toHaveLength(1);
+    expect(
+      llmModelsFile.providers
+        .find((provider: { id: string }) => provider.id === TARGET.provider)
+        .candidateModels.filter((model: string) => model === TARGET.model),
     ).toHaveLength(1);
   });
 });

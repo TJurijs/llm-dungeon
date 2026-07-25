@@ -5,7 +5,7 @@ import { ProviderConfigSchema } from "./schemas.js";
 
 export const MODEL_EXECUTION_PROFILE_VERSION = 1 as const;
 /** Increment whenever profile interpretation or a named projection changes. */
-export const MODEL_EXECUTION_ADAPTER_REVISION = 7 as const;
+export const MODEL_EXECUTION_ADAPTER_REVISION = 8 as const;
 
 export const ModelGenerationPhaseSchema = z.enum([
   "setup",
@@ -30,7 +30,7 @@ export const OutputTokenFieldSchema = z.enum([
 ]);
 export type OutputTokenField = z.infer<typeof OutputTokenFieldSchema>;
 
-const StructuredOutputPolicySchema = z.discriminatedUnion("mode", [
+export const StructuredOutputPolicySchema = z.discriminatedUnion("mode", [
   z
     .object({
       mode: z.literal("native_strict_json_schema"),
@@ -52,12 +52,12 @@ const StructuredOutputPolicySchema = z.discriminatedUnion("mode", [
     .strict(),
 ]);
 
-const TemperaturePolicySchema = z.discriminatedUnion("policy", [
+export const TemperaturePolicySchema = z.discriminatedUnion("policy", [
   z.object({ policy: z.literal("fixed"), value: z.number().min(0).max(2) }).strict(),
   z.object({ policy: z.literal("omitted") }).strict(),
 ]);
 
-const ReasoningPolicySchema = z.discriminatedUnion("policy", [
+export const ReasoningPolicySchema = z.discriminatedUnion("policy", [
   z.object({ policy: z.literal("omitted") }).strict(),
   z
     .object({
@@ -223,6 +223,31 @@ export const DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS: readonly ModelExecutionProf
   ),
 ];
 
+/** Exact starting draft for a model, or its provider/route draft re-keyed to it. */
+export function defaultModelExecutionProfileDraftForKey(
+  key: ModelExecutionProfileDraft["key"],
+): ModelExecutionProfileDraft {
+  const exact = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+    (profile) =>
+      profile.key.provider === key.provider &&
+      profile.key.model === key.model &&
+      profile.key.route === key.route,
+  );
+  if (exact) return structuredClone(exact);
+  const providerDefault = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
+    (profile) => profile.key.provider === key.provider && profile.key.route === key.route,
+  );
+  if (!providerDefault) {
+    throw new Error(
+      `No starting calibration profile exists for ${key.provider} via ${key.route}; provide --variant <file>`,
+    );
+  }
+  return ModelExecutionProfileDraftSchema.parse({
+    ...structuredClone(providerDefault),
+    key,
+  });
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value === null || typeof value !== "object") return value;
@@ -279,25 +304,27 @@ export function freezeModelExecutionProfile(
  * Shipped execution-profile evidence is data, not logic: it changes whenever
  * a model is calibrated/certified and should ship in defaults/ so every
  * checkout gets a working profile without re-running paid calibration. Most
- * entries use the documented default budgets/timeouts (no override needed);
- * a model whose certification-scale turns proved those defaults insufficient
- * carries explicit outputBudgets/timeout overrides so a fresh checkout runs
- * the exact validated values instead of silently reintroducing the failure
- * that calibration fixed. Use `playtest promote` to generate/update entries
- * from real local evidence rather than hand-editing this file.
+ * entries store only values that differ from the provider/route starting
+ * draft. A fresh checkout applies those overrides to reconstruct the exact
+ * calibrated profile. Use `playtest promote` to generate/update entries from
+ * real local evidence rather than hand-editing this file.
  */
 const SHIPPED_PROFILE_EVIDENCE_URL = new URL(
   "../defaults/model-execution-profiles.json",
   import.meta.url,
 );
 
-const ShippedProfileEvidenceSchema = z
+export const ShippedProfileEvidenceSchema = z
   .object({
     provider: ProviderConfigSchema.shape.provider,
     model: z.string().trim().min(1).max(300),
     route: z.string().trim().min(1).max(100),
     calibratedAt: z.string().datetime({ offset: true }),
     evidenceRef: z.string().trim().min(1).max(500),
+    structuredOutput: StructuredOutputPolicySchema.optional(),
+    temperature: TemperaturePolicySchema.optional(),
+    reasoning: ReasoningPolicySchema.optional(),
+    outputTokenField: OutputTokenFieldSchema.optional(),
     outputBudgets: PhaseBudgetsSchema.optional(),
     timeout: TimeoutPolicySchema.optional(),
   })
@@ -316,23 +343,32 @@ export const SHIPPED_PROFILE_EVIDENCE: readonly ShippedProfileEvidence[] =
     JSON.parse(readFileSync(SHIPPED_PROFILE_EVIDENCE_URL, "utf8")),
   ).profiles;
 
+/** Reconstruct the execution-only draft represented by compact shipped evidence. */
+export function modelExecutionProfileDraftFromShippedEvidence(
+  evidence: ShippedProfileEvidence,
+): ModelExecutionProfileDraft {
+  const parsed = ShippedProfileEvidenceSchema.parse(evidence);
+  const baseline = defaultModelExecutionProfileDraftForKey({
+    provider: parsed.provider,
+    model: parsed.model,
+    route: parsed.route,
+  });
+  return ModelExecutionProfileDraftSchema.parse({
+    ...baseline,
+    ...(parsed.structuredOutput ? { structuredOutput: parsed.structuredOutput } : {}),
+    ...(parsed.temperature ? { temperature: parsed.temperature } : {}),
+    ...(parsed.reasoning ? { reasoning: parsed.reasoning } : {}),
+    ...(parsed.outputTokenField ? { outputTokenField: parsed.outputTokenField } : {}),
+    ...(parsed.outputBudgets ? { outputBudgets: parsed.outputBudgets } : {}),
+    ...(parsed.timeout ? { timeout: parsed.timeout } : {}),
+  });
+}
+
 /** Frozen release evidence used until a local calibration supersedes it. */
 export const SHIPPED_MODEL_EXECUTION_PROFILES: readonly FrozenModelExecutionProfile[] =
   SHIPPED_PROFILE_EVIDENCE.map((evidence) => {
-    const candidate = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS.find(
-      (profile) =>
-        profile.key.provider === evidence.provider &&
-        profile.key.model === evidence.model &&
-        profile.key.route === evidence.route,
-    );
-    if (!candidate)
-      throw new Error(
-        `Missing shipped execution profile draft for ${evidence.provider}/${evidence.model}`,
-      );
     return freezeModelExecutionProfile({
-      ...candidate,
-      ...(evidence.outputBudgets ? { outputBudgets: evidence.outputBudgets } : {}),
-      ...(evidence.timeout ? { timeout: evidence.timeout } : {}),
+      ...modelExecutionProfileDraftFromShippedEvidence(evidence),
       calibratedAt: evidence.calibratedAt,
       evidenceRef: evidence.evidenceRef,
     });

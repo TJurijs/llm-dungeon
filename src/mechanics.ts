@@ -1,6 +1,11 @@
 import { randomInt } from "node:crypto";
 import { z } from "zod";
-import { CheckSpecSchema, type CheckSpec } from "./schemas.js";
+import {
+  AutomaticOutcomeSchema,
+  CheckSpecSchema,
+  type AutomaticOutcome,
+  type CheckSpec,
+} from "./schemas.js";
 import { DEFAULT_LANGUAGE, languageDefinition, type LanguageCode } from "./language.js";
 
 export type RollD100 = () => number;
@@ -75,4 +80,15 @@ export function formatCheck(
     modifierLines,
     `${copy.total} ${result.total}${copy.comparisonConnector}${copy.difficulty} ${result.spec.difficulty} — ${label}`,
   ].join("\n");
+}
+
+export function formatAutomaticOutcome(
+  rawOutcome: AutomaticOutcome,
+  language: LanguageCode = DEFAULT_LANGUAGE,
+): string {
+  const outcome = AutomaticOutcomeSchema.parse(rawOutcome);
+  const copy = languageDefinition(language).mechanics;
+  const label =
+    outcome.outcome === "success" ? copy.automaticSuccess : copy.automaticFailure;
+  return `${label} — ${outcome.reason}`;
 }

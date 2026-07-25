@@ -7,6 +7,7 @@ import {
   parseTurnOperations,
   renderEntity,
   renderTurnLog,
+  validatePreparedTurnLog,
 } from "../src/persistence/markdown.js";
 import type { Entity } from "../src/schemas.js";
 import type { CommittedTurn } from "../src/types.js";
@@ -290,6 +291,27 @@ describe("Markdown persistence codec", () => {
     expect(JSON.stringify(transcript)).not.toContain("private-model");
     expect(JSON.stringify(transcript)).not.toContain("inputTokens");
     expect(JSON.stringify(transcript)).not.toContain("State Operations");
+  });
+
+  it("persists automatic outcomes and renders them through the player-safe check message", () => {
+    const log = renderTurnLog(
+      2,
+      turnFixture({
+        action: "I grab the restrained captive.",
+        automaticOutcome: {
+          outcome: "success",
+          reason: "The captive is already restrained and cannot resist.",
+        },
+      }),
+    );
+
+    expect(log).toContain("## Automatic Outcome");
+    expect(parsePlayerVisibleTurn(log)).toMatchObject({
+      turn: 2,
+      checkText:
+        "AUTOMATIC SUCCESS — The captive is already restrained and cannot resist.",
+    });
+    expect(validatePreparedTurnLog(log)).toMatchObject({ turn: 2, kind: "gameplay" });
   });
 
   it("persists appeal metadata and labels it as administrative context", () => {

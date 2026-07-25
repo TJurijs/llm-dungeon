@@ -171,6 +171,7 @@ async function fixtureRoot(): Promise<string> {
     "ui-copy.js",
     "ui-utils.js",
     "chat-ui.js",
+    "campaign-state.js",
     "inspection-ui.js",
     "setup-settings.js",
   ]) {
@@ -347,6 +348,7 @@ describe("multi-campaign Web server", () => {
       "ui-copy.js",
       "ui-utils.js",
       "chat-ui.js",
+      "campaign-state.js",
       "inspection-ui.js",
       "setup-settings.js",
     ]) {
@@ -419,7 +421,7 @@ describe("multi-campaign Web server", () => {
       status.llm.providers
         .find((provider: any) => provider.id === "openrouter")
         .models.map((model: any) => model.id),
-    ).toEqual(["qwen/qwen3.7-plus"]);
+    ).toEqual(["qwen/qwen3.7-plus", "moonshotai/kimi-k3"]);
     expect(
       status.llm.providers
         .find((provider: any) => provider.id === "xai")
@@ -459,9 +461,9 @@ describe("multi-campaign Web server", () => {
       enabled: true,
       available: false,
       testedLanguages: ["en", "ru"],
-      adapterStatus: "calibrated",
-      technicalStatus: { en: "clean", ru: "clean" },
-      quality: { en: "high", ru: "high" },
+      adapterStatus: "uncalibrated",
+      technicalStatus: { en: "inconclusive", ru: "inconclusive" },
+      quality: { en: "unrated", ru: "unrated" },
       recommendationEligibility: {
         eligible: true,
         reasons: ["product_recommended_default"],
@@ -469,7 +471,7 @@ describe("multi-campaign Web server", () => {
       evidence: {
         compatibility: expect.objectContaining({ protocolVersion: 1 }),
         assessment: expect.arrayContaining([expect.objectContaining({ source: "calibration" })]),
-        certificationCurrent: { en: true, ru: true },
+        certificationCurrent: { en: false, ru: false },
       },
     });
     expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
@@ -1037,10 +1039,24 @@ describe("multi-campaign Web server", () => {
     expect(JSON.stringify(turn)).not.toContain(PRIVATE_CHECK_STAKE);
     expect(JSON.stringify(turn)).not.toContain(PRIVATE_OPERATION_FACT);
 
+    const state = await json(base, campaignRoute(campaign.state.campaignId, "inspect"));
+    expect(state.state).toMatchObject({
+      character: { view: "character" },
+      location: { view: "location", name: "The Crooked Crown" },
+      threads: { view: "threads" },
+    });
+    expect(state.state.revision).toEqual(expect.any(String));
+    expect(JSON.stringify(state)).not.toContain(PRIVATE_OPERATION_FACT);
+    expect(JSON.stringify(state)).not.toContain("Mara Venn");
+    expect(
+      (await json(base, "/api/status")).campaigns[0].stateRevision,
+    ).toBe(state.state.revision);
+
     const location = await json(
       base,
       campaignRoute(campaign.state.campaignId, "inspect") + "?view=location",
     );
+    expect(location.revision).toBe(state.state.revision);
     expect(location.inspection).toMatchObject({ view: "location", name: "The Crooked Crown" });
     expect(location.inspection).not.toHaveProperty("present");
     expect(location.inspection).not.toHaveProperty("inventory");
@@ -1052,8 +1068,28 @@ describe("multi-campaign Web server", () => {
       `${base}${campaignRoute(campaign.state.campaignId, "export")}?format=markdown`,
     );
     expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     expect(exported.headers.get("content-disposition")).toContain("attachment");
-    expect(await exported.text()).not.toContain(PRIVATE_OPERATION_FACT);
+    const markdown = await exported.text();
+    expect(markdown).toContain("## Campaign setup");
+    expect(markdown).toContain("A scout.");
+    expect(markdown).toContain("# Test World");
+    expect(markdown).toContain("## Turn log");
+    expect(markdown).not.toContain("**Summary:**");
+    expect(markdown).not.toContain(PRIVATE_OPERATION_FACT);
+
+    const htmlExport = await fetch(
+      `${base}${campaignRoute(campaign.state.campaignId, "export")}?format=html`,
+    );
+    expect(htmlExport.status).toBe(200);
+    expect(htmlExport.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(htmlExport.headers.get("content-disposition")).toContain(".html");
+    const html = await htmlExport.text();
+    expect(html).toContain('class="setup-button"');
+    expect(html).toContain('<dialog id="campaign-setup">');
+    expect(html).toContain("A scout.");
+    expect(html).toContain('class="entry player"');
+    expect(html).not.toContain(PRIVATE_OPERATION_FACT);
   });
 
   it("answers explicit questions without advancing or persisting a turn", async () => {
@@ -1325,8 +1361,8 @@ describe("multi-campaign Web server", () => {
     ).toBe(false);
 
     const knownRemoval = await responseJson(base, "/api/llm/models", "DELETE", {
-      provider: "gemini",
-      model: "gemini-3.5-flash-lite",
+      provider: "openrouter",
+      model: "moonshotai/kimi-k3",
     });
     expect(knownRemoval.status).toBe(400);
     expect(await knownRemoval.json()).toEqual({ error: "Known models cannot be removed" });

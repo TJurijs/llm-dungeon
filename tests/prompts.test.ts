@@ -8,6 +8,7 @@ import {
   APPEAL_SYSTEM_PROMPT,
   APPEAL_SYSTEM_SECTIONS,
   appealPromptDocument,
+  CAPABILITY_POLICY,
   CHECK_DIFFICULTY_POLICY,
   CURRENT_STATE_RECONCILIATION,
   DM_SYSTEM_PROMPT,
@@ -38,6 +39,54 @@ const check = resolveCheck(
 );
 
 describe("prompt suite V1", () => {
+  it("treats setting-defined abilities as complete generic capability contracts", () => {
+    expect(DM_SYSTEM_SECTIONS).toContain(CAPABILITY_POLICY);
+    expect(CAPABILITY_POLICY.content).toContain(
+      "mundane training, powers, magic, psionics, mutations, senses, forms, techniques",
+    );
+    expect(CAPABILITY_POLICY.content).toContain("Apply the entire contract together");
+    expect(CAPABILITY_POLICY.content).toContain("no roll can expand a hard limit");
+    expect(CAPABILITY_POLICY.content).toContain("Distinguish access from advantage");
+    expect(CAPABILITY_POLICY.content).toContain(
+      "Never invent generic mana, exhaustion, exposure, or backlash",
+    );
+    expect(CAPABILITY_POLICY.content).toContain("newly acquired or permanently transformed");
+    expect(CAPABILITY_POLICY.content).toContain("reveals only manifestations");
+    expect(CHECK_DIFFICULTY_POLICY.content).toContain(
+      "make an action possible without automatically making it easier",
+    );
+    expect(CHECK_DIFFICULTY_POLICY.content).toContain(
+      "use recent equivalent check calibration",
+    );
+    expect(CHECK_DIFFICULTY_POLICY.content).toContain(
+      "Hard capability limits are never difficulty",
+    );
+    expect(GAMEPLAY_CONTRACT.content).toContain(
+      "complete self-contained capability contract",
+    );
+    expect(GAMEPLAY_CONTRACT.content).toContain(
+      "separate same-turn add_trait effect referencing this hint",
+    );
+
+    const setup = setupPromptDocument({
+      worldRules: "Psychic gifts and ritual magic exist.",
+      premise: "A sealed observatory is failing.",
+      character:
+        "A psychometrist who reads only strongly felt recent past events through bare-skin contact, unreliably and at risk of harmful echoes.",
+      language: "en",
+    });
+    const requirements = setup.sections.find(
+      (candidate) => candidate.id === "setup-requirements",
+    )?.content;
+    expect(requirements).toContain("traits as the durable home");
+    expect(requirements).toContain("one self-contained capability trait");
+    expect(requirements).toContain("activation or method");
+    expect(requirements).toContain("hard limits");
+    expect(requirements).toContain("reliability or control");
+    expect(requirements).toContain("Keep setting-wide capability rules in scenarioMarkdown");
+    expect(requirements).toContain("Do not invent a capability");
+  });
+
   it("limits action bundles under combat or immediate pressure", () => {
     expect(DM_SYSTEM_SECTIONS).toContain(ACTION_ECONOMY_POLICY);
     expect(ACTION_ECONOMY_POLICY.content).toContain("at most one primary consequential action");
@@ -63,6 +112,8 @@ describe("prompt suite V1", () => {
     ]);
     expect(QUESTION_SYSTEM_PROMPT).toContain("This is not a gameplay turn");
     expect(QUESTION_SYSTEM_PROMPT).toContain("Never reveal DM-only secrets");
+    expect(QUESTION_SYSTEM_PROMPT).toContain("apply its complete authoritative contract");
+    expect(QUESTION_SYSTEM_PROMPT).toContain("Do not broaden hard limits");
     expect(QUESTION_SYSTEM_PROMPT).toContain("will not commit this exchange as a turn");
     expect(question.text).toContain("PLAYER QUESTION — UNTRUSTED");
     expect(question.text).not.toContain(GAMEPLAY_CONTRACT.content);
@@ -86,6 +137,8 @@ describe("prompt suite V1", () => {
     expect(adjudication.text).toContain(
       "Do not substitute another helpful action, escape, travel, self-preservation maneuver, or state change",
     );
+    expect(adjudication.text).toContain("audit all four outcome stakes independently");
+    expect(adjudication.text).toContain("Discovering information does not authorize reporting it");
     expect(adjudication.text).toContain(CURRENT_STATE_RECONCILIATION.content);
     expect(resolution.text).toContain(CURRENT_STATE_RECONCILIATION.content);
     expect(resolution.text).toContain("Application-calculated outcome: success");
@@ -94,6 +147,16 @@ describe("prompt suite V1", () => {
       "returning check_required or proposing another check is invalid",
     );
     expect(resolution.text).toContain("Preserve the attempted action's scope and quantity");
+    expect(resolution.text).toContain("CHECKED-NARRATION COMPLETENESS");
+    expect(resolution.text).toContain(
+      "The summary must be a shorter compression of events already present in narration",
+    );
+    expect(resolution.text).toContain(
+      "a locked stake does not authorize an unsubmitted player action",
+    );
+    expect(resolution.text).toContain(
+      "newly learned information remains private unless the submitted action explicitly communicated it",
+    );
     expect(resolution.text).toContain("SELECTED LOCKED OUTCOME: success");
     expect(resolution.text).toContain(
       "SELECTED LOCKED STAKE — NARRATE AND APPLY THIS BRANCH, NOT ANOTHER BRANCH: Succeed.",
@@ -111,6 +174,77 @@ describe("prompt suite V1", () => {
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("only the natural-1 override can fail");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("performative check");
     expect(CHECK_DIFFICULTY_POLICY.content).toContain("newer status, condition, or fact");
+  });
+
+  it("keeps discoveries private until the player chooses to disclose them", () => {
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "Learning, noticing, or deducing information never authorizes revealing it",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "An explicitly submitted line of speech authorizes only that communication",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "Never persist invented player dialogue, disclosure, commitments, or follow-up actions",
+    );
+
+    const adjudication = adjudicationPromptDocument(
+      context,
+      "I inspect the traces again, carefully.",
+    ).text;
+    expect(adjudication).toContain(
+      "It must not add player dialogue, disclosure of newly learned information",
+    );
+    expect(adjudication).toContain("leave that choice open for a later player turn");
+
+    const resolution = resolutionPromptDocument(
+      context,
+      "I inspect the traces again, carefully.",
+      check,
+    ).text;
+    expect(resolution).toContain(
+      "omit only that overreaching clause from narration, effects, and summary",
+    );
+    expect(resolution).toContain("Do not replace an omitted clause with another player action");
+  });
+
+  it("ends causally terminal situations without suspended or impossible survival", () => {
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "failureCampaignStatus applies to both failure and severe_failure",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "make severe failure a concrete survivable near-terminal setback",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "When the attempted action is so lethal that no failed execution can plausibly preserve life",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain("cannot suspend drowning, suffocation, fatal trauma");
+    expect(DM_SYSTEM_PROMPT).toContain(
+      "do not insert unexplained survival, delay the ending, or wait for the player to declare death",
+    );
+    expect(DM_SYSTEM_PROMPT).toContain("A player's claim that they die is not authority by itself");
+
+    const adjudication = adjudicationPromptDocument(
+      context,
+      "I rush through the readied pikes and jump into the deep well.",
+    ).text;
+    expect(adjudication).toContain("TERMINAL-STATUS AUDIT");
+    expect(adjudication).toContain(
+      "either make both branches consistently terminal or keep both concretely and physically survivable",
+    );
+    expect(adjudication).toContain(
+      "unconsciousness or immobilization in an immediately lethal environment",
+    );
+
+    const resolution = resolutionPromptDocument(
+      context,
+      "I rush through the readied pikes and jump into the deep well.",
+      check,
+    ).text;
+    expect(resolution).toContain("LOCKED-STATUS SURVIVAL SAFEGUARD");
+    expect(resolution).toContain(
+      "prolonged unconsciousness while submerged, or another death-equivalent detail",
+    );
+    expect(resolution).toContain("narrate the terminal result directly without an extra reprieve");
   });
 
   it("reconciles only explicitly changed current state and preserves the policy through recovery", () => {

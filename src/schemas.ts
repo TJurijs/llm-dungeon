@@ -60,6 +60,8 @@ export const RelationshipSchema = z.object({
   summary: z.string().min(1),
 });
 
+const TraitSchema = z.string().min(1);
+
 export const EntitySchema = z.object({
   id: SafeIdSchema,
   kind: EntityKindSchema,
@@ -74,7 +76,7 @@ export const EntitySchema = z.object({
       "Stable enduring appearance or nature only; never current placement, ownership, activity, mood, or temporary condition.",
     )
     .default(""),
-  traits: z.array(z.string().min(1)).default([]),
+  traits: z.array(TraitSchema).default([]),
   conditions: z.array(z.string().min(1)).default([]),
   inventory: z.array(InventoryEntrySchema).default([]),
   facts: z.array(FactSchema).default([]),
@@ -190,7 +192,7 @@ const ConditionOperationSchema = z.discriminatedUnion("type", [
 const TraitOperationSchema = z.object({
   type: z.literal("add_trait"),
   targetId: ReferenceIdHintSchema,
-  trait: z.string().min(1),
+  trait: TraitSchema,
 });
 
 const RelationshipOperationSchema = z.object({
@@ -299,8 +301,19 @@ export const ResolvedTurnSchema = z.object({
 
 export const TurnDecisionSchema = z.discriminatedUnion("kind", [
   ResolvedTurnSchema.extend({ kind: z.literal("resolved") }),
+  ResolvedTurnSchema.extend({
+    kind: z.enum(["automatic_success", "automatic_failure"]),
+    reason: z.string().min(1),
+  }),
   z.object({ kind: z.literal("check_required"), check: CheckSpecSchema }),
 ]);
+
+export const AutomaticOutcomeSchema = z
+  .object({
+    outcome: z.enum(["success", "failure"]),
+    reason: z.string().min(1),
+  })
+  .strict();
 
 const InitialEntitySchema = z.object({
   id: SafeIdSchema,
@@ -315,7 +328,7 @@ const InitialEntitySchema = z.object({
   establishedFacts: z.array(z.string().min(1)).default([]),
   secrets: z.array(z.string().min(1)).default([]),
   playerKnowledge: z.array(z.string().min(1)).default([]),
-  traits: z.array(z.string().min(1)).default([]),
+  traits: z.array(TraitSchema).default([]),
   conditions: z.array(z.string().min(1)).default([]),
   inventory: z.array(InventoryEntrySchema).default([]),
 });
@@ -361,6 +374,7 @@ export type StateOperation = z.infer<typeof StateOperationSchema>;
 export type CheckSpec = z.infer<typeof CheckSpecSchema>;
 export type ResolvedTurn = z.infer<typeof ResolvedTurnSchema>;
 export type TurnDecision = z.infer<typeof TurnDecisionSchema>;
+export type AutomaticOutcome = z.infer<typeof AutomaticOutcomeSchema>;
 export type SetupResult = z.infer<typeof SetupResultSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;

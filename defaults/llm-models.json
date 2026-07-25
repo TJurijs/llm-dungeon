@@ -8,32 +8,47 @@
     {
       "id": "gemini",
       "recommended": true,
-      "candidateModels": ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+      "candidateModels": [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite"
+      ]
     },
     {
       "id": "openrouter",
       "recommended": false,
-      "candidateModels": ["qwen/qwen3.7-plus"]
+      "candidateModels": [
+        "qwen/qwen3.7-plus",
+        "moonshotai/kimi-k3"
+      ]
     },
     {
       "id": "xai",
       "recommended": false,
-      "candidateModels": ["grok-4.5"]
+      "candidateModels": [
+        "grok-4.5"
+      ]
     },
     {
       "id": "openai",
       "recommended": false,
-      "candidateModels": ["gpt-5.4"]
+      "candidateModels": [
+        "gpt-5.4"
+      ]
     },
     {
       "id": "anthropic",
       "recommended": false,
-      "candidateModels": ["claude-sonnet-5"]
+      "candidateModels": [
+        "claude-sonnet-5"
+      ]
     },
     {
       "id": "deepseek",
       "recommended": false,
-      "candidateModels": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      "candidateModels": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro"
+      ]
     }
   ],
   "retiredModels": [
@@ -117,7 +132,10 @@
       "testedAt": "2026-07-19T21:48:13.379Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "gemini",
@@ -125,7 +143,10 @@
       "testedAt": "2026-07-19T22:38:15.782Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "openrouter",
@@ -133,7 +154,10 @@
       "testedAt": "2026-07-19T22:38:31.649Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "anthropic",
@@ -141,7 +165,9 @@
       "testedAt": "2026-07-19T00:01:14.082Z",
       "protocolVersion": 1,
       "testFingerprint": "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
-      "testedLanguages": ["en"],
+      "testedLanguages": [
+        "en"
+      ],
       "note": "Direct compatibility probe run in this project. It passed English only; Russian must remain unavailable until it has its own strict probe result."
     },
     {
@@ -150,7 +176,10 @@
       "testedAt": "2026-07-22T05:45:42.148Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"],
+      "testedLanguages": [
+        "en",
+        "ru"
+      ],
       "note": "certification-v1 passed clean in both languages (playable_with_recovery, quality high) after freezing an execution profile with repair/decision timeout headroom for slow turns."
     },
     {
@@ -159,7 +188,10 @@
       "testedAt": "2026-07-19T22:15:40.430Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "deepseek",
@@ -167,7 +199,10 @@
       "testedAt": "2026-07-19T22:42:08.291Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "xai",
@@ -175,7 +210,10 @@
       "testedAt": "2026-07-19T22:38:49.174Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "openai",
@@ -183,7 +221,10 @@
       "testedAt": "2026-07-19T22:38:58.887Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "xai",
@@ -191,7 +232,10 @@
       "testedAt": "2026-07-18T19:29:37.506Z",
       "protocolVersion": 1,
       "testFingerprint": "b7e20af3be7577a0f728fb88d011dd9e45ddaa83c6572102b93821040aa304c8",
-      "testedLanguages": ["en", "ru"]
+      "testedLanguages": [
+        "en",
+        "ru"
+      ]
     },
     {
       "provider": "gemini",
@@ -199,7 +243,10 @@
       "testedAt": "2026-07-23T13:11:28.407Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"],
+      "testedLanguages": [
+        "en",
+        "ru"
+      ],
       "note": "certification-v1 passed clean in both EN and RU (quality high, zero repairs)."
     },
     {
@@ -208,8 +255,23 @@
       "testedAt": "2026-07-23T16:32:54.347Z",
       "protocolVersion": 1,
       "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
-      "testedLanguages": ["en", "ru"],
+      "testedLanguages": [
+        "en",
+        "ru"
+      ],
       "note": "certification-v1 passed clean/high in both EN and RU on re-run; the earlier RU failure was a rare stochastic double-lapse against the strict 1-repair budget, not a model limitation (the failing call reproduced success 20/20 on replay)."
+    },
+    {
+      "provider": "openrouter",
+      "model": "moonshotai/kimi-k3",
+      "testedAt": "2026-07-25T18:18:21.471Z",
+      "protocolVersion": 1,
+      "testFingerprint": "439df60b86d1b128e281132f3422592cdb85058fed06a3a0bdc5ffb08b6b9570",
+      "testedLanguages": [
+        "en",
+        "ru"
+      ],
+      "note": "OpenRouter Kimi K3 compatibility verified in English and Russian before certification-v1 v3."
     }
   ]
 }

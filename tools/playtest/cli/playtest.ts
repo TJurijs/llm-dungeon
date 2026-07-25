@@ -168,6 +168,8 @@ export interface CompatibilityProbeOptions {
   target?: string | undefined;
   languages?: LanguageCode[] | undefined;
   maxCost: number;
+  inputCost?: number | undefined;
+  outputCost?: number | undefined;
 }
 
 export interface ReplayOptions {
@@ -307,6 +309,9 @@ export class PlaytestCli {
   async probe(options: CompatibilityProbeOptions): Promise<void> {
     const selected = options.target ? modelSpec(options.target) : await this.defaultModelSpec();
     const languages = options.languages ?? ["en", "ru"];
+    if ((options.inputCost === undefined) !== (options.outputCost === undefined)) {
+      throw new Error("Custom compatibility pricing requires both --input-cost and --output-cost");
+    }
     p.intro(`Protocol compatibility: ${targetLabel(selected)}`);
     p.log.info(
       `Strict setup and gameplay probes for ${languages.map((language) => language.toUpperCase()).join(", ")}.`,
@@ -315,6 +320,9 @@ export class PlaytestCli {
       selected.config,
       languages,
       options.maxCost,
+      options.inputCost === undefined
+        ? undefined
+        : { inputPerMillion: options.inputCost, outputPerMillion: options.outputCost! },
     );
     for (const language of result.passed) p.log.success(`${language.toUpperCase()}: compatible`);
     for (const failure of result.failed)
@@ -340,12 +348,13 @@ export class PlaytestCli {
     p.log.success(
       `Promoted languages: ${result.promotedLanguages.map((language) => language.toUpperCase()).join(", ")}`,
     );
+    p.log.success(`Curated model: ${targetLabel(selected)} (shipped and non-removable)`);
     for (const skipped of result.skippedLanguages) {
       p.log.warn(`${skipped.language.toUpperCase()} not promoted: ${skipped.reason}`);
     }
     for (const file of result.filesWritten) p.log.info(`Wrote ${file}`);
     p.outro(
-      `Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same evidence.`,
+      `Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same model and evidence.`,
     );
   }
 

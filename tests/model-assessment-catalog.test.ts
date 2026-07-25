@@ -12,17 +12,17 @@ const metricsHash = "c".repeat(64);
 const target = { provider: "openai" as const, model: "gpt-5.6-terra", route: "direct" };
 
 describe("model assessment catalog", () => {
-  it("provides language-specific release assessments on a fresh installation", async () => {
+  it("invalidates shipped release assessments after the gameplay contract changes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-shipped-"));
     const catalog = new ModelAssessmentCatalog(root);
     await expect(
       catalog.effective({ provider: "gemini", model: "gemini-3.5-flash", route: "direct" }, "en"),
     ).resolves.toMatchObject({
-      adapterStatus: "calibrated",
-      technicalStatus: "clean",
+      adapterStatus: "uncalibrated",
+      technicalStatus: "inconclusive",
       recoveryCount: 0,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
     await expect(
       catalog.effective(
@@ -30,11 +30,11 @@ describe("model assessment catalog", () => {
         "ru",
       ),
     ).resolves.toMatchObject({
-      adapterStatus: "calibrated",
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 2,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      adapterStatus: "uncalibrated",
+      technicalStatus: "inconclusive",
+      recoveryCount: 0,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
   });
 
@@ -117,7 +117,7 @@ describe("model assessment catalog", () => {
     });
   });
 
-  it("falls back to current shipped evidence while preserving stale local upgrade history", async () => {
+  it("preserves stale shipped and local upgrade history without treating either as current", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-upgrade-"));
     const catalog = new ModelAssessmentCatalog(root);
     const shippedTarget = {
@@ -172,12 +172,12 @@ describe("model assessment catalog", () => {
     );
 
     await expect(catalog.effective(shippedTarget, "en")).resolves.toMatchObject({
-      adapterStatus: "calibrated",
+      adapterStatus: "uncalibrated",
       profileFingerprint: shipped!.adapter!.profileFingerprint,
-      technicalStatus: "clean",
+      technicalStatus: "inconclusive",
       recoveryCount: 0,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
 
     await catalog.recordCalibration({
@@ -264,7 +264,7 @@ describe("model assessment catalog", () => {
     ).rejects.toThrow("Only certification-v1");
   });
 
-  it("keeps Gemini 3.6 Flash product-recommended with shipped certification evidence", async () => {
+  it("keeps Gemini 3.6 Flash product-recommended while its old certification is stale", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-gemini-"));
     const catalog = new ModelAssessmentCatalog(root);
     const effective = await catalog.effective(
@@ -275,7 +275,8 @@ describe("model assessment catalog", () => {
       eligible: true,
       reasons: ["product_recommended_default"],
     });
-    expect(effective.qualityStatus).toBe("high");
+    expect(effective.qualityStatus).toBe("unrated");
+    expect(effective.certificationCurrent).toBe(false);
   });
 
   it("serializes concurrent in-process assessment writes without losing either route", async () => {

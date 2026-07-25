@@ -131,7 +131,7 @@ export type WireTurn = z.infer<typeof WireTurnSchema>;
 type WireEffect = z.infer<typeof WireEffectSchema>;
 
 /**
- * The V1 gameplay contract stays shallow enough for both supported providers
+ * The V1 gameplay contract stays shallow enough for all supported providers
  * while keeping every conditional machine vocabulary provider-enforceable.
  */
 export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
@@ -454,11 +454,49 @@ function decodeEffect(effect: WireEffect, index: number): StateOperation {
   }
 }
 
-function assertResolvedShape(wire: WireTurn): void {
-  if (!wire.narration)
-    throw new ProtocolDecodeError("required when decision=resolved", "narration");
-  if (!wire.summary) throw new ProtocolDecodeError("required when decision=resolved", "summary");
+const AUTOMATIC_SUCCESS_MARKER = "$automatic_success";
+const AUTOMATIC_FAILURE_MARKER = "$automatic_failure";
+
+function automaticDecision(wire: WireTurn):
+  | { kind: "automatic_success" | "automatic_failure"; reason: string }
+  | undefined {
+  const success = wire.successStakes === AUTOMATIC_SUCCESS_MARKER;
+  const failure = wire.failureStakes === AUTOMATIC_FAILURE_MARKER;
+  if (!success && !failure) return undefined;
+  if (success === failure) {
+    throw new ProtocolDecodeError("exactly one automatic outcome marker is required", "decision");
+  }
+  if (!wire.checkName) {
+    throw new ProtocolDecodeError("a player-safe automatic reason is required", "checkName");
+  }
   if (
+    wire.difficulty !== 0 ||
+    wire.modifiers.length ||
+    wire.exceptionalSuccessStakes !== "" ||
+    wire.severeFailureStakes !== "" ||
+    (success ? wire.failureStakes !== "" : wire.successStakes !== "") ||
+    wire.failureCampaignStatus !== "none"
+  ) {
+    throw new ProtocolDecodeError(
+      "automatic outcomes require only checkName and one exact automatic marker; all other check fields must be neutral",
+      "decision",
+    );
+  }
+  return {
+    kind: success ? "automatic_success" : "automatic_failure",
+    reason: wire.checkName,
+  };
+}
+
+function assertResolvedShape(wire: WireTurn, allowAutomatic = true): void {
+  if (!wire.narration)
+    throw new ProtocolDecodeError("required for a resolved outcome", "narration");
+  if (!wire.summary) throw new ProtocolDecodeError("required for a resolved outcome", "summary");
+  const automatic = automaticDecision(wire);
+  if (automatic && !allowAutomatic) {
+    throw new ProtocolDecodeError("locked resolution cannot return an automatic outcome", "decision");
+  }
+  if (!automatic && (
     wire.checkName !== "" ||
     wire.difficulty !== 0 ||
     wire.modifiers.length ||
@@ -467,7 +505,7 @@ function assertResolvedShape(wire: WireTurn): void {
     wire.failureStakes !== "" ||
     wire.severeFailureStakes !== "" ||
     wire.failureCampaignStatus !== "none"
-  ) {
+  )) {
     throw new ProtocolDecodeError(
       "check strings must be empty, difficulty 0, modifiers empty, and failureCampaignStatus none when decision=resolved",
       "decision",
@@ -479,11 +517,13 @@ export function decodeTurnDecision(input: unknown): TurnDecision {
   const wire = WireTurnSchema.parse(input);
   if (wire.decision === "resolved") {
     assertResolvedShape(wire);
+    const automatic = automaticDecision(wire);
     return TurnDecisionSchema.parse({
-      kind: "resolved",
+      kind: automatic?.kind ?? "resolved",
       narration: wire.narration,
       turnSummary: wire.summary,
       operations: wire.effects.map(decodeEffect),
+      ...(automatic ? { reason: automatic.reason } : {}),
     });
   }
   if (wire.narration !== "" || wire.summary !== "" || wire.effects.length) {
@@ -511,7 +551,7 @@ export function decodeResolvedTurn(input: unknown): ResolvedTurn {
   const wire = WireTurnSchema.parse(input);
   if (wire.decision !== "resolved")
     throw new ProtocolDecodeError("resolution must return decision=resolved", "decision");
-  assertResolvedShape(wire);
+  assertResolvedShape(wire, false);
   return ResolvedTurnSchema.parse({
     narration: wire.narration,
     turnSummary: wire.summary,

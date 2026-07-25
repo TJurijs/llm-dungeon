@@ -7,6 +7,7 @@ const STATIC_ASSETS: Record<string, { name: string; type: string }> = {
   "/": { name: "index.html", type: "text/html; charset=utf-8" },
   "/index.html": { name: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { name: "app.js", type: "text/javascript; charset=utf-8" },
+  "/campaign-state.js": { name: "campaign-state.js", type: "text/javascript; charset=utf-8" },
   "/ui-copy.js": { name: "ui-copy.js", type: "text/javascript; charset=utf-8" },
   "/ui-utils.js": { name: "ui-utils.js", type: "text/javascript; charset=utf-8" },
   "/chat-ui.js": { name: "chat-ui.js", type: "text/javascript; charset=utf-8" },
