@@ -920,7 +920,14 @@ export const PlaytestTurnRecordSchema = z
     assignedNaturalRoll: z.number().int().min(1).max(100),
     check: CheckResultSchema.optional(),
     operations: z.array(StateOperationSchema).default([]),
-    status: z.enum(["completed", "failed"]),
+    /**
+     * `skipped` is an attempt whose bounded correction never produced a
+     * committable transaction, recorded and stepped over instead of ending the
+     * job. Only an exploratory unjudged run may produce it: a package that
+     * measures a model must still abort, because a run that quietly steps over
+     * its failures cannot be evidence about that model.
+     */
+    status: z.enum(["completed", "failed", "skipped"]),
     invariantStatus: z.enum(["passed", "failed", "not_checked"]),
     /**
      * Declared thread verdicts and how many active threads went unaudited.

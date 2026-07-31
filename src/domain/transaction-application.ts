@@ -218,15 +218,16 @@ export function applyOperations(
       }
       case "set_entity_state": {
         const target = requireEntity(operation.targetId);
+        // An effect that names no field asks for nothing. The intended end state
+        // is the state that already holds, so it joins the other satisfied
+        // operations and is dropped from the ledger instead of spending the
+        // turn's one bounded correction on a transaction that was never wrong.
         if (
           operation.name === undefined &&
           operation.status === undefined &&
           operation.tags === undefined
         ) {
-          rejectDomainChange(
-            "set_entity_state must change at least one field",
-            "set_entity_state_empty",
-          );
+          return "satisfied";
         }
         const unchanged =
           (operation.name === undefined || operation.name === target.name) &&
@@ -271,8 +272,9 @@ export function applyOperations(
         return "applied";
       }
       case "transfer_item": {
-        if (operation.fromId === operation.toId)
-          rejectDomainChange("transfer_item requires different owners", "transfer_same_owner");
+        // Handing an item from an owner to itself leaves ownership exactly where
+        // it already is: a no-op, not a contradiction of authoritative state.
+        if (operation.fromId === operation.toId) return "satisfied";
         const from = requireEntity(operation.fromId);
         const to = requireEntity(operation.toId);
         const item = requireEntity(operation.itemId);

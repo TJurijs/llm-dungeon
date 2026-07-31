@@ -1,4 +1,5 @@
 import { mapOperationReferences, visitOperationReferences } from "./operation-references.js";
+import { newTagPolicyViolation } from "./tag-policy.js";
 import { rejectDomainChange } from "./validation-error.js";
 import type {
   DomainViolation,
@@ -792,6 +793,41 @@ export function threadAuditOperations(
   return operations;
 }
 
+/**
+ * Drop tags that policy forbids, before admission ever sees them.
+ *
+ * A tag is enduring machine taxonomy: optional metadata, never state authority.
+ * Removing a forbidden one produces exactly the intended record, so rejecting
+ * the whole turn over it spent the single bounded correction on the one part of
+ * the response that carried no meaning.
+ *
+ * Deliberately conservative in one respect: when pruning would empty a
+ * `set_entity_state` tag list that arrived non-empty, the field is removed
+ * instead of being sent as `[]`. Clearing every established tag is a real change
+ * the model did not ask for, and normalization must never invent one.
+ */
+function pruneForbiddenNewTags(operations: StateOperation[]): StateOperation[] {
+  const allowed = (tags: readonly string[]): string[] =>
+    tags.filter((tag) => newTagPolicyViolation(tag) === undefined);
+  return operations.flatMap((operation): StateOperation[] => {
+    if (operation.type === "create_entity") {
+      const tags = allowed(operation.entity.tags);
+      if (tags.length === operation.entity.tags.length) return [operation];
+      return [{ ...operation, entity: { ...operation.entity, tags } }];
+    }
+    if (operation.type !== "set_entity_state" || operation.tags === undefined) return [operation];
+    const tags = allowed(operation.tags);
+    if (tags.length === operation.tags.length) return [operation];
+    if (tags.length === 0) {
+      const { tags: _removed, ...withoutTags } = operation;
+      // Nothing left to ask for once the only field is gone.
+      if (withoutTags.name === undefined && withoutTags.status === undefined) return [];
+      return [withoutTags];
+    }
+    return [{ ...operation, tags }];
+  });
+}
+
 export function prepareOperations(
   operations: StateOperation[],
   turn: number,
@@ -833,5 +869,6 @@ export function prepareOperations(
     collector,
   );
   const dropped = normalizeDroppedItemTransfers(referenced);
-  return normalizeNoOpMovements(normalizeAtomicItemTransfers(dropped), entities);
+  const tagged = pruneForbiddenNewTags(dropped);
+  return normalizeNoOpMovements(normalizeAtomicItemTransfers(tagged), entities);
 }

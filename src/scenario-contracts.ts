@@ -162,7 +162,17 @@ export function evaluateScenarioContracts(
           const subject = state.entities.get(subjectId);
           if (!subject) continue;
           const unsourced = subject.facts.filter(
-            (fact) => fact.active && fact.section === "knowledge" && fact.basis === undefined,
+            (fact) =>
+              fact.active &&
+              fact.section === "knowledge" &&
+              fact.basis === undefined &&
+              // Setup-era and legacy facts are exempt. A fact established at
+              // turn 0 is given by the premise, so there is no in-fiction source
+              // record to name and no later turn can supply one: the contract
+              // would flag the seed's own data on every turn forever. This
+              // contract exists to catch evidence the DM claims during play.
+              fact.createdTurn !== undefined &&
+              fact.createdTurn > 0,
           );
           if (unsourced.length > 0) {
             signal(

@@ -106,51 +106,55 @@ describe("transaction boundary", () => {
     });
   });
 
-  it("rejects newly introduced mutable or localized tags while retaining legacy tags", async () => {
+  it("prunes newly introduced mutable or localized tags while retaining legacy tags", async () => {
     const loaded = await (await createTestStore()).load();
     const apply = (operations: StateOperation[], entities = loaded.entities) =>
       applyTransaction(operations, 1, loaded.manifest, entities, loaded.threads, loaded.chronicle);
 
-    expect(() =>
-      apply([
-        {
-          type: "create_entity",
-          entity: {
-            id: "npc:new-scout",
-            kind: "person",
-            name: "New Scout",
-            status: "watchful",
-            tags: ["missing"],
-            description: "A frontier scout.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
-          },
+    // A tag is optional machine taxonomy, so a forbidden one is removed and the
+    // rest of the record commits. Rejecting the turn spent its one bounded
+    // correction on the only part of the response that carried no meaning.
+    const created = apply([
+      {
+        type: "create_entity",
+        entity: {
+          id: "npc:new-scout",
+          kind: "person",
+          name: "New Scout",
+          status: "watchful",
+          tags: ["frontier", "missing"],
+          description: "A frontier scout.",
+          establishedFacts: [],
+          secrets: [],
+          playerKnowledge: [],
         },
-      ]),
-    ).toThrow(/reserved mutable-state tag "missing"/);
+      },
+    ]);
+    const scout = [...created.entities.values()].find((entity) => entity.name === "New Scout");
+    expect(scout?.tags).toEqual(["frontier"]);
 
     for (const tag of ["unknown", "known", "hidden", "discovered", "undiscovered"]) {
-      expect(() =>
-        apply([
-          {
-            type: "set_entity_state",
-            targetId: "npc:mara-venn",
-            tags: ["innkeeper", tag],
-          },
-        ]),
-      ).toThrow(new RegExp(`reserved mutable-state tag "${tag}"`, "u"));
+      const result = apply([
+        { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["innkeeper", tag] },
+      ]);
+      // Pruning leaves exactly the tags the entity already had, so the effect is
+      // satisfied and never reaches the committed ledger.
+      expect(result.operations).toEqual([]);
+      expect(result.entities.get("npc:mara-venn")?.tags).toEqual(["innkeeper"]);
     }
 
-    expect(() =>
-      apply([
-        {
-          type: "set_entity_state",
-          targetId: "npc:mara-venn",
-          tags: ["innkeeper", "Вооружена"],
-        },
-      ]),
-    ).toThrow(/tags must be lowercase ASCII taxonomy tokens in kebab-case/);
+    const nonMachine = apply([
+      { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["innkeeper", "\u0412\u043e\u043e\u0440\u0443\u0436\u0435\u043d\u0430"] },
+    ]);
+    expect(nonMachine.entities.get("npc:mara-venn")?.tags).toEqual(["innkeeper"]);
+
+    // Pruning must never clear an established tag list it was not asked to
+    // change: dropping the only supplied tag removes the field, not the tags.
+    const soleForbidden = apply([
+      { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["hidden"] },
+    ]);
+    expect(soleForbidden.entities.get("npc:mara-venn")?.tags).toEqual(["innkeeper"]);
+    expect(soleForbidden.operations).toEqual([]);
 
     const legacy = new Map(
       [...loaded.entities].map(([id, entity]) => [id, structuredClone(entity)]),
@@ -177,7 +181,7 @@ describe("transaction boundary", () => {
       applyTransaction(
         [
           { type: "add_trait", targetId: "npc:nobody", trait: "Watchful" },
-          { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["innkeeper", "missing"] },
+          { type: "transfer_item", fromId: "npc:mara-venn", toId: "npc:nobody-else", itemId: "item:travel-sword", quantity: 1 },
           {
             type: "add_fact",
             targetId: "player:hero",
@@ -202,7 +206,6 @@ describe("transaction boundary", () => {
     // Each independent fault must be actionable from one correction rather
     // than consuming the whole bounded repair budget one at a time.
     expect(message).toContain("[durable_text_limit]");
-    expect(message).toContain("[reserved_mutable_state_tag]");
     expect(message).toContain("[unknown_entity_reference]");
   });
 
@@ -403,7 +406,84 @@ describe("transaction boundary", () => {
     expect(explained.signals).toEqual([]);
   });
 
-  it("requires a successor when the last active thread closes", async () => {
+  it("does not treat placing something inside a thread-linked location as changing that thread", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const thread = loaded.threads[0]!;
+    const room = loaded.manifest.currentLocationId;
+    // A seed may link its threads to the rooms the player occupies, so a turn
+    // that only puts a new record inside one must not read as thread progress.
+    const linked = { ...thread, relatedEntityIds: [room] };
+    const result = applyTransaction(
+      [
+        {
+          type: "create_entity",
+          entity: {
+            id: "npc:travelling-tinker",
+            kind: "person",
+            name: "Travelling Tinker",
+            status: "alive",
+            location: room,
+            tags: ["merchant"],
+            description: "A tinker sheltering from the rain.",
+            establishedFacts: [],
+            secrets: [],
+            playerKnowledge: [],
+            traits: [],
+            conditions: [],
+            inventory: [],
+          },
+        },
+      ],
+      1,
+      loaded.manifest,
+      loaded.entities,
+      [linked],
+      loaded.chronicle,
+      [],
+      {
+        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
+        sceneState: { locationId: room, presentActorIds: [] },
+        playerId: loaded.manifest.playerId,
+      },
+    );
+
+    expect(result.signals).toEqual([]);
+  });
+
+  it("does not treat a new thread's related-entity links as records it changed", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const linked = { ...loaded.threads[0]!, relatedEntityIds: ["npc:mara-venn"] };
+    const result = applyTransaction(
+      // Linking a record from another thread is retrieval metadata, not a write
+      // to the record itself.
+      [
+        {
+          type: "create_thread",
+          threadId: "thread:tinker-rumor",
+          title: "The tinker's rumor",
+          summary: "A tinker hints at something on the north road.",
+          relatedEntityIds: ["npc:mara-venn"],
+        },
+      ],
+      1,
+      loaded.manifest,
+      loaded.entities,
+      [linked],
+      loaded.chronicle,
+      [],
+      {
+        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
+        sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+        playerId: loaded.manifest.playerId,
+      },
+    );
+
+    expect(result.signals).toEqual([]);
+  });
+
+  it("observes a closure that leaves no successor without blocking the turn", async () => {
     const loaded = await (await createTestStore()).load();
     const thread = loaded.threads[0]!;
     const audit = [{ threadIndex: 1, verdict: "resolved" as const, text: "Answered." }];
@@ -425,8 +505,11 @@ describe("transaction boundary", () => {
       );
 
     // Lifecycle is derived from the audit, so the closure needs no operation.
-    expect(() => apply([])).toThrow(/closed the last active thread without creating a successor/u);
-    expect(() =>
+    // A campaign with no active thread is perfectly readable by a later turn, so
+    // whether the fiction left something open is a judgment recorded for review
+    // rather than a reason to spend the turn's one bounded correction.
+    expect(apply([]).signals.map((signal) => signal.code)).toEqual(["thread_successor_required"]);
+    expect(
       apply([
         {
           type: "create_thread",
@@ -435,11 +518,11 @@ describe("transaction boundary", () => {
           summary: "The answer exposed a new pursuit.",
           relatedEntityIds: [],
         },
-      ]),
-    ).not.toThrow();
+      ]).signals,
+    ).toEqual([]);
   });
 
-  it("persists fact provenance and requires a source for reported evidence", async () => {
+  it("persists fact provenance and observes reported evidence with no source", async () => {
     const store = await createTestStore();
     const loaded = await store.load();
     const thread = loaded.threads[0]!;
@@ -478,27 +561,28 @@ describe("transaction boundary", () => {
       .facts.find((fact) => fact.text.startsWith("A courier told Mara"))!;
     expect(persisted).toMatchObject({ basis: "reported", sourceId: "npc:mara-venn" });
 
-    expect(() =>
-      applyTransaction(
-        [
-          {
-            type: "add_fact",
-            targetId: "npc:mara-venn",
-            section: "knowledge",
-            factId: "generated:auto",
-            text: "Someone must have sabotaged the bridge.",
-            basis: "inferred",
-          },
-        ],
-        1,
-        loaded.manifest,
-        loaded.entities,
-        loaded.threads,
-        loaded.chronicle,
-        [],
-        { ...declarations, playerId: loaded.manifest.playerId },
-      ),
-    ).toThrow(/must name the source record it came from/u);
+    // An unsourced inference is fully readable state; the missing provenance is
+    // an evidence-discipline judgment, so it is observed instead of blocking.
+    const unsourced = applyTransaction(
+      [
+        {
+          type: "add_fact",
+          targetId: "npc:mara-venn",
+          section: "knowledge",
+          factId: "generated:auto",
+          text: "Someone must have sabotaged the bridge.",
+          basis: "inferred",
+        },
+      ],
+      1,
+      loaded.manifest,
+      loaded.entities,
+      loaded.threads,
+      loaded.chronicle,
+      [],
+      { ...declarations, playerId: loaded.manifest.playerId },
+    );
+    expect(unsourced.signals.map((signal) => signal.code)).toContain("fact_source_required");
   });
 
   it("resolves thread verdicts by number so an ID can never be mistyped", async () => {

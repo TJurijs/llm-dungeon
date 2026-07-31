@@ -133,8 +133,10 @@ export const DOMAIN_RULES = {
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A created entity reused an established durable ID",
   }),
+  // Normalized: an effect naming no field asks for nothing, so it is dropped
+  // from the ledger. Nothing about authoritative state is contradicted.
   set_entity_state_empty: rule({
-    disposition: "reject",
+    disposition: "normalize",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "An entity-state effect changed no field",
   }),
@@ -158,8 +160,12 @@ export const DOMAIN_RULES = {
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "An entity was contained by a record that is not a location",
   }),
+  // Exact canonical duplicates are already coalesced deterministically. What
+  // reaches here is an inexact near-duplicate, and resolving that would be the
+  // fuzzy matching across established state the project forbids, so it is
+  // observed instead of blocking.
   location_name_duplicate: rule({
-    disposition: "reject",
+    disposition: "signal",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A created location duplicated an established location by canonical name",
     prompt:
@@ -170,15 +176,20 @@ export const DOMAIN_RULES = {
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "Location containment formed a cycle",
   }),
+  // Normalized: the forbidden tag is pruned before admission. A tag is optional
+  // machine taxonomy, so removing one yields exactly the intended record, and
+  // pruning never clears an established tag list it did not ask to change.
   reserved_mutable_state_tag: rule({
-    disposition: "reject",
+    disposition: "normalize",
     phases: ["setup", ...ALL_GAMEPLAY_PHASES],
     redacted: "A new tag encoded mutable or epistemic state",
     prompt:
       "Tags are enduring language-neutral machine taxonomy in lowercase ASCII kebab-case, never translated and never mutable or epistemic state. Never introduce any of these exact tags: active, alarmed, armed, confined, discovered, guarding, hidden, holding, idle, in-transit, known, missing, undiscovered, unknown. Represent current situations with status, conditions, location, inventory, and facts, and what has or has not been learned with player knowledge, facts, and threads. An unchanged legacy tag may be retained or removed.",
   }),
+  // Normalized: pruned with the reserved tags above rather than rewritten. A
+  // canonicalized token would invent taxonomy the model never chose.
   non_machine_tag: rule({
-    disposition: "reject",
+    disposition: "normalize",
     phases: ["setup", ...ALL_GAMEPLAY_PHASES],
     redacted: "A new tag was not a lowercase ASCII kebab-case token",
   }),
@@ -250,8 +261,10 @@ export const DOMAIN_RULES = {
     prompt:
       "Items never use move_entity. They move only through inventory ownership, using transfer_item between known owners, including an item becoming loose at a known location.",
   }),
+  // Normalized: handing an item from an owner to itself leaves ownership where
+  // it already is, so the operation is dropped.
   transfer_same_owner: rule({
-    disposition: "reject",
+    disposition: "normalize",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A transfer named the same prior and new owner",
   }),
@@ -358,8 +371,10 @@ export const DOMAIN_RULES = {
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "An effect ended a campaign that has already ended",
   }),
+  // Normalized: the second identical relationship already holds after the first,
+  // so it is dropped as a satisfied operation.
   relationship_duplicate: rule({
-    disposition: "reject",
+    disposition: "normalize",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "One entity held duplicate relationships to the same target",
   }),
@@ -482,8 +497,11 @@ export const DOMAIN_RULES = {
     prompt:
       "If you declare a thread unchanged while this turn changed one of its linked records, give the brief reason in that entry's text.",
   }),
+  // A campaign with no active thread is perfectly readable by a later turn, so
+  // this is a judgment about whether the fiction left something open. It cost a
+  // bounded correction while protecting no invariant.
   thread_successor_required: rule({
-    disposition: "reject",
+    disposition: "signal",
     phases: ["adjudication", "resolution"],
     redacted: "An active campaign was left with no active thread after a closure",
     prompt:
@@ -501,8 +519,11 @@ export const DOMAIN_RULES = {
     phases: ["adjudication", "resolution"],
     redacted: "A movement effect contradicted the declared end-of-turn scene",
   }),
+  // A fact whose basis is reported but names no source is fully readable; the
+  // missing provenance is an evidence-discipline judgment. Recorded for review
+  // rather than spending the turn's one correction.
   fact_source_required: rule({
-    disposition: "reject",
+    disposition: "signal",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A reported or inferred fact did not name an authoritative source record",
     prompt:
@@ -564,8 +585,11 @@ export const DOMAIN_RULES = {
   }),
 
   // ------------------------------------------------------------ locked outcome
+  // Despite the name this is a prose-quality judgment, not a length limit, and
+  // no deterministic rewrite can make narration more detailed. Blocking a turn
+  // on it traded a committable outcome for nothing enforceable.
   locked_resolution_summary_length: rule({
-    disposition: "reject",
+    disposition: "signal",
     phases: ["resolution"],
     redacted:
       "Checked resolution narration was not more detailed than its summary and did not narrate the complete locked outcome first",
@@ -596,10 +620,33 @@ export function domainRule(code: DomainViolationCode): DomainRule {
 }
 
 /** Deterministic prompt fragments for one phase, ordered by rule code. */
-export function domainRulePromptFragments(phase: RulePhase): string[] {
+export function domainRulePromptFragments(
+  phase: RulePhase,
+  disposition?: RuleDisposition,
+): string[] {
   const entries = Object.entries(DOMAIN_RULES) as [DomainViolationCode, DomainRule][];
   return entries
-    .filter(([, value]) => value.prompt !== undefined && value.phases.includes(phase))
+    .filter(
+      ([, value]) =>
+        value.prompt !== undefined &&
+        value.phases.includes(phase) &&
+        (disposition === undefined || value.disposition === disposition),
+    )
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, value]) => `- ${value.prompt!}`);
+}
+
+/**
+ * Rules whose prompt text is guidance rather than a gate.
+ *
+ * A `signal` is recorded for review and a `normalize` is rewritten
+ * deterministically, so neither returns the turn. Stating them under an
+ * "enforced" heading claims a consequence that does not exist, and a model that
+ * learns one of those claims is false has no way to tell which others are.
+ */
+export function advisoryRulePromptFragments(phase: RulePhase): string[] {
+  return [
+    ...domainRulePromptFragments(phase, "normalize"),
+    ...domainRulePromptFragments(phase, "signal"),
+  ].sort((left, right) => left.localeCompare(right));
 }

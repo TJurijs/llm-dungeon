@@ -6,7 +6,12 @@ import {
   RESOLVED_TURN_AUDIT,
 } from "./blocks.js";
 import { CHECK_DIFFICULTY_POLICY } from "./difficulty.js";
-import { ADJUDICATION_DOMAIN_RULES, RESOLUTION_DOMAIN_RULES } from "./rules.js";
+import {
+  ADJUDICATION_ADVISORY_RULES,
+  ADJUDICATION_DOMAIN_RULES,
+  RESOLUTION_ADVISORY_RULES,
+  RESOLUTION_DOMAIN_RULES,
+} from "./rules.js";
 import { renderPrompt, section, type PromptDocument } from "./render.js";
 
 const HIDDEN_TRUTH_CAUSAL_AUDIT =
@@ -71,7 +76,8 @@ CHECK-REQUIRED WIRE AUDIT: if you choose check_required, set narration="", summa
     ),
     CHECK_DIFFICULTY_POLICY,
     GAMEPLAY_CONTRACT,
-    ADJUDICATION_DOMAIN_RULES,
+    ...(ADJUDICATION_DOMAIN_RULES ? [ADJUDICATION_DOMAIN_RULES] : []),
+    ...(ADJUDICATION_ADVISORY_RULES ? [ADJUDICATION_ADVISORY_RULES] : []),
     CURRENT_STATE_RECONCILIATION,
     RESOLVED_TURN_AUDIT,
     FINAL_RESOLVED_COMMIT_GATE,
@@ -123,7 +129,8 @@ LOCKED-STATUS SURVIVAL SAFEGUARD: if the locked campaign status is none, the nar
 Return every durable consequence as an effect. The application applies any locked checked ending, so do not emit end_campaign.`,
     ),
     GAMEPLAY_CONTRACT,
-    RESOLUTION_DOMAIN_RULES,
+    ...(RESOLUTION_DOMAIN_RULES ? [RESOLUTION_DOMAIN_RULES] : []),
+    ...(RESOLUTION_ADVISORY_RULES ? [RESOLUTION_ADVISORY_RULES] : []),
     CURRENT_STATE_RECONCILIATION,
     RESOLVED_TURN_AUDIT,
     FINAL_RESOLVED_COMMIT_GATE,

@@ -113,6 +113,15 @@ const PreparedTurnSchema = z
   .object({
     schemaVersion: z.literal(1),
     turn: z.number().int().positive(),
+    /**
+     * The campaign's committed turn when this attempt was prepared.
+     *
+     * An exploratory run may skip an uncommittable turn, after which the
+     * attempt number runs ahead of the campaign's own turn. Recording the
+     * campaign turn keeps crash recovery exact instead of inferring it from the
+     * attempt number. Absent on a prepared file written before skipping existed.
+     */
+    campaignTurn: z.number().int().nonnegative().optional(),
     fixtureId: z
       .string()
       .regex(/^[a-z][a-z0-9-]*$/)
@@ -253,7 +262,22 @@ async function callsAt(target: string): Promise<PlaytestCallRecord[]> {
 function transcriptText(opening: string, turns: readonly PlaytestTurnRecord[]): string {
   const sections = ["# Player-facing playtest transcript", "", "## Opening", "", opening];
   let fixtureId = turns[0]?.fixtureId ?? "primary";
-  for (const turn of turns.filter((candidate) => candidate.status === "completed")) {
+  for (const turn of turns.filter(
+    (candidate) => candidate.status === "completed" || candidate.status === "skipped",
+  )) {
+    // A skipped turn is a hole in the fiction, so the transcript says so rather
+    // than reading as an unbroken narrative that quietly lost a turn.
+    if (turn.status === "skipped") {
+      sections.push(
+        "",
+        `## Turn ${turn.turn} - not committed`,
+        "",
+        `Player: ${turn.action}`,
+        "",
+        "This turn produced no committable state, so nothing happened in the fiction and the campaign continued from the previous turn.",
+      );
+      continue;
+    }
     const nextFixtureId = turn.fixtureId ?? "primary";
     if (nextFixtureId !== fixtureId) {
       sections.push(
@@ -326,6 +350,30 @@ function gameplayReachedSettledSnapshot(job: PlaytestJob): boolean {
     job.stopReason === "legitimate_terminal" ||
     job.stopReason === "campaign_ended"
   );
+}
+
+/**
+ * Whether this failure is a turn the model could not make committable, and who
+ * owns it.
+ *
+ * Deliberately narrow. A cancellation, a cost or duration limit, and an
+ * application bug are not uncommittable turns, and stepping over them would
+ * turn a broken harness into a quietly shorter transcript. Only a transaction
+ * that survived its bounded correction still invalid, or a generation failure
+ * the attributor blames on the candidate, may be skipped.
+ */
+function uncommittableTurnOwner(error: unknown, signal: AbortSignal): FailureOwner | undefined {
+  if (isCancellation(error, signal)) return undefined;
+  if (error instanceof PlaytestCostLimitError) return undefined;
+  if (error instanceof PlaytestDurationLimitError) return undefined;
+  if (error instanceof PlaytestCandidateFailureLimitError) return undefined;
+  if (nodeApplicationError(error)) return undefined;
+  if (error instanceof TransactionValidationError) return "candidate_model";
+  const attribution = attributePlaytestFailure(error, {
+    lane: "candidate",
+    stage: "domain_validation",
+  });
+  return attribution.owner === "candidate_model" ? "candidate_model" : undefined;
 }
 
 function nodeApplicationError(error: unknown): boolean {
@@ -1102,6 +1150,12 @@ export class PlaytestRunner {
       const turnRecords = PlaytestTurnRecordSchema.array().parse(
         await readPlaytestJsonLines(turnsPath),
       );
+      // An exploratory unjudged run's product is a transcript a human reads, so
+      // one uncommittable turn is a gap in it rather than the end of it. A
+      // package that measures a model keeps aborting: its product is evidence,
+      // and evidence that silently omits the turns the model failed is worthless.
+      const skipUncommittableTurns =
+        playtestPackage.purpose === "autoplay" && manifest.config.judge.policy === "none";
       const priorFailure = turnRecords.findLast((turn) => turn.status === "failed");
       if (priorFailure) {
         terminalOwner = priorFailure.failureOwner ?? "inconclusive";
@@ -1164,7 +1218,11 @@ export class PlaytestRunner {
           await atomicWriteJson(progressPath, prepared);
         }
         assignedRoll = prepared.assignedNaturalRoll;
-        if (loadedBefore.manifest.turn === prepared.turn) {
+        // The turn this attempt will commit as. After a skip the attempt number
+        // runs ahead of the campaign, so comparing against the attempt number
+        // would stop detecting an already-committed turn for the rest of the job.
+        const committedTurn = (prepared.campaignTurn ?? prepared.turn - 1) + 1;
+        if (loadedBefore.manifest.turn === committedTurn) {
           const recovered = await this.reconstructCommittedTurn(store, prepared, 0);
           turnRecords.push(recovered);
           await appendPlaytestJsonLine(turnsPath, recovered);
@@ -1180,9 +1238,9 @@ export class PlaytestRunner {
           );
           continue;
         }
-        if (loadedBefore.manifest.turn > prepared.turn) {
+        if (loadedBefore.manifest.turn > committedTurn) {
           throw new Error(
-            `Campaign advanced to turn ${loadedBefore.manifest.turn} beyond prepared turn ${prepared.turn}`,
+            `Campaign advanced to turn ${loadedBefore.manifest.turn} beyond prepared turn ${committedTurn}`,
           );
         }
         candidate.setPreCallStateSnapshot(await store.buildCanonicalStateContext());
@@ -1214,9 +1272,51 @@ export class PlaytestRunner {
         const activeThreadsBeforeTurn = (await store.load()).threads
           .filter((thread) => thread.status === "active")
           .map((thread) => thread.id);
-        if (pending) result = await engine.resumePendingTurn();
-        else {
-          result = await this.turnScheduler.run(job.id, () => engine.play(prepared.action));
+        try {
+          if (pending) result = await engine.resumePendingTurn();
+          else {
+            result = await this.turnScheduler.run(job.id, () => engine.play(prepared.action));
+          }
+        } catch (error) {
+          const owner = skipUncommittableTurns
+            ? uncommittableTurnOwner(error, this.controller.signal)
+            : undefined;
+          if (!owner) throw error;
+          // Nothing was committed, so the campaign is untouched. Drop the
+          // pending request or the next attempt would resume this same failing
+          // turn forever, then record the gap and move on.
+          await engine.discardPendingTurn();
+          const skipped = PlaytestTurnRecordSchema.parse({
+            turn: prepared.turn,
+            ...(prepared.fixtureId ? { fixtureId: prepared.fixtureId } : {}),
+            ...(prepared.scriptedTurnId ? { scriptedTurnId: prepared.scriptedTurnId } : {}),
+            action: prepared.action,
+            driver: prepared.driver,
+            ...(prepared.profile ? { profile: prepared.profile } : {}),
+            expectedCheckPolicy: prepared.expectedCheckPolicy,
+            assignedNaturalRoll: prepared.assignedNaturalRoll,
+            operations: [],
+            status: "skipped",
+            invariantStatus: "not_checked",
+            failureOwner: owner,
+            error: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
+            contextObservation: prepared.contextObservation,
+          });
+          turnRecords.push(skipped);
+          await appendPlaytestJsonLine(turnsPath, skipped);
+          await atomicWriteText(
+            path.join(jobDir, "transcript.md"),
+            transcriptText(opening, turnRecords),
+          );
+          this.progress(
+            manifest,
+            job,
+            cost,
+            "playing",
+            totalTurns,
+            `Skipped uncommittable turn ${prepared.turn}`,
+          );
+          continue;
         }
         const signals = await this.scenarioSignals(store, ongoingContracts, previousElapsedMinutes);
         previousElapsedMinutes = (await store.load()).manifest.elapsedMinutes;
@@ -1553,6 +1653,7 @@ export class PlaytestRunner {
     return PreparedTurnSchema.parse({
       schemaVersion: 1,
       turn,
+      campaignTurn: loaded.manifest.turn,
       fixtureId,
       action,
       ...(scriptedTurnId ? { scriptedTurnId } : {}),

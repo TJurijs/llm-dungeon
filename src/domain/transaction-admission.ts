@@ -1,7 +1,7 @@
 import type { Entity, SceneState, StateOperation, Thread, ThreadAuditEntry } from "../schemas.js";
 import { collectOperationDurableTextViolations } from "./durable-state-policy.js";
 import { assertDeterministicConsistency } from "./operation-consistency.js";
-import { visitOperationReferences } from "./operation-references.js";
+import { collectMutatedSubjects } from "./operation-references.js";
 import { newTagPolicyViolation } from "./tag-policy.js";
 import { collectRepeatedAbstractInventoryCredits } from "./transaction-normalization.js";
 import type { DomainViolationCollector } from "./violations.js";
@@ -90,16 +90,10 @@ function collectThreadAuditViolations(
 ): void {
   const active = threads.filter((thread) => thread.status === "active");
   if (active.length === 0) return;
-  const changedSubjects = new Set(
-    operations.flatMap((operation) => {
-      const subjects: string[] = [];
-      visitOperationReferences(operation, (reference, role) => {
-        if (role.kind !== "active_fact") subjects.push(reference);
-      });
-      if (operation.type === "create_entity") subjects.push(operation.entity.id);
-      return subjects;
-    }),
-  );
+  // Only records this turn actually wrote. Counting every reference made the
+  // question "did anything this thread links change?" true whenever the turn
+  // moved into a linked location or re-declared the thread's own links.
+  const changedSubjects = collectMutatedSubjects(operations);
   for (const entry of audit) {
     if (entry.verdict !== "unchanged" || entry.text.trim() !== "") continue;
     const thread = active[entry.threadIndex - 1];

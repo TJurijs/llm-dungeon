@@ -912,6 +912,9 @@ describe("prompt suite V1", () => {
       "appeal-review",
       "gameplay-contract-v1",
       "domain-rules",
+      // Expectations the application observes or normalizes are stated apart
+      // from the enforced list so the enforced list stays literally true.
+      "advisory-rules",
     ]);
     // Rules are phase-scoped: the appeal-only rule reaches appeals and never
     // reaches a gameplay turn.

@@ -30,12 +30,17 @@ import {
 } from "../tools/playtest/harness/contracts.js";
 import { PlaytestCostManager } from "../tools/playtest/harness/cost.js";
 import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../tools/playtest/harness/files.js";
-import { TUNING_PACKAGE } from "../tools/playtest/harness/packages.js";
+import {
+  CAMPAIGN_AUTOPLAY_PACKAGE,
+  TUNING_PACKAGE,
+} from "../tools/playtest/harness/packages.js";
 import {
   collectPlaytestReport,
   comparePlaytestRuns,
   rankDomainRepairCauses,
   renderPlaytestReport,
+  ruleShareOfTurns,
+  scorePlaytestAcceptance,
 } from "../tools/playtest/harness/report.js";
 import { readDiagnosticBundle } from "../tools/playtest/harness/replay.js";
 import { PlaytestProviderScheduler } from "../tools/playtest/harness/scheduler.js";
@@ -872,8 +877,8 @@ describe("playtest reporting", () => {
     // Per-call listings show that recovery happened; the ranking shows which
     // rule keeps forcing it, which is what makes repairs a fixable worklist.
     expect(markdown).toContain("## Domain-repair causes (ranked)");
-    expect(markdown).toContain("| Rule | Repairs | Jobs | Example |");
-    expect(markdown).toContain("| `Unknown item reference [redacted]` | 1 | 1 |");
+    expect(markdown).toContain("| Rule | Turns | Share of");
+    expect(markdown).toContain("| `Unknown item reference [redacted]` |");
   });
 
   it("ranks a batched domain-repair cause by every rule it violated", () => {
@@ -885,13 +890,19 @@ describe("playtest reporting", () => {
             {
               callId: "call-1",
               cause: {
+                sourcePhase: "decision",
+                logicalOperationId: "operation-1",
                 errorMessage:
                   "Transaction validation failed:\n- [unknown_reference] Unknown entity reference [redacted]\n- [durable_text_limit] Generated durable record exceeds the 800-character durable-state limit",
               },
             },
             {
               callId: "call-2",
-              cause: { errorMessage: "Transaction validation failed:\n- [unknown_reference] x" },
+              cause: {
+                sourcePhase: "decision",
+                logicalOperationId: "operation-2",
+                errorMessage: "Transaction validation failed:\n- [unknown_reference] x",
+              },
             },
           ],
         },
@@ -905,6 +916,152 @@ describe("playtest reporting", () => {
       ["unknown_reference", 2],
       ["durable_text_limit", 1],
     ]);
+  });
+
+  it("counts one turn per rule however many calls its retries spent", () => {
+    const cause = (
+      logicalOperationId: string,
+      sourcePhase: "setup" | "decision" | "locked_resolution",
+      code: string,
+    ) => ({
+      callId: `call-${logicalOperationId}-${sourcePhase}`,
+      cause: {
+        sourcePhase,
+        logicalOperationId,
+        errorMessage: `[${code}] redacted`,
+      },
+    });
+    const [ranked] = rankDomainRepairCauses([
+      {
+        jobId: "job-1",
+        candidate: {
+          // One checked turn: adjudication and locked resolution are two calls
+          // that share the turn's durable pending operation ID.
+          domainRepairCauses: [
+            cause("operation-1", "decision", "scene_state_required"),
+            cause("operation-1", "locked_resolution", "scene_state_required"),
+            cause("operation-2", "decision", "scene_state_required"),
+          ],
+        },
+        playerDriver: { domainRepairCauses: [] },
+        judge: { domainRepairCauses: [] },
+        artifact: { domainRepairCauses: [] },
+      },
+    ] as unknown as Parameters<typeof rankDomainRepairCauses>[0]);
+
+    expect(ranked).toMatchObject({ key: "scene_state_required", count: 3, turns: 2 });
+    expect(ruleShareOfTurns(ranked!, 10)).toBeCloseTo(0.2);
+  });
+
+  it("keeps a setup repair out of the per-turn share", () => {
+    const [ranked] = rankDomainRepairCauses([
+      {
+        jobId: "job-1",
+        candidate: {
+          domainRepairCauses: [
+            {
+              callId: "call-1",
+              cause: {
+                sourcePhase: "setup",
+                logicalOperationId: "operation-setup",
+                errorMessage: "[setup_thread_unknown_entity] redacted",
+              },
+            },
+          ],
+        },
+        playerDriver: { domainRepairCauses: [] },
+        judge: { domainRepairCauses: [] },
+        artifact: { domainRepairCauses: [] },
+      },
+    ] as unknown as Parameters<typeof rankDomainRepairCauses>[0]);
+
+    // Setup runs once per run, so folding it into a per-turn share would make a
+    // single setup rejection look like a rule firing on a fifteenth of the run.
+    expect(ranked).toMatchObject({ count: 1, turns: 0, setupRepairs: 1 });
+    expect(ruleShareOfTurns(ranked!, 15)).toBe(0);
+  });
+
+  it("fails acceptance on a rule that fires on a fifth of the turns and passes it on noise", () => {
+    const job = (turns: number, ruleTurns: number) =>
+      ({
+        jobId: "job-1",
+        turnsRequested: turns,
+        turnsCompleted: turns,
+        stopReason: "turn_limit",
+        checkRate: 0,
+        invariantFailures: 0,
+        threadAudit: { unchanged: 0, progressed: 0, closed: 0, omitted: 0, invented: 0 },
+        candidate: {
+          repairs: { schema: 0, content: 0, transient: 0, domain: ruleTurns },
+          domainRepairCauses: Array.from({ length: ruleTurns }, (_unused, index) => ({
+            callId: `call-${index}`,
+            cause: {
+              sourcePhase: "decision",
+              logicalOperationId: `operation-${index}`,
+              errorMessage: "[thread_successor_required] redacted",
+            },
+          })),
+        },
+        playerDriver: { domainRepairCauses: [] },
+        judge: { domainRepairCauses: [] },
+        artifact: { domainRepairCauses: [] },
+      }) as unknown as Parameters<typeof scorePlaytestAcceptance>[0][number];
+
+    const spiral = scorePlaytestAcceptance([job(40, 8)]);
+    expect(spiral.accepted).toBe(false);
+    expect(spiral.criteria).toContainEqual(
+      expect.objectContaining({
+        id: "top_rule_share",
+        observed: "20.0% (`thread_successor_required`)",
+        verdict: "fail",
+      }),
+    );
+
+    // The same rule firing once in forty turns is the recovery path working.
+    const noise = scorePlaytestAcceptance([job(40, 1)]);
+    expect(noise.accepted).toBe(true);
+    expect(noise.criteria).toContainEqual(
+      expect.objectContaining({ id: "top_rule_share", verdict: "pass" }),
+    );
+  });
+
+  it("scores a repaired run as acceptable and an aborted run as not", () => {
+    const base = {
+      jobId: "job-1",
+      turnsRequested: 40,
+      turnsCompleted: 40,
+      checkRate: 0.1,
+      invariantFailures: 0,
+      threadAudit: { unchanged: 4, progressed: 5, closed: 1, omitted: 0, invented: 0 },
+      candidate: {
+        repairs: { schema: 0, content: 0, transient: 0, domain: 2 },
+        domainRepairCauses: [],
+      },
+      playerDriver: { domainRepairCauses: [] },
+      judge: { domainRepairCauses: [] },
+      artifact: { domainRepairCauses: [] },
+    };
+    const repaired = scorePlaytestAcceptance([
+      { ...base, stopReason: "turn_limit" },
+    ] as unknown as Parameters<typeof scorePlaytestAcceptance>[0]);
+    expect(repaired.accepted).toBe(true);
+    expect(repaired.criteria).toContainEqual(
+      expect.objectContaining({ id: "thread_closure_rate", observed: "10.0% (1 closed / 10 verdicts)" }),
+    );
+
+    // A valid in-fiction death completes its fixture; only a technical abort fails.
+    const died = scorePlaytestAcceptance([
+      { ...base, stopReason: "legitimate_terminal" },
+    ] as unknown as Parameters<typeof scorePlaytestAcceptance>[0]);
+    expect(died.accepted).toBe(true);
+
+    const aborted = scorePlaytestAcceptance([
+      { ...base, turnsCompleted: 13, stopReason: "error" },
+    ] as unknown as Parameters<typeof scorePlaytestAcceptance>[0]);
+    expect(aborted.accepted).toBe(false);
+    expect(aborted.criteria).toContainEqual(
+      expect.objectContaining({ id: "run_completion", verdict: "fail" }),
+    );
   });
 
   it("compares aligned jobs only when persisted experiment controls match", async () => {
@@ -991,9 +1148,13 @@ describe("playtest reporting", () => {
     expect(comparison.markdown).toContain("candidate-b");
     expect(comparison.markdown).not.toContain("different source revisions");
 
+    expect(comparison.markdown).toContain("Comparison is **controlled**");
+
+    // A tuning run declares exactly one variable, so a second uncontrolled input
+    // invalidates the experiment instead of merely weakening the reading.
     const changedSeed = await writeRun("changed-seed", "candidate-c", { seed: "other-seed" });
     await expect(comparePlaytestRuns(left, changedSeed)).rejects.toThrow(
-      "same package fingerprint",
+      "Tuning comparison requires every control except the declared variable to match; seed differ",
     );
     const changedPackage = await writeRun("changed-package", "candidate-c", {
       packageHash: "other-package-hash",
@@ -1001,5 +1162,79 @@ describe("playtest reporting", () => {
     await expect(comparePlaytestRuns(left, changedPackage)).rejects.toThrow(
       "same package fingerprint",
     );
+  });
+
+  it("labels a diagnostic comparison uncontrolled and names the scenario seed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-report-uncontrolled-"));
+    const candidate = {
+      config: {
+        provider: "openai" as const,
+        model: "candidate-model",
+        temperature: 0.8,
+        maxOutputTokens: 4_000,
+      },
+      route: "direct",
+      executionProfileFingerprint: "candidate-profile",
+    };
+    const writeRun = async (runId: string, scenarioSeed: string): Promise<string> => {
+      const runDir = path.join(root, runId);
+      const config = PlaytestRunConfigSchema.parse({
+        package: { id: CAMPAIGN_AUTOPLAY_PACKAGE.id, version: CAMPAIGN_AUTOPLAY_PACKAGE.version },
+        candidates: [candidate],
+        languages: ["en"],
+        turns: 15,
+        scenarioSeed,
+        repetitions: 1,
+        globalWorkerLimit: 1,
+        latencyMode: "canonical",
+        providerConcurrency: { openai: 1 },
+        maxCostUsd: 5,
+        judge: { policy: "none", rubricVersion: 1 },
+      });
+      const manifest = PlaytestManifestSchema.parse({
+        schemaVersion: 2,
+        kind: "playtest",
+        engineVersion: 1,
+        runId,
+        startedAt: "2026-07-19T12:00:00.000Z",
+        updatedAt: "2026-07-19T12:01:00.000Z",
+        completedAt: "2026-07-19T12:01:00.000Z",
+        status: "completed",
+        codeVersion: { commit: null, dirty: null, sourceHash: `source-${runId}` },
+        config,
+        packageSnapshot: CAMPAIGN_AUTOPLAY_PACKAGE,
+        packageHash: "same-package-hash",
+        totalEstimatedCostUsd: 0,
+        jobs: [
+          {
+            id: `job-${runId}`,
+            package: config.package,
+            candidate,
+            language: "en",
+            repetition: 1,
+            latencyMode: "canonical",
+            status: "completed",
+            completedTurns: 15,
+            judge: config.judge,
+            technicalStatus: "clean",
+            qualityStatus: "unrated",
+            stopReason: "turn_limit",
+          },
+        ],
+      });
+      await mkdir(path.join(runDir, "jobs", `job-${runId}`), { recursive: true });
+      await writeFile(path.join(runDir, "manifest.json"), `${JSON.stringify(manifest)}\n`, "utf8");
+      return runDir;
+    };
+
+    // Comparing two scenarios credits or blames the code for the scenario's own
+    // difficulty. The tool must say so rather than print an attributable delta.
+    const comparison = await comparePlaytestRuns(
+      await writeRun("left-run", "dark-sun-sealed-oasis"),
+      await writeRun("right-run", "far-meridian-dead-signal"),
+    );
+    expect(comparison.markdown).toContain("Comparison is **uncontrolled**");
+    expect(comparison.markdown).toContain("`scenarioSeed`");
+    expect(comparison.markdown).toContain("observations, not attributions");
   });
 });

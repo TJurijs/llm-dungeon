@@ -51,12 +51,33 @@ describe("domain rule registry", () => {
   it("has no rule that no check can ever report", async () => {
     const source = await sourceOutsideRegistry();
     const orphans = (Object.keys(DOMAIN_RULES) as DomainViolationCode[]).filter(
-      (code) => !source.includes(`"${code}"`),
+      (code) =>
+        // A fully normalized rule is unreachable on purpose: deterministic
+        // rewriting removes the operation before any check could report it. The
+        // declaration survives to name what was normalized and why.
+        DOMAIN_RULES[code].disposition !== "normalize" && !source.includes(`"${code}"`),
     );
 
     // A declaration nothing reports is dead weight that still renders prompt
     // prose and pollutes the repair ranking.
     expect(orphans).toEqual([]);
+  });
+
+  it("keeps a normalize rule fail-closed if normalization ever misses a case", () => {
+    const collector = new DomainViolationCollector();
+    const normalizeCode = (Object.keys(DOMAIN_RULES) as DomainViolationCode[]).find(
+      (code) => DOMAIN_RULES[code].disposition === "normalize",
+    );
+    expect(normalizeCode).toBeDefined();
+
+    collector.add(normalizeCode!, "Normalization did not remove this.");
+
+    // `normalize` is a claim that a rewrite handles the case, not permission to
+    // commit it unrewritten. If the claim is ever wrong the turn must still stop,
+    // because the alternative is silently persisting what the rule forbids.
+    expect(collector.signals()).toEqual([]);
+    expect(collector.list().map((entry) => entry.code)).toEqual([normalizeCode]);
+    expect(() => collector.assertNone()).toThrow();
   });
 
   it("lets the declared disposition decide whether a rule blocks a turn", () => {

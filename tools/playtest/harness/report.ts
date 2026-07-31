@@ -83,6 +83,8 @@ export interface PlaytestJobReport {
   turnsRequested: number;
   turnsRequired?: number;
   turnsCompleted: number;
+  /** Uncommittable turns an exploratory run recorded and stepped over. */
+  turnsSkipped: number;
   checks: number;
   checkRate: number;
   invariantFailures: number;
@@ -120,7 +122,29 @@ export interface DomainRepairCauseRanking {
   key: string;
   count: number;
   jobs: number;
+  /**
+   * Distinct logical gameplay turns this rule fired on.
+   *
+   * Retries for one turn share a durable pending operation ID, so counting
+   * distinct IDs counts turns rather than calls. This is the number that
+   * separates a rule firing once in twenty-five turns from a rule firing on
+   * every one of them; the raw repair count cannot, because a checked turn
+   * spends two calls and an unchecked turn spends one.
+   */
+  turns: number;
+  /** Repairs during setup, which is one phase per run rather than per turn. */
+  setupRepairs: number;
   example: string;
+}
+
+/** Turns this rule fired on as a share of the turns actually played. */
+export function ruleShareOfTurns(entry: DomainRepairCauseRanking, turnsCompleted: number): number {
+  if (turnsCompleted <= 0) return 0;
+  return entry.turns / turnsCompleted;
+}
+
+function formatShare(share: number): string {
+  return `${(share * 100).toFixed(1)}%`;
 }
 
 /**
@@ -150,15 +174,36 @@ function violationKeys(message: string): string[] {
 export function rankDomainRepairCauses(
   jobs: readonly PlaytestJobReport[],
 ): DomainRepairCauseRanking[] {
-  const totals = new Map<string, { count: number; jobs: Set<string>; example: string }>();
+  const totals = new Map<
+    string,
+    {
+      count: number;
+      jobs: Set<string>;
+      turnOperations: Set<string>;
+      setupRepairs: number;
+      example: string;
+    }
+  >();
   for (const job of jobs) {
     for (const lane of [job.candidate, job.playerDriver, job.judge, job.artifact]) {
       for (const { cause } of lane.domainRepairCauses) {
         const message = cause.errorMessage.replace(/\s+/gu, " ").trim();
+        const setupPhase = cause.sourcePhase === "setup";
         for (const key of violationKeys(cause.errorMessage)) {
-          const entry = totals.get(key) ?? { count: 0, jobs: new Set<string>(), example: message };
+          const entry = totals.get(key) ?? {
+            count: 0,
+            jobs: new Set<string>(),
+            turnOperations: new Set<string>(),
+            setupRepairs: 0,
+            example: message,
+          };
           entry.count += 1;
           entry.jobs.add(job.jobId);
+          if (setupPhase) entry.setupRepairs += 1;
+          // Scope the operation ID by job so two jobs cannot collide, and count
+          // it only for gameplay phases: setup happens once per run, so folding
+          // it into a per-turn share would overstate it.
+          else entry.turnOperations.add(`${job.jobId}\u0000${cause.logicalOperationId}`);
           totals.set(key, entry);
         }
       }
@@ -169,9 +214,14 @@ export function rankDomainRepairCauses(
       key,
       count: entry.count,
       jobs: entry.jobs.size,
+      turns: entry.turnOperations.size,
+      setupRepairs: entry.setupRepairs,
       example: entry.example,
     }))
-    .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+    .sort(
+      (left, right) =>
+        right.turns - left.turns || right.count - left.count || left.key.localeCompare(right.key),
+    );
 }
 
 /**
@@ -367,6 +417,7 @@ export async function collectPlaytestReport(runDir: string): Promise<PlaytestRep
       turnsRequested: manifest.config.turns ?? manifest.packageSnapshot.turns.default,
       ...(technical ? { turnsRequired: technical.turnsRequired } : {}),
       turnsCompleted: completedTurns.length,
+      turnsSkipped: turns.filter((turn) => turn.status === "skipped").length,
       checks,
       checkRate: round(completedTurns.length === 0 ? 0 : checks / completedTurns.length),
       invariantFailures:
@@ -443,19 +494,159 @@ function laneDetails(label: string, lane: LaneMetrics): string[] {
   ];
 }
 
+/**
+ * How a criterion came out. `hard` criteria decide acceptance; `advisory` is a
+ * cost signal that never fails a run; `measured` is reported precisely because
+ * it must not be tuned against.
+ */
+export type AcceptanceVerdict = "pass" | "fail" | "advisory" | "measured";
+
+export interface PlaytestAcceptanceCriterion {
+  id: string;
+  label: string;
+  bar: string;
+  observed: string;
+  verdict: AcceptanceVerdict;
+}
+
+export interface PlaytestAcceptanceScore {
+  criteria: PlaytestAcceptanceCriterion[];
+  /** True when every hard criterion passed. Advisory and measured rows never decide this. */
+  accepted: boolean;
+}
+
+/** Turns played across every job, used as the denominator for per-turn rates. */
+function totalTurnsCompleted(jobs: readonly PlaytestJobReport[]): number {
+  return jobs.reduce((total, job) => total + job.turnsCompleted, 0);
+}
+
+/**
+ * Score a run against the acceptance criteria rather than against the absence
+ * of incidents.
+ *
+ * A repaired turn is a working recovery path, so counting repairs cannot say
+ * whether a run is good enough. What decides it is whether the run finished,
+ * whether any single rule fired often enough to be a defect rather than noise,
+ * and whether state integrity held.
+ */
+export function scorePlaytestAcceptance(
+  jobs: readonly PlaytestJobReport[],
+): PlaytestAcceptanceScore {
+  const turns = totalTurnsCompleted(jobs);
+  // A valid in-fiction death completes its fixture; only a technical abort is a
+  // completion failure.
+  const aborted = jobs.filter((job) => job.stopReason === "error");
+  const short = jobs.filter((job) => job.turnsCompleted < job.turnsRequested);
+  const skipped = jobs.reduce((total, job) => total + job.turnsSkipped, 0);
+  const ranked = rankDomainRepairCauses(jobs);
+  const worst = ranked.reduce<{ key: string; share: number }>(
+    (top, entry) => {
+      const share = ruleShareOfTurns(entry, turns);
+      return share > top.share ? { key: entry.key, share } : top;
+    },
+    { key: "none", share: 0 },
+  );
+  const invariantFailures = jobs.reduce((total, job) => total + job.invariantFailures, 0);
+  const domainRepairs = jobs.reduce((total, job) => total + job.candidate.repairs.domain, 0);
+  const repairsPerTurn = turns === 0 ? 0 : domainRepairs / turns;
+  const auditEntries = jobs.reduce(
+    (total, job) =>
+      total + job.threadAudit.unchanged + job.threadAudit.progressed + job.threadAudit.closed,
+    0,
+  );
+  const closed = jobs.reduce((total, job) => total + job.threadAudit.closed, 0);
+  const criteria: PlaytestAcceptanceCriterion[] = [
+    {
+      id: "run_completion",
+      label: "Run completion",
+      bar: "every job plays its requested turns, zero fatal aborts",
+      observed:
+        aborted.length === 0 && short.length === 0
+          ? `${turns} turns, no aborts`
+          : `${turns} turns; ${aborted.length} fatal abort(s); ${short.length} job(s) short of the requested turns${skipped === 0 ? "" : `; ${skipped} turn(s) skipped as uncommittable`}`,
+      verdict: aborted.length === 0 && short.length === 0 ? "pass" : "fail",
+    },
+    {
+      id: "top_rule_share",
+      label: "Largest single rule's share of turns",
+      bar: "< 20%",
+      observed:
+        turns === 0
+          ? "no turns played"
+          : `${formatShare(worst.share)} (\`${worst.key}\`)`,
+      verdict: turns > 0 && worst.share < 0.2 ? "pass" : "fail",
+    },
+    {
+      id: "invariant_failures",
+      label: "Invariant failures",
+      bar: "0",
+      observed: String(invariantFailures),
+      verdict: invariantFailures === 0 ? "pass" : "fail",
+    },
+    {
+      id: "domain_repairs_per_turn",
+      label: "Aggregate candidate domain repairs per turn",
+      bar: "<= 0.3 (cost signal, not a gate)",
+      observed: `${repairsPerTurn.toFixed(3)} (${domainRepairs} repairs / ${turns} turns)`,
+      verdict: "advisory",
+    },
+    {
+      id: "check_rate",
+      label: "Check rate",
+      bar: "not a criterion; do not tune against it",
+      observed: jobs.map((job) => `${job.jobId} ${(job.checkRate * 100).toFixed(1)}%`).join(", "),
+      verdict: "measured",
+    },
+    {
+      id: "thread_closure_rate",
+      label: "Thread closure rate",
+      bar: "measure and report only",
+      observed:
+        auditEntries === 0
+          ? "no thread audit entries"
+          : `${formatShare(closed / auditEntries)} (${closed} closed / ${auditEntries} verdicts)`,
+      verdict: "measured",
+    },
+  ];
+  return {
+    criteria,
+    accepted: criteria.every((criterion) => criterion.verdict !== "fail"),
+  };
+}
+
+function acceptanceSection(jobs: readonly PlaytestJobReport[]): string[] {
+  const score = scorePlaytestAcceptance(jobs);
+  return [
+    "## Acceptance",
+    "",
+    `Verdict: **${score.accepted ? "meets the acceptance criteria" : "does not meet the acceptance criteria"}**. Advisory and measured rows never decide this.`,
+    "",
+    "| Criterion | Bar | Observed | Verdict |",
+    "| --- | --- | --- | --- |",
+    ...score.criteria.map(
+      (criterion) =>
+        `| ${criterion.label} | ${criterion.bar} | ${criterion.observed} | ${criterion.verdict} |`,
+    ),
+    "",
+  ];
+}
+
 function domainRepairRankingSection(jobs: readonly PlaytestJobReport[]): string[] {
   const ranked = rankDomainRepairCauses(jobs);
   if (ranked.length === 0) return [];
+  const turns = totalTurnsCompleted(jobs);
   return [
     "## Domain-repair causes (ranked)",
     "",
     "Each row is one deterministic rule that forced a bounded correction. Rank order is the worklist: a rule near the top is a candidate for normalization, a clearer contract, or removal as a false invariant.",
     "",
-    "| Rule | Repairs | Jobs | Example |",
-    "| --- | ---: | ---: | --- |",
+    "Rank is by share of turns, not by repair count: a rule firing once in twenty-five turns is noise, and a rule firing on every turn is a defect, however few calls each one cost.",
+    "",
+    `| Rule | Turns | Share of ${turns} turns | Repairs | Setup repairs | Jobs | Example |`,
+    "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ...ranked.map(
       (entry) =>
-        `| \`${entry.key}\` | ${entry.count} | ${entry.jobs} | ${entry.example.slice(0, 160)} |`,
+        `| \`${entry.key}\` | ${entry.turns} | ${formatShare(ruleShareOfTurns(entry, turns))} | ${entry.count} | ${entry.setupRepairs} | ${entry.jobs} | ${entry.example.slice(0, 160)} |`,
     ),
     "",
   ];
@@ -469,7 +660,7 @@ export function renderPlaytestReport(data: PlaytestReportData): string {
       "",
       `- Result: job **${job.jobStatus}**; technical **${job.technicalStatus}**; quality **${job.qualityStatus}**`,
       `- Frozen execution profile: \`${job.executionProfileFingerprint}\``,
-      `- Turns: ${job.turnsCompleted}/${job.turnsRequested} requested${job.turnsRequired === undefined ? "" : `; technical requirement: ${job.turnsRequired}`}; checks: ${job.checks} (${(job.checkRate * 100).toFixed(1)}%); player-visible mean: ${job.playerVisibleAverageMs.toFixed(1)} ms`,
+      `- Turns: ${job.turnsCompleted}/${job.turnsRequested} requested${job.turnsRequired === undefined ? "" : `; technical requirement: ${job.turnsRequired}`}${job.turnsSkipped === 0 ? "" : `; skipped as uncommittable: ${job.turnsSkipped}`}; checks: ${job.checks} (${(job.checkRate * 100).toFixed(1)}%); player-visible mean: ${job.playerVisibleAverageMs.toFixed(1)} ms`,
       `- Invariant failures: ${job.invariantFailures}`,
       `- Coverage: ${job.deterministicCoveragePassed === undefined ? "unavailable" : job.deterministicCoveragePassed ? "no deterministic failures" : "deterministic failures present"}${job.coveragePassed === undefined ? "" : ` (passed=${job.coveragePassed}, failed=${job.coverageFailed}, judge-only=${job.coverageRequiresJudge}, not-exercised=${job.coverageNotExercised ?? 0})`}`,
       ...(job.failedCoverageRequirementIds.length === 0
@@ -527,6 +718,7 @@ export function renderPlaytestReport(data: PlaytestReportData): string {
     "",
     "Candidate, player-driver, judge, and post-completion artifact lanes are intentionally reported separately. Judge and player-driver behavior is excluded from candidate technical status. Post-completion artifact behavior is excluded as well.",
     "",
+    ...acceptanceSection(data.jobs),
     ...domainRepairRankingSection(data.jobs),
     ...sections,
     "",
@@ -545,13 +737,21 @@ export interface PlaytestComparison {
   markdown: string;
 }
 
-function comparisonControls(manifest: PlaytestManifest): unknown {
+/**
+ * Every input that can move a run's numbers without any code change.
+ *
+ * `scenarioSeed` belongs here and was missing: two runs on different seeds
+ * differ in entity count, thread links, and continuity contracts, so comparing
+ * them credits or blames code for the scenario's own difficulty. That omission
+ * is how a scenario change reads as a regression.
+ */
+function comparisonControls(manifest: PlaytestManifest): Record<string, unknown> {
   const config = manifest.config;
   return {
     packageSnapshot: manifest.packageSnapshot,
-    packageHash: manifest.packageHash,
     languages: config.languages,
     turns: config.turns,
+    scenarioSeed: config.scenarioSeed,
     seed: config.seed,
     tuningVariable: config.tuningVariable,
     repetitions: config.repetitions,
@@ -564,6 +764,15 @@ function comparisonControls(manifest: PlaytestManifest): unknown {
     judge: config.judge,
     candidateSlots: config.candidates.length,
   };
+}
+
+/** Control variables that differ between two runs, in declaration order. */
+function uncontrolledVariables(left: PlaytestManifest, right: PlaytestManifest): string[] {
+  const leftControls = comparisonControls(left);
+  const rightControls = comparisonControls(right);
+  return Object.keys(leftControls).filter(
+    (key) => !sameValue(leftControls[key], rightControls[key]),
+  );
 }
 
 function comparisonKey(job: PlaytestJobReport): string {
@@ -641,12 +850,26 @@ export async function comparePlaytestRuns(
     collectPlaytestReport(leftRunDir),
     collectPlaytestReport(rightRunDir),
   ]);
-  if (!sameValue(comparisonControls(left.manifest), comparisonControls(right.manifest))) {
+  // Two runs of different packages measure different experiments; there is no
+  // meaningful delta to render.
+  if (left.manifest.packageHash !== right.manifest.packageHash) {
     throw new Error(
-      "Playtest comparison requires the same package fingerprint, languages, rolls/seed, repetitions, player, judge, limits, and concurrency controls",
+      "Playtest comparison requires the same package fingerprint; the runs measure different experiments",
     );
   }
   assertControlledTuningVariable(left.manifest, right.manifest);
+  // Anything else that differs is reported rather than refused. Every run on
+  // disk predates this tool, so a comparison that refuses uncontrolled inputs
+  // can never look at the history it exists to explain. Naming the uncontrolled
+  // variable keeps the delta honest without discarding it.
+  const uncontrolled = uncontrolledVariables(left.manifest, right.manifest);
+  // A tuning run is a declared one-variable experiment, so a second uncontrolled
+  // input invalidates it outright instead of merely weakening the reading.
+  if (left.manifest.packageSnapshot.purpose === "tuning" && uncontrolled.length > 0) {
+    throw new Error(
+      `Tuning comparison requires every control except the declared variable to match; ${uncontrolled.join(", ")} differ`,
+    );
+  }
   const leftJobs = comparisonJobs(left);
   const rightJobs = comparisonJobs(right);
   const keys = [...new Set([...leftJobs.keys(), ...rightJobs.keys()])].sort();
@@ -660,6 +883,14 @@ export async function comparePlaytestRuns(
     "",
     `Package fingerprint: \`${left.manifest.packageHash}\``,
     `Code source hashes: \`${left.manifest.codeVersion.sourceHash}\` -> \`${right.manifest.codeVersion.sourceHash}\`${left.manifest.codeVersion.sourceHash === right.manifest.codeVersion.sourceHash ? "" : " (different source revisions)"}`,
+    "",
+    ...(uncontrolled.length === 0
+      ? [
+          "Comparison is **controlled**: every run input except the code revision matches, so the deltas below are attributable to the code change.",
+        ]
+      : [
+          `Comparison is **uncontrolled**: ${uncontrolled.map((key) => `\`${key}\``).join(", ")} differ between these runs, so the deltas below are observations, not attributions. A scenario, player profile, or roll-seed change moves these numbers on its own.`,
+        ]),
     "",
     "| Candidate slot / language / repetition | Left candidate | Right candidate | Left technical / quality | Right technical / quality | Candidate cost | Candidate provider latency |",
     "|---|---|---|---|---|---:|---:|",
@@ -680,20 +911,58 @@ export async function comparePlaytestRuns(
     rankDomainRepairCauses(right.jobs).map((entry) => [entry.key, entry]),
   );
   const ruleKeys = [...new Set([...leftRanked.keys(), ...rightRanked.keys()])].sort();
+  const leftTurns = totalTurnsCompleted(left.jobs);
+  const rightTurns = totalTurnsCompleted(right.jobs);
   if (ruleKeys.length > 0) {
+    // Share of turns is the regression signal. Absolute repair counts move with
+    // run length and with how many turns were checked, so a rule that went from
+    // silent to firing every turn can look like an unremarkable increase.
+    const rows = ruleKeys
+      .map((key) => {
+        const leftEntry = leftRanked.get(key);
+        const rightEntry = rightRanked.get(key);
+        const leftShare = leftEntry ? ruleShareOfTurns(leftEntry, leftTurns) : 0;
+        const rightShare = rightEntry ? ruleShareOfTurns(rightEntry, rightTurns) : 0;
+        return { key, leftEntry, rightEntry, leftShare, rightShare };
+      })
+      .sort(
+        (a, b) =>
+          b.rightShare - b.leftShare - (a.rightShare - a.leftShare) ||
+          a.key.localeCompare(b.key),
+      );
     lines.push(
       "",
-      "## Domain-repair causes",
+      "## Domain-repair causes by share of turns",
       "",
-      "| Rule | Left repairs | Right repairs | Delta |",
-      "| --- | ---: | ---: | ---: |",
-      ...ruleKeys.map((key) => {
-        const leftCount = leftRanked.get(key)?.count ?? 0;
-        const rightCount = rightRanked.get(key)?.count ?? 0;
-        const delta = rightCount - leftCount;
-        return `| \`${key}\` | ${leftCount} | ${rightCount} | ${delta > 0 ? `+${delta}` : delta} |`;
+      `Ranked by the change in share of turns, worst regression first. Left played ${leftTurns} turns, right played ${rightTurns}.`,
+      "",
+      "| Rule | Left turns | Left share | Right turns | Right share | Share delta | Repairs |",
+      "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+      ...rows.map((row) => {
+        const shareDelta = row.rightShare - row.leftShare;
+        const leftCount = row.leftEntry?.count ?? 0;
+        const rightCount = row.rightEntry?.count ?? 0;
+        return `| \`${row.key}\` | ${row.leftEntry?.turns ?? 0} | ${formatShare(row.leftShare)} | ${row.rightEntry?.turns ?? 0} | ${formatShare(row.rightShare)} | ${shareDelta >= 0 ? "+" : ""}${formatShare(shareDelta)} | ${leftCount} -> ${rightCount} |`;
       }),
     );
   }
+
+  // Scoring both sides against the same criteria is what makes a run reviewable
+  // on its own terms instead of only relative to the previous one.
+  const leftScore = scorePlaytestAcceptance(left.jobs);
+  const rightScore = scorePlaytestAcceptance(right.jobs);
+  lines.push(
+    "",
+    "## Acceptance",
+    "",
+    `Left: **${leftScore.accepted ? "meets" : "does not meet"}** the criteria. Right: **${rightScore.accepted ? "meets" : "does not meet"}** the criteria.`,
+    "",
+    "| Criterion | Bar | Left | Right |",
+    "| --- | --- | --- | --- |",
+    ...leftScore.criteria.map((criterion, index) => {
+      const other = rightScore.criteria[index]!;
+      return `| ${criterion.label} | ${criterion.bar} | ${criterion.observed} (${criterion.verdict}) | ${other.observed} (${other.verdict}) |`;
+    }),
+  );
   return { left, right, markdown: `${lines.join("\n")}\n` };
 }

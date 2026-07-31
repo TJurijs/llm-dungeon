@@ -12,6 +12,7 @@ import {
   ModelAssessmentCatalog,
   type RecordCertificationInput,
 } from "../src/model-assessment-catalog.js";
+import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
 import {
   PlaytestCallRecordSchema,
   PlaytestTurnRecordSchema,
@@ -98,6 +99,15 @@ function resolved(turn: number) {
   };
 }
 
+/**
+ * A response that parses on the wire but can never be committed: the effect
+ * names a record that does not exist, so admission rejects it however many
+ * times it is returned.
+ */
+function uncommittableOperations() {
+  return [{ type: "add_condition", targetId: "npc:absent-phantom", condition: "spectral" }];
+}
+
 function checkRequired(turn: number, failureCampaignStatus: "none" | "dead" | "ended" = "none") {
   return {
     kind: "check_required" as const,
@@ -170,6 +180,9 @@ class RunnerFakeProvider implements LlmProvider {
   cancel: (() => void) | undefined;
   cancelledOnce = false;
   terminalOnDecision: number | undefined;
+  /** Make this decision, and the bounded correction that follows it, uncommittable. */
+  uncommittableOnDecision: number | undefined;
+  private uncommittableRepairsRemaining = 0;
   completedStoryFailuresRemaining = 0;
   onCompletedStory: (() => void | Promise<void>) | undefined;
 
@@ -246,6 +259,23 @@ class RunnerFakeProvider implements LlmProvider {
       } else if (request.schemaName.includes("campaign_setup")) {
         value = CERTIFICATION_CANONICAL_SETUPS.en;
       } else if (request.schemaName.includes("turn_resolution_v2")) {
+        // The domain correction arrives on this schema, so an armed repair stays
+        // invalid and the turn exhausts its one bounded correction.
+        if (this.uncommittableRepairsRemaining > 0) {
+          this.uncommittableRepairsRemaining -= 1;
+          value = {
+            narration: `The correction for decision ${this.decisionCount} still names an absent record.`,
+            turnSummary: `Decision ${this.decisionCount} remained uncommittable.`,
+            operations: uncommittableOperations(),
+          };
+          return {
+            data: request.schema.parse(value),
+            provider: this.id,
+            model: this.model,
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            rawText: JSON.stringify(value),
+          };
+        }
         value = {
           narration: `The locked outcome resolves decision ${this.decisionCount}.`,
           turnSummary: `Locked outcome ${this.decisionCount} completed.`,
@@ -262,6 +292,22 @@ class RunnerFakeProvider implements LlmProvider {
         };
       } else if (request.schemaName.includes("turn_decision_v2")) {
         this.decisionCount += 1;
+        if (this.uncommittableOnDecision === this.decisionCount) {
+          this.uncommittableRepairsRemaining = 1;
+          value = {
+            kind: "resolved" as const,
+            narration: `Decision ${this.decisionCount} narrates an effect on a record that does not exist.`,
+            turnSummary: `Decision ${this.decisionCount} could not be committed.`,
+            operations: uncommittableOperations(),
+          };
+          return {
+            data: request.schema.parse(value),
+            provider: this.id,
+            model: this.model,
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            rawText: JSON.stringify(value),
+          };
+        }
         const checked = [3, 6, 7].includes(this.decisionCount);
         value = checked
           ? checkRequired(
@@ -951,6 +997,119 @@ describe("playtest runner", () => {
     });
     expect(result.manifest.jobs[0]?.publishedCampaignId).toBeUndefined();
     expect(await new CampaignCatalog(path.join(root, "data")).listCampaigns()).toEqual([]);
+  });
+
+  it("records and skips an uncommittable turn instead of ending an exploratory run", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-skip-"));
+    const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
+      profileFor: async () => playerProfile,
+      providerFor: () => {
+        const provider = new RunnerFakeProvider(playerProfile);
+        provider.uncommittableOnDecision = 4;
+        return provider;
+      },
+      costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
+      worldRulesFor: async () => "Deterministic skip-on-uncommittable rules.",
+    });
+    const config: PlaytestRunConfig = {
+      engineVersion: 1,
+      package: { id: "campaign-autoplay-v1", version: 2 },
+      candidates: [playerTarget],
+      languages: ["en"],
+      turns: 40,
+      seed: "autoplay-skips-uncommittable",
+      repetitions: 1,
+      globalWorkerLimit: 1,
+      latencyMode: "canonical",
+      providerConcurrency: { gemini: 1 },
+      maxCostUsd: 20,
+      maxDurationMs: 600_000,
+      player: { target: playerTarget, profile: "curious-explorer" },
+      judge: { policy: "none", rubricVersion: 1 },
+    };
+
+    const result = await runner.run(config, "runner-autoplay-skip");
+    const jobDir = path.join(result.runDir, "jobs", "job-001");
+
+    // The run reaches its turn limit rather than dying on turn 4.
+    expect(result.manifest.jobs[0]).toMatchObject({
+      stopReason: "turn_limit",
+      completedTurns: 39,
+    });
+    expect(result.manifest.jobs[0]?.failureOwner).toBeUndefined();
+
+    const turns = PlaytestTurnRecordSchema.array().parse(
+      (await readFile(path.join(jobDir, "turns.jsonl"), "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line)),
+    );
+    expect(turns).toHaveLength(40);
+    const skipped = turns.filter((turn) => turn.status === "skipped");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ failureOwner: "candidate_model", operations: [] });
+
+    // The gap is visible to whoever reads the transcript, and the surviving
+    // turns are contiguous fiction rather than a silently shortened run.
+    const transcript = await readFile(path.join(jobDir, "transcript.md"), "utf8");
+    expect(transcript).toContain(`## Turn ${skipped[0]!.turn} - not committed`);
+    expect(transcript).toContain("nothing happened in the fiction");
+
+    const technical = CandidateTechnicalSnapshotSchema.parse(
+      JSON.parse(await readFile(path.join(jobDir, "technical.json"), "utf8")),
+    );
+    expect(technical).toMatchObject({ turnsCompleted: 39, turnsSkipped: 1 });
+    expect(technical.reasons).toContain(
+      "1 uncommittable turn(s) were recorded and skipped for exploration",
+    );
+    // Skipping keeps the transcript; it must not launder the failure into health.
+    expect(technical.status).toBe("unstable");
+  });
+
+  it("still aborts a certification run on an uncommittable turn", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-no-skip-"));
+    const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
+      profileFor: async () => playerProfile,
+      providerFor: () => {
+        const provider = new RunnerFakeProvider(playerProfile);
+        provider.uncommittableOnDecision = 4;
+        return provider;
+      },
+      costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
+      worldRulesFor: async () => "Deterministic certification rules.",
+    });
+    const config: PlaytestRunConfig = {
+      engineVersion: 1,
+      package: { id: "certification-v1", version: 3 },
+      candidates: [playerTarget],
+      languages: ["en"],
+      seed: "certification-aborts-uncommittable",
+      repetitions: 1,
+      globalWorkerLimit: 1,
+      latencyMode: "canonical",
+      providerConcurrency: { gemini: 1 },
+      maxCostUsd: 20,
+      maxDurationMs: 600_000,
+      judge: { policy: "final", rubricVersion: 1, target: playerTarget },
+    };
+
+    const result = await runner.run(config, "runner-certification-no-skip");
+    const jobDir = path.join(result.runDir, "jobs", "job-001");
+
+    // A package that produces evidence about a model must never step over the
+    // turns that model failed.
+    expect(result.manifest.jobs[0]).toMatchObject({
+      stopReason: "error",
+      failureOwner: "candidate_model",
+    });
+    const turns = PlaytestTurnRecordSchema.array().parse(
+      (await readFile(path.join(jobDir, "turns.jsonl"), "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line)),
+    );
+    expect(turns.some((turn) => turn.status === "skipped")).toBe(false);
+    expect(turns.at(-1)).toMatchObject({ status: "failed", failureOwner: "candidate_model" });
   });
 
   it("keeps a failed terminal story outside gameplay evidence and retries it only on resume", async () => {

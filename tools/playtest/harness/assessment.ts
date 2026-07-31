@@ -18,6 +18,8 @@ export const CandidateTechnicalSnapshotSchema = z
     evidenceComplete: z.boolean(),
     turnsRequired: z.number().int().nonnegative(),
     turnsCompleted: z.number().int().nonnegative(),
+    /** Uncommittable turns an exploratory run stepped over rather than aborting. */
+    turnsSkipped: z.number().int().nonnegative().default(0),
     candidateCalls: z.number().int().nonnegative(),
     candidateOwnedFailures: z.number().int().nonnegative(),
     candidateOwnedFailedTurns: z.number().int().nonnegative(),
@@ -109,6 +111,10 @@ export function buildCandidateTechnicalSnapshot(
   const externalFailedTurns = input.turns.filter(
     (turn) => turn.status === "failed" && turn.failureOwner !== "candidate_model",
   ).length;
+  // A skipped turn is an exploratory run stepping over an uncommittable turn.
+  // It is not a completed turn and must stay visible: the run continues, but
+  // the model still failed to produce a committable transaction.
+  const skippedTurns = input.turns.filter((turn) => turn.status === "skipped").length;
   const invariantFailures = input.turns.filter(
     (turn) => turn.status === "completed" && turn.invariantStatus === "failed",
   ).length;
@@ -156,6 +162,7 @@ export function buildCandidateTechnicalSnapshot(
     if (
       incomplete ||
       candidateOwnedFailedTurns > 0 ||
+      skippedTurns > 0 ||
       invariantsFailed ||
       exceededLimits.length > 0
     ) {
@@ -163,6 +170,10 @@ export function buildCandidateTechnicalSnapshot(
       if (incomplete) reasons.push(`completed ${completedTurns}/${turnsRequired} required turns`);
       if (candidateOwnedFailedTurns > 0)
         reasons.push("bounded recovery did not produce a committable turn");
+      if (skippedTurns > 0)
+        reasons.push(
+          `${skippedTurns} uncommittable turn(s) were recorded and skipped for exploration`,
+        );
       if (invariantsFailed) reasons.push("one or more committed turns failed invariant validation");
       reasons.push(...exceededLimits);
     } else if (candidateOwnedFailures > 0 || totalCandidateRecoveries > 0) {
@@ -186,6 +197,7 @@ export function buildCandidateTechnicalSnapshot(
     evidenceComplete: input.evidenceComplete,
     turnsRequired,
     turnsCompleted: completedTurns,
+    turnsSkipped: skippedTurns,
     candidateCalls: candidateCalls.length,
     candidateOwnedFailures,
     candidateOwnedFailedTurns,

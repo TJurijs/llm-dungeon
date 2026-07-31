@@ -202,7 +202,7 @@ terminal / web
    ↙       ↘
 StateStore  StructuredClient → LlmProvider
    ↓              ↓
-transaction    Gameplay Contract V1
+transaction    Gameplay Contract V2
 ```
 
 Presentation code may depend on the engine; the engine must not depend on CLI or
@@ -222,12 +222,27 @@ browser code.
   first. A turn gets one bounded correction, so reporting a single fault makes
   a multi-fault response unrepairable and every added check counterproductive.
   Preserve this when adding rules.
-- Every rule declares one disposition. `normalize` when the intended end state
-  already holds or the structured intent is unambiguous; `reject` when the
-  transaction contradicts authoritative state; `signal` for review-only
-  evidence. An operation whose complete effect already holds is dropped from
+- Every rule declares one disposition, decided by one question: does committing
+  this transaction leave state a later turn cannot correctly read? `reject` when
+  yes — unresolvable references, ID collisions, containment cycles, inventory
+  arithmetic, temporal ordering. `normalize` when no and deterministic code can
+  produce the intended state. `signal` when no and the rule is a judgment about
+  DM quality. An operation whose complete effect already holds is dropped from
   the committed ledger rather than rejected, so the ledger records only real
   changes and a no-op never spends the correction budget.
+- `normalize` is a claim that a rewrite handles the case, not permission to
+  commit it unrewritten. Implement the rewrite first; the collector still blocks
+  a `normalize` rule that reaches it, so a missed case fails closed rather than
+  persisting what the rule forbids. Never mark a rule `normalize` that nothing
+  normalizes.
+- Truncating generated durable text or prose is not normalization. It persists a
+  mutilated record instead of the intended one, so length and narration-quality
+  rules stay `reject` or become `signal` rather than being silently trimmed.
+- `src/prompts/rules.ts` renders `reject` rules under APPLICATION-ENFORCED
+  DOMAIN RULES and `normalize`/`signal` rules under REVIEWED DRAFTING
+  EXPECTATIONS. The split exists because a heading that promises a turn will be
+  returned must be true of every line beneath it. Both sections omit themselves
+  when a phase declares none.
 - Unresolvable references are collected rather than thrown at the first bad ID,
   and one missing record is reported once no matter how many roles reach it.
 - Durable IDs and paths are application-generated. Model IDs are temporary
@@ -249,7 +264,7 @@ browser code.
 - Every entity `location` must reference a location entity.
 - Fact supersession preserves history; do not destructively erase established
   facts. New facts receive application-owned creation/supersession turns without
-  changing Gameplay Contract V1; legacy facts without lifecycle metadata remain
+  changing the wire contract; legacy facts without lifecycle metadata remain
   readable.
 - A prepared commit is written to `pending-turn.json`, writes non-manifest files
   first, commits the manifest last, and can be replayed idempotently. Validate
@@ -337,7 +352,7 @@ a current passing result for another language.
 - Gemini intentionally receives a compatible projection of the same schema; its
   adapter omits unsupported/high-complexity annotations while local Zod limits
   remain authoritative.
-- Post-roll resolution, appeal, and domain-correction requests use the same V1
+- Post-roll resolution, appeal, and domain-correction requests use the same V2
   wire object with the provider schema additionally locking `decision` to
   `resolved`; only adjudication and the connection probe expose the full union.
 - API keys come only from process memory, environment variables, or `.env`.
@@ -556,10 +571,37 @@ new facts.
   across the run, and comparisons show the per-rule delta between runs. Treat
   that ranking as the worklist: a rule near the top is a candidate for
   normalization, a clearer contract, or removal as a false invariant.
+- Rank and compare rules by **share of turns**, not by repair count. Retries for
+  one turn share a durable pending operation ID, so distinct IDs count turns; a
+  checked turn spends two calls and an unchecked turn one, which makes raw counts
+  incomparable across runs. Setup repairs are counted separately because setup
+  happens once per run rather than per turn.
+- Every run report scores itself against written acceptance criteria: run
+  completion, the largest single rule's share of turns, and invariant failures
+  decide it, while repairs per turn is an advisory cost signal. Check rate and
+  thread closure rate are reported as measurements only and must not be tuned
+  against — one clean 100-turn run scored 17.0% checks and another 0.0%.
+- `playtest compare` refuses only a different package fingerprint or unalignable
+  job coordinates. Anything else that differs is reported as an **uncontrolled**
+  comparison naming each differing variable, because every run already on disk
+  predates the tool and a comparison that refuses uncontrolled inputs can never
+  explain the history it exists for. `scenarioSeed` is one of those variables:
+  seeds differ in entity count, thread links, and continuity contracts, so
+  comparing two of them credits or blames code for the scenario's own difficulty.
+  A tuning package is the exception and still refuses any second variable.
 - Failed calls may produce a secret-safe diagnostic bundle with state snapshot,
   prompt/schema hashes, route/profile, response metadata, parsed failure, and
   expected phase. Focused replay is bounded and non-committing. A replay fix is
   only diagnostic; freeze the changed profile and rerun `certification-v1`.
+- An unjudged autoplay run records an uncommittable turn as `skipped` and
+  continues, because its product is a transcript a human reads and one lost turn
+  is a gap in it rather than the end of it. Every other package still aborts: its
+  product is evidence about a model, and evidence that silently omits the turns
+  the model failed is worthless. A skipped turn never counts as completed, stays
+  visible as `turnsSkipped` with a technical reason, and appears in the
+  transcript as an explicit gap. Only a candidate-owned transaction or generation
+  failure may be skipped — never a cancellation, cost or duration limit, or
+  application error.
 - Technical failures may stop a job. Fictional setbacks do not; natural campaign
   death is a valid terminal result. Technical health and exercised coverage are
   independent evidence: a valid terminal result completes its fixture, while
@@ -604,6 +646,16 @@ in-character
 
 Do not assume Git metadata is available in this directory. Inspect files directly
 and do not use destructive Git commands to manufacture a clean tree.
+
+Never embed a raw NUL byte in a source file. One is enough to make `file` report
+the file as data and `grep`/`rg` skip it silently, so the file becomes invisible
+to every text scan without any error. `src/domain/violations.ts` — the file that
+owns the disposition ladder — spent time in that state, and a search for the code
+reading a rule's disposition returned nothing while the code was sitting there.
+Write the separator as an escape sequence instead; it is byte-identical at
+runtime. `tests/source-text-integrity.test.ts` fails if one reappears. Note that
+many editing tools decode such an escape in their own input, so verify the bytes
+on disk rather than trusting what you typed.
 
 ## Presentation invariants
 

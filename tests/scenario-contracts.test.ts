@@ -134,6 +134,38 @@ describe("ongoing scenario contracts", () => {
     expect(signals[0]!.message).toContain("no declared basis");
   });
 
+  it("exempts a setup-era fact that can never acquire a basis", async () => {
+    const base = await campaignState();
+    const state = withEntities(base, (entities) => {
+      entities.get("npc:mara-venn")!.facts.push(
+        {
+          // Written by campaign setup from the premise. There is no in-fiction
+          // source record to name, so flagging it reported the seed's own data
+          // on every turn of every run forever.
+          id: "fact:npc-mara-venn-turn-0-3",
+          section: "knowledge",
+          text: "Colony administrator depicted as a victim on the emergency broadcast.",
+          active: true,
+          createdTurn: 0,
+        },
+        {
+          // A legacy Markdown fact predates lifecycle metadata entirely.
+          id: "fact:legacy-claim",
+          section: "knowledge",
+          text: "The northern shaft was sealed years ago.",
+          active: true,
+        },
+      );
+    });
+
+    expect(
+      evaluateScenarioContracts(
+        [{ kind: "fact_provenance_required", code: "sourced", subjectIds: ["npc:mara-venn"] }],
+        state,
+      ),
+    ).toEqual([]);
+  });
+
   it("carries signals on a turn record and groups them in the report", () => {
     const turn = PlaytestTurnRecordSchema.parse({
       turn: 1,

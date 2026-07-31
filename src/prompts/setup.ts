@@ -4,7 +4,7 @@ import {
   languageInstruction,
   type LanguageCode,
 } from "../language.js";
-import { SETUP_DOMAIN_RULES } from "./rules.js";
+import { SETUP_ADVISORY_RULES, SETUP_DOMAIN_RULES } from "./rules.js";
 import { renderPrompt, section, type PromptDocument } from "./render.js";
 import { setupRequirementsPrompt, type SetupRequirements } from "../setup-requirements.js";
 
@@ -86,7 +86,8 @@ export function setupPromptDocument(input: SetupPromptInput): PromptDocument {
 - STRICT SETUP SIZE AUDIT: entities has a hard maximum of 20 records, excluding player; prefer 10 to 16 unless application-enforced structure needs more. If application requirements name all 20 records, return exactly that closed set. Count records and reserve one for each required or consequential item before removing or consolidating optional scenery, background actors, duplicate supplies, and redundant records. Preserve seeded people, places, possessions, hidden dependencies, and exact custody first. Never rely on truncation or repair to enforce the limit.
 - End the opening with an actionable situation, without deciding the player's response or presenting an action menu.`,
     ),
-    SETUP_DOMAIN_RULES,
+    ...(SETUP_DOMAIN_RULES ? [SETUP_DOMAIN_RULES] : []),
+    ...(SETUP_ADVISORY_RULES ? [SETUP_ADVISORY_RULES] : []),
   ]);
 }
 
