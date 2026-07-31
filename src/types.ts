@@ -1,12 +1,15 @@
 import type { z } from "zod";
 import type {
   AutomaticOutcome,
+  CompletedStoryArtifact,
   GameState,
   ResolvedTurn,
   SetupResult,
   StateOperation,
+  ThreadAuditEntry,
 } from "./schemas.js";
 import type { LanguageCode } from "./language.js";
+import type { SetupRequirements } from "./setup-requirements.js";
 import type { CheckResult } from "./mechanics.js";
 import type { PendingTurn } from "./persistence/pending.js";
 import type { Usage } from "./usage.js";
@@ -15,6 +18,8 @@ import type {
   OutputTokenField,
   SchemaProjectionId,
 } from "./model-execution-profile.js";
+import type { InputBudgetSection } from "./input-budget.js";
+import type { DomainRepairCause } from "./llm/domain-repair-cause.js";
 
 export type { CheckResult } from "./mechanics.js";
 
@@ -30,6 +35,8 @@ export interface StructuredRequest<T> {
   protocolVersion?: number;
   system: string;
   prompt: string;
+  /** Optional application-owned cancellation for this physical provider request. */
+  signal?: AbortSignal;
   temperature?: number;
   maxOutputTokens?: number;
   /** Optional application-owned ceiling below a calibrated phase budget. */
@@ -40,12 +47,16 @@ export interface StructuredRequest<T> {
   repairOfPhase?: Exclude<ModelGenerationPhase, "repair">;
   /** Physical attempt kind; retries retain the semantic generation phase. */
   attemptKind?: StructuredAttemptKind;
+  /** Secret-safe application explanation for a local domain-correction attempt. */
+  domainRepairCause?: DomainRepairCause;
   /** Time spent in bounded retry backoff before this physical attempt. */
   retryBackoffMs?: number;
+  /** Optional named diagnostics for application-owned input-budget failures. */
+  inputBudgetSections?: readonly InputBudgetSection[];
 }
 
 export type StructuredAttemptKind =
-  "initial" | "schema_repair" | "transient_retry" | "domain_repair";
+  "initial" | "schema_repair" | "content_repair" | "transient_retry" | "domain_repair";
 
 export interface ProviderAttemptMetadata {
   provider: string;
@@ -90,9 +101,16 @@ export interface StructuredResult<T> {
   attemptMetadata?: ProviderAttemptMetadata;
 }
 
+export type StructuredOutputBudgetRequest = Pick<
+  StructuredRequest<unknown>,
+  "maxOutputTokens" | "outputTokenCeiling" | "generationPhase" | "repairOfPhase"
+>;
+
 export interface LlmProvider {
   readonly id: string;
   readonly model: string;
+  /** Exact provider/profile output allowance used to keep input within the shared context window. */
+  effectiveOutputTokenBudget?(request: StructuredOutputBudgetRequest): number;
   generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>>;
 }
 
@@ -130,6 +148,8 @@ export interface SetupGenerationInput {
   premise: string;
   character: string;
   language?: LanguageCode;
+  /** Optional application-owned structural admission rules for a shipped seed. */
+  setupRequirements?: SetupRequirements;
 }
 
 export type StateView = "character" | "location" | "threads";
@@ -203,6 +223,11 @@ export interface CampaignStateSnapshotRead {
 }
 
 export interface TurnResult {
+  /**
+   * Thread verdicts the turn declared. Kept on the result so the omission rate
+   * stays measurable now that an omission is a signal rather than a rejection.
+   */
+  threadAudit?: readonly ThreadAuditEntry[];
   turn: number;
   kind: Exclude<TurnKind, "opening">;
   appealTargetTurn?: number;
@@ -211,6 +236,12 @@ export interface TurnResult {
   operations: StateOperation[];
   check?: CheckResult;
   automaticOutcome?: AutomaticOutcome;
+  /**
+   * Review-only domain rules the committed turn tripped. Kept on the result so
+   * a judgment-quality rule can be measured across a run without ever costing
+   * a turn its single bounded correction.
+   */
+  domainSignals?: readonly { readonly code: string; readonly message: string }[];
   state: GameState;
 }
 
@@ -243,6 +274,17 @@ export interface CampaignLogSnapshot {
   playerName: string;
   setup?: CampaignStartSettings;
   turns: PlayerVisibleTurn[];
+  completedStory?: CompletedStoryArtifact;
+}
+
+export interface CompletedStoryGenerationOptions {
+  /** Permit a caller-owned finalized snapshot whose gameplay status is still active. */
+  settledSnapshot?: boolean;
+}
+
+export interface DungeonEngineOptions {
+  /** Disable only the best-effort post-terminal call; explicit generation remains available. */
+  automaticCompletedStory?: boolean;
 }
 
 export interface GameEngine {
@@ -257,6 +299,10 @@ export interface GameEngine {
   inspect(view: StateView): Promise<PlayerStateInspection>;
   recentTranscript(limit?: number): Promise<PlayerVisibleTurn[]>;
   campaignLogSnapshot(): Promise<CampaignLogSnapshot>;
+  completedStory(): Promise<CompletedStoryArtifact | undefined>;
+  generateCompletedStory(
+    options?: CompletedStoryGenerationOptions,
+  ): Promise<CompletedStoryArtifact>;
   getPendingTurn(): Promise<PendingTurn | undefined>;
   resumePendingTurn(): Promise<TurnResult>;
   recoverPendingCommit(): Promise<boolean>;

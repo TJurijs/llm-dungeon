@@ -1,17 +1,21 @@
 import { z } from "zod";
 import { CheckResultSchema } from "../mechanics.js";
+import { INPUT_CHARACTER_LIMITS } from "../input-budget.js";
 import { SafeIdSchema } from "../schemas.js";
 import { UsageSchema } from "../usage.js";
 
 const RequestedGameplayActionSchema = z.object({
   kind: z.literal("action"),
-  action: z.string().trim().min(1),
+  action: z.string().trim().min(1).max(INPUT_CHARACTER_LIMITS.action),
+  /** Application-owned identity shared by every physical attempt for this logical turn. */
+  operationId: z.string().uuid().optional(),
   phase: z.literal("requested"),
 });
 
 const RolledGameplayActionSchema = z.object({
   kind: z.literal("action"),
-  action: z.string().trim().min(1),
+  action: z.string().trim().min(1).max(INPUT_CHARACTER_LIMITS.action),
+  operationId: z.string().uuid().optional(),
   phase: z.literal("rolled"),
   checkResult: CheckResultSchema,
   priorUsage: UsageSchema.optional(),
@@ -24,7 +28,8 @@ export const PendingGameplayActionSchema = z.union([
 
 export const PendingAppealSchema = z.object({
   kind: z.literal("appeal"),
-  claim: z.string().trim().min(1).max(10_000),
+  claim: z.string().trim().min(1).max(INPUT_CHARACTER_LIMITS.appeal),
+  operationId: z.string().uuid().optional(),
   targetTurn: z.number().int().positive().optional(),
   phase: z.literal("requested"),
 });

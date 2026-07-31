@@ -382,6 +382,24 @@ body.resizing-panels .panel-resizer::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.campaign-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+.campaign-item-tag {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid #414438;
+  border-radius: 999px;
+  color: #bdc7aa;
+  font-size: 0.64rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .archived-campaigns {
   margin-top: 0.8rem;
   border-top: 1px solid #292a25;
@@ -501,6 +519,10 @@ body.resizing-panels .panel-resizer::after {
   background: #191a17e8;
   backdrop-filter: blur(14px);
 }
+.chat-header {
+  position: relative;
+  z-index: 10;
+}
 .campaign-heading {
   min-width: 0;
   flex: 1 1 auto;
@@ -524,6 +546,10 @@ body.resizing-panels .panel-resizer::after {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+.completed-story-button {
+  min-height: 38px;
+  white-space: nowrap;
 }
 .header-button,
 .icon-button {
@@ -892,6 +918,16 @@ body.inspection-open #open-inspection {
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 700;
+}
+.send-button.is-stop,
+.form-actions button.is-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-color: #b46d62;
+  background: #8d4d44;
+  color: #fff;
 }
 .pending-banner {
   width: min(100%, var(--content-width));
@@ -2061,12 +2097,117 @@ button.llm-key-status[aria-busy="true"]::after {
   margin-top: 0;
   color: var(--muted);
 }
+.campaign-budget-dialog {
+  width: min(560px, calc(100vw - 2rem));
+}
+.campaign-budget-body {
+  max-height: min(72vh, 680px);
+  overflow-y: auto;
+}
+.budget-state {
+  margin-bottom: 0.9rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #715d36;
+  border-radius: 9px;
+  background: #2d281c;
+  color: var(--amber);
+  font-size: 0.84rem;
+}
+.budget-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+.budget-summary > div {
+  min-width: 0;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #191a17;
+}
+.budget-summary dt {
+  color: var(--faint);
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.budget-summary dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.campaign-budget-progress {
+  width: 100%;
+  height: 0.6rem;
+  display: block;
+  margin: 0.9rem 0 0;
+  accent-color: var(--accent);
+}
+.campaign-budget-progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: #161714;
+}
+.campaign-budget-progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+.budget-limit-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 0.75rem;
+  margin-top: 0.9rem;
+}
+.budget-limit-fields input {
+  font-variant-numeric: tabular-nums;
+}
+#campaign-budget-warning,
+#campaign-budget-read-only {
+  margin: 0.9rem 0 0;
+}
+#campaign-budget-basis {
+  margin: 0.6rem 0 0;
+}
 #delete-campaign-warning {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .campaign-setup-dialog {
   width: min(680px, calc(100vw - 2rem));
+}
+.completed-story-dialog {
+  width: min(760px, calc(100vw - 2rem));
+}
+.completed-story-body {
+  max-height: min(72vh, 760px);
+  overflow-y: auto;
+}
+.completed-story-text {
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.completed-story-cost-warning {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.completed-story-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.completed-story-actions button {
+  min-width: 132px;
+}
+.completed-story-actions button.is-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
 }
 .campaign-setup-content {
   max-height: min(68vh, 720px);
@@ -2128,6 +2269,12 @@ button.llm-key-status[aria-busy="true"]::after {
 .confirmation-actions button {
   min-height: 42px;
   padding: 0.55rem 0.8rem;
+}
+@media (max-width: 520px) {
+  .budget-summary,
+  .budget-limit-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .toast {
   position: fixed;
@@ -2393,6 +2540,12 @@ button.llm-key-status[aria-busy="true"]::after {
 @media (max-width: 430px) {
   .chat-header-actions {
     gap: 0.15rem;
+  }
+  .completed-story-button {
+    max-width: 92px;
+    overflow: hidden;
+    font-size: 0.7rem;
+    text-overflow: ellipsis;
   }
   .composer-model-picker {
     max-width: 120px;

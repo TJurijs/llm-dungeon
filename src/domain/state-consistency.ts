@@ -1,10 +1,12 @@
 import type { ChronicleEvent, Entity, GameState, Thread } from "../schemas.js";
 import { canonicalEntityName } from "./ids.js";
-import { rejectDomainChange } from "./validation-error.js";
+import { DomainValidationError, rejectDomainChange } from "./validation-error.js";
+import type { DomainViolationCollector } from "./violations.js";
 
 function requireEntity(entities: Map<string, Entity>, id: string, context: string): Entity {
   const entity = entities.get(id);
-  if (!entity) rejectDomainChange(`${context} references unknown entity ${id}`);
+  if (!entity)
+    rejectDomainChange(`${context} references unknown entity ${id}`, "state_unknown_entity");
   return entity;
 }
 
@@ -79,6 +81,31 @@ export function inventoryCycleEdges(entities: Map<string, Entity>): Set<string> 
 
 export interface CampaignStateConsistencyOptions {
   allowedInventoryCycleEdges?: ReadonlySet<string>;
+  /**
+   * Exact pre-transaction ownership quantities. Existing saves may contain an
+   * older multi-owner anomaly, and a conserved partial transfer may split one
+   * stack between owners. The resulting state may preserve or reduce that
+   * baseline, but it may not add quantity or spread an existing anomaly to a
+   * new owner.
+   */
+  baselineInventoryOwnership?: InventoryOwnershipSnapshot;
+}
+
+export type InventoryOwnershipSnapshot = ReadonlyMap<string, ReadonlyMap<string, number>>;
+
+/** Capture inventory quantities by item and owner for compatibility checks. */
+export function inventoryOwnershipSnapshot(
+  entities: Map<string, Entity>,
+): Map<string, Map<string, number>> {
+  const ownership = new Map<string, Map<string, number>>();
+  for (const owner of entities.values()) {
+    for (const entry of owner.inventory) {
+      const owners = ownership.get(entry.entityId) ?? new Map<string, number>();
+      owners.set(owner.id, (owners.get(owner.id) ?? 0) + entry.quantity);
+      ownership.set(entry.entityId, owners);
+    }
+  }
+  return ownership;
 }
 
 function assertNoNewInventoryCycles(
@@ -90,7 +117,55 @@ function assertNoNewInventoryCycles(
     .sort();
   if (!newCyclicEdges.length) return;
   const readable = newCyclicEdges.map((edge) => edge.replace("\u0000", " -> ")).join(", ");
-  rejectDomainChange(`Inventory ownership contains a cycle: ${readable}`);
+  rejectDomainChange(`Inventory ownership contains a cycle: ${readable}`, "inventory_cycle");
+}
+
+function ownershipTotal(owners: ReadonlyMap<string, number>): number {
+  return [...owners.values()].reduce((total, quantity) => total + quantity, 0);
+}
+
+/**
+ * New snapshots cannot begin with ambiguous multi-owner custody. During a
+ * transaction, a conserved partial transfer may split a pre-existing stack,
+ * while a legacy split may remain in place or be reduced. Abstract inventory
+ * credits cannot increase that split, and an existing legacy split cannot
+ * expand to additional simultaneous owners. A conserved handoff may replace
+ * one owner with another without increasing either quantity or owner count.
+ */
+function assertNoNewOrEnlargedDuplicateOwnership(
+  current: InventoryOwnershipSnapshot,
+  baseline: InventoryOwnershipSnapshot,
+): void {
+  for (const [itemId, owners] of current) {
+    if (owners.size <= 1) continue;
+    const previousOwners = baseline.get(itemId);
+    const currentTotal = ownershipTotal(owners);
+    const previousTotal = previousOwners ? ownershipTotal(previousOwners) : 0;
+    const spreadLegacyDuplicate =
+      previousOwners !== undefined &&
+      previousOwners.size > 1 &&
+      owners.size > previousOwners.size &&
+      [...owners.keys()].some((ownerId) => !previousOwners.has(ownerId));
+    if (
+      previousOwners !== undefined &&
+      previousOwners.size > 0 &&
+      currentTotal <= previousTotal &&
+      !spreadLegacyDuplicate
+    ) {
+      continue;
+    }
+    const ownerList = [...owners.keys()].sort().join(", ");
+    const reason =
+      previousOwners === undefined || previousOwners.size === 0
+        ? "has no authoritative pre-state ownership to conserve"
+        : currentTotal > previousTotal
+          ? `increases total quantity from ${previousTotal} to ${currentTotal}`
+          : "spreads a legacy duplicate to a new owner";
+    rejectDomainChange(
+      `Inventory ownership for ${itemId} is duplicated across ${ownerList} and ${reason}; use transfer_item to conserve known ownership`,
+      "inventory_duplicate_ownership",
+    );
+  }
 }
 
 /**
@@ -136,30 +211,61 @@ export function assertCampaignStateConsistency(
   threads: Thread[],
   chronicle: ChronicleEvent[],
   options: CampaignStateConsistencyOptions = {},
+  collector?: DomainViolationCollector,
+): void {
+  if (collector) {
+    // Whole-state verification runs only after admission is clean, so its
+    // faults are reported through the same collected envelope as the rest of
+    // the transaction rather than as a separate error path.
+    try {
+      verifyCampaignStateConsistency(manifest, entities, threads, chronicle, options);
+    } catch (error) {
+      if (!(error instanceof DomainValidationError)) throw error;
+      if (error.violations.length === 0) collector.add("domain_rule", error.message);
+      for (const violation of error.violations) collector.add(violation.code, violation.message);
+    }
+    return;
+  }
+  verifyCampaignStateConsistency(manifest, entities, threads, chronicle, options);
+}
+
+function verifyCampaignStateConsistency(
+  manifest: GameState,
+  entities: Map<string, Entity>,
+  threads: Thread[],
+  chronicle: ChronicleEvent[],
+  options: CampaignStateConsistencyOptions = {},
 ): void {
   const allowedInventoryCycleEdges = options.allowedInventoryCycleEdges ?? new Set<string>();
+  const baselineInventoryOwnership = options.baselineInventoryOwnership ?? new Map();
   const player = requireEntity(entities, manifest.playerId, "Campaign player");
   const currentLocation = requireEntity(entities, manifest.currentLocationId, "Current location");
   if (currentLocation.kind !== "location") {
-    rejectDomainChange(`Current location ${currentLocation.id} is not a location entity`);
+    rejectDomainChange(
+      `Current location ${currentLocation.id} is not a location entity`,
+      "current_location_not_location",
+    );
   }
   if (player.location !== currentLocation.id) {
     rejectDomainChange(
       `Player location ${player.location ?? "missing"} does not match manifest location ${currentLocation.id}`,
+      "player_location_mismatch",
     );
   }
   if (manifest.status === "active" && (player.status === "dead" || player.status === "ended")) {
     rejectDomainChange(
       `Player terminal status ${player.status} requires a matching campaign ending`,
+      "player_status_terminal_mismatch",
     );
   }
   if (manifest.status !== "active" && player.status !== manifest.status) {
     rejectDomainChange(
       `Player status ${player.status} does not match ended campaign status ${manifest.status}`,
+      "player_status_mismatch",
     );
   }
 
-  const inventoryOwners = new Map<string, string[]>();
+  const inventoryOwners = new Map<string, Map<string, number>>();
   const factIds = new Set<string>();
   const locationsByName = new Map<string, string>();
   for (const entity of entities.values()) {
@@ -169,34 +275,47 @@ export function assertCampaignStateConsistency(
       if (duplicate) {
         rejectDomainChange(
           `Location ${entity.id} duplicates established location ${duplicate} by canonical name`,
+          "location_name_duplicate",
         );
       }
       locationsByName.set(canonicalName, entity.id);
     }
     if (entity.location) {
       if (entity.location === entity.id)
-        rejectDomainChange(`${entity.id} cannot be located inside itself`);
+        rejectDomainChange(`${entity.id} cannot be located inside itself`, "self_containment");
       const location = requireEntity(entities, entity.location, `Entity ${entity.id}`);
       if (location.kind !== "location")
-        rejectDomainChange(`${entity.id} has non-location parent ${location.id}`);
+        rejectDomainChange(
+          `${entity.id} has non-location parent ${location.id}`,
+          "non_location_parent",
+        );
     }
 
     const inventoryIds = new Set<string>();
     for (const entry of entity.inventory) {
       if (inventoryIds.has(entry.entityId)) {
-        rejectDomainChange(`${entity.id} has duplicate inventory entries for ${entry.entityId}`);
+        rejectDomainChange(
+          `${entity.id} has duplicate inventory entries for ${entry.entityId}`,
+          "inventory_duplicate_entry",
+        );
       }
       inventoryIds.add(entry.entityId);
       const item = requireEntity(entities, entry.entityId, `Inventory for ${entity.id}`);
       if (item.kind !== "item")
-        rejectDomainChange(`${entry.entityId} in ${entity.id} inventory is not an item`);
+        rejectDomainChange(
+          `${entry.entityId} in ${entity.id} inventory is not an item`,
+          "inventory_non_item",
+        );
       if (
         item.id === entity.id &&
         !allowedInventoryCycleEdges.has(inventoryEdge(entity.id, item.id))
       )
-        rejectDomainChange(`${entity.id} cannot contain itself in inventory`);
-      const owners = inventoryOwners.get(item.id) ?? [];
-      owners.push(entity.id);
+        rejectDomainChange(
+          `${entity.id} cannot contain itself in inventory`,
+          "inventory_self_containment",
+        );
+      const owners = inventoryOwners.get(item.id) ?? new Map<string, number>();
+      owners.set(entity.id, (owners.get(entity.id) ?? 0) + entry.quantity);
       inventoryOwners.set(item.id, owners);
     }
 
@@ -204,24 +323,30 @@ export function assertCampaignStateConsistency(
     for (const relationship of entity.relationships) {
       requireEntity(entities, relationship.targetId, `Relationship on ${entity.id}`);
       if (relationshipTargets.has(relationship.targetId)) {
-        rejectDomainChange(`${entity.id} has duplicate relationships to ${relationship.targetId}`);
+        rejectDomainChange(
+          `${entity.id} has duplicate relationships to ${relationship.targetId}`,
+          "relationship_duplicate",
+        );
       }
       relationshipTargets.add(relationship.targetId);
     }
 
     for (const fact of entity.facts) {
-      if (factIds.has(fact.id)) rejectDomainChange(`Duplicate fact ID ${fact.id}`);
+      if (factIds.has(fact.id))
+        rejectDomainChange(`Duplicate fact ID ${fact.id}`, "fact_id_duplicate");
       factIds.add(fact.id);
     }
   }
 
   assertNoNewInventoryCycles(entities, allowedInventoryCycleEdges);
+  assertNoNewOrEnlargedDuplicateOwnership(inventoryOwners, baselineInventoryOwnership);
 
   for (const [itemId, owners] of inventoryOwners) {
     const item = entities.get(itemId)!;
     if (item.location) {
       rejectDomainChange(
-        `${itemId} is carried by ${owners.join(", ")} and also has world location ${item.location}`,
+        `${itemId} is carried by ${[...owners.keys()].join(", ")} and also has world location ${item.location}`,
+        "item_dual_placement",
       );
     }
   }
@@ -232,7 +357,10 @@ export function assertCampaignStateConsistency(
     let parentId = location.location;
     while (parentId) {
       if (visited.has(parentId))
-        rejectDomainChange(`Location hierarchy contains a cycle at ${parentId}`);
+        rejectDomainChange(
+          `Location hierarchy contains a cycle at ${parentId}`,
+          "location_hierarchy_cycle",
+        );
       visited.add(parentId);
       parentId = entities.get(parentId)?.location;
     }
@@ -240,8 +368,51 @@ export function assertCampaignStateConsistency(
 
   const threadIds = new Set<string>();
   for (const thread of threads) {
-    if (threadIds.has(thread.id)) rejectDomainChange(`Duplicate thread ID ${thread.id}`);
+    if (threadIds.has(thread.id))
+      rejectDomainChange(`Duplicate thread ID ${thread.id}`, "thread_id_duplicate");
     threadIds.add(thread.id);
+    if (thread.createdTurn !== undefined && thread.createdTurn > manifest.turn) {
+      rejectDomainChange(
+        `Thread ${thread.id} was created in future turn ${thread.createdTurn}`,
+        "thread_future_created",
+      );
+    }
+    if (
+      thread.createdTurn !== undefined &&
+      thread.updatedTurn !== undefined &&
+      thread.updatedTurn < thread.createdTurn
+    ) {
+      rejectDomainChange(
+        `Thread ${thread.id} was updated before it was created`,
+        "thread_updated_before_created",
+      );
+    }
+    if (thread.updatedTurn !== undefined && thread.updatedTurn > manifest.turn) {
+      rejectDomainChange(
+        `Thread ${thread.id} was updated in future turn ${thread.updatedTurn}`,
+        "thread_future_updated",
+      );
+    }
+    if (thread.status === "active" && thread.closedTurn !== undefined) {
+      rejectDomainChange(
+        `Active thread ${thread.id} cannot have a closure turn`,
+        "thread_active_with_closure",
+      );
+    }
+    if (thread.closedTurn !== undefined) {
+      if (thread.closedTurn > manifest.turn) {
+        rejectDomainChange(
+          `Thread ${thread.id} was closed in future turn ${thread.closedTurn}`,
+          "thread_future_closed",
+        );
+      }
+      if (thread.updatedTurn !== undefined && thread.closedTurn < thread.updatedTurn) {
+        rejectDomainChange(
+          `Thread ${thread.id} was closed before its latest update`,
+          "thread_closed_before_update",
+        );
+      }
+    }
     for (const entityId of thread.relatedEntityIds) {
       requireEntity(entities, entityId, `Thread ${thread.id}`);
     }
@@ -249,9 +420,13 @@ export function assertCampaignStateConsistency(
 
   const eventIds = new Set<string>();
   for (const event of chronicle) {
-    if (eventIds.has(event.id)) rejectDomainChange(`Duplicate chronicle event ID ${event.id}`);
+    if (eventIds.has(event.id))
+      rejectDomainChange(`Duplicate chronicle event ID ${event.id}`, "chronicle_id_duplicate");
     eventIds.add(event.id);
     if (event.turn > manifest.turn)
-      rejectDomainChange(`Chronicle event ${event.id} is from future turn ${event.turn}`);
+      rejectDomainChange(
+        `Chronicle event ${event.id} is from future turn ${event.turn}`,
+        "chronicle_future_turn",
+      );
   }
 }

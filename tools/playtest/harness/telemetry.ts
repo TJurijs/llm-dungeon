@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { classifyFailure } from "../../../src/llm/failures.js";
+import { sanitizeDomainRepairMessage } from "../../../src/llm/domain-repair-cause.js";
 import { requestDiagnosticsFor } from "../../../src/llm/request-diagnostics.js";
 import { attemptMetadataFor, structuredFailureDetails } from "../../../src/llm/structured-error.js";
 import {
@@ -12,9 +13,11 @@ import {
 import type {
   LlmProvider,
   ProviderAttemptMetadata,
+  StructuredOutputBudgetRequest,
   StructuredRequest,
   StructuredResult,
 } from "../../../src/types.js";
+import { atomicWriteJson } from "../../../src/persistence/files.js";
 import {
   estimatePlaytestCost,
   estimatePlaytestReservation,
@@ -27,7 +30,13 @@ import {
   reservePlaytestCallCost,
   settlePlaytestCallCost,
 } from "./cost-ledger.js";
-import { PlaytestCallRecordSchema, type PlaytestCallRecord } from "./contracts.js";
+import {
+  PlaytestCallRecordSchema,
+  PlaytestDomainRepairCauseSchema,
+  PlaytestDomainRepairDiagnosticSchema,
+  type PlaytestCallRecord,
+  type PlaytestDomainRepairCause,
+} from "./contracts.js";
 import {
   attributePlaytestFailure,
   type FailureAttribution,
@@ -37,7 +46,8 @@ import { appendPlaytestJsonLine, hashPlaytestValue } from "./files.js";
 import { createDiagnosticBundle, writeDiagnosticBundle } from "./replay.js";
 import { PlaytestProviderScheduler, scheduledCallTimingFor } from "./scheduler.js";
 
-export type PlaytestTelemetryActor = "calibration" | "candidate" | "player_driver" | "judge";
+export type PlaytestTelemetryActor =
+  "calibration" | "candidate" | "player_driver" | "judge" | "artifact";
 export type PlaytestTelemetryPhase = PlaytestCallRecord["phase"];
 
 export interface PlaytestTelemetryProviderOptions {
@@ -91,7 +101,7 @@ function requestSchema(request: StructuredRequest<unknown>): Record<string, unkn
 }
 
 function outputBudget(
-  request: StructuredRequest<unknown>,
+  request: StructuredOutputBudgetRequest,
   metadata: ProviderAttemptMetadata | undefined,
   profile: FrozenModelExecutionProfile,
 ): number {
@@ -154,6 +164,11 @@ export class PlaytestTelemetryProvider implements LlmProvider {
     this.stateSnapshot = snapshot;
   }
 
+  /** Preserve the frozen phase budget through the engine's spending wrapper. */
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    return outputBudget(request, undefined, this.options.profile);
+  }
+
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const assertDurationBudget = (): void => {
       if (this.options.deadlineAt === undefined) return;
@@ -169,8 +184,11 @@ export class PlaytestTelemetryProvider implements LlmProvider {
     assertDurationBudget();
     this.sequence += 1;
     const sequence = this.sequence;
-    const namespace = this.options.callNamespace ? `-${this.options.callNamespace}` : "";
-    const callId = `${this.options.jobId}-${this.options.actor}${namespace}-${String(sequence).padStart(5, "0")}`;
+    const callId = this.callId(sequence);
+    const domainRepairCause = this.domainRepairCause(
+      request as StructuredRequest<unknown>,
+      sequence,
+    );
     const costReservationId = randomUUID();
     const reservationsPath = reservationLedgerPathForCalls(this.options.callsPath);
     const budgetQueuedAt = Date.now();
@@ -267,14 +285,18 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         repairKind:
           request.attemptKind === "schema_repair"
             ? "schema"
-            : request.attemptKind === "transient_retry"
-              ? "transient"
-              : request.attemptKind === "domain_repair"
-                ? "domain"
-                : undefined,
+            : request.attemptKind === "content_repair"
+              ? "content"
+              : request.attemptKind === "transient_retry"
+                ? "transient"
+                : request.attemptKind === "domain_repair"
+                  ? "domain"
+                  : undefined,
+        ...(domainRepairCause ? { domainRepairCause } : {}),
       });
       await this.persist(record);
       await settlePlaytestCallCost(reservationsPath, costReservationId);
+      await this.persistDomainRepairDiagnostic(record);
       return result;
     } catch (error) {
       if (costCommitted) throw error;
@@ -362,11 +384,14 @@ export class PlaytestTelemetryProvider implements LlmProvider {
         repairKind:
           request.attemptKind === "schema_repair"
             ? "schema"
-            : request.attemptKind === "transient_retry"
-              ? "transient"
-              : request.attemptKind === "domain_repair"
-                ? "domain"
-                : undefined,
+            : request.attemptKind === "content_repair"
+              ? "content"
+              : request.attemptKind === "transient_retry"
+                ? "transient"
+                : request.attemptKind === "domain_repair"
+                  ? "domain"
+                  : undefined,
+        ...(domainRepairCause ? { domainRepairCause } : {}),
         failureKind,
         failureOwner: attribution.owner,
         failureFingerprint,
@@ -374,6 +399,7 @@ export class PlaytestTelemetryProvider implements LlmProvider {
       });
       await this.persist(record);
       await settlePlaytestCallCost(reservationsPath, costReservationId);
+      await this.persistDomainRepairDiagnostic(record);
       try {
         await this.persistDiagnostic(
           callId,
@@ -394,6 +420,70 @@ export class PlaytestTelemetryProvider implements LlmProvider {
   private async persist(record: PlaytestCallRecord): Promise<void> {
     await appendPlaytestJsonLine(this.options.callsPath, record);
     await this.options.onRecord?.(record);
+  }
+
+  private callId(sequence: number): string {
+    const namespace = this.options.callNamespace ? `-${this.options.callNamespace}` : "";
+    return `${this.options.jobId}-${this.options.actor}${namespace}-${String(sequence).padStart(5, "0")}`;
+  }
+
+  private domainRepairCause(
+    request: StructuredRequest<unknown>,
+    sequence: number,
+  ): PlaytestDomainRepairCause | undefined {
+    if (request.attemptKind !== "domain_repair") return undefined;
+    if (!request.domainRepairCause) {
+      throw new Error("A domain-repair request requires a bounded local validation cause");
+    }
+    if (sequence <= 1 || request.repairOfPhase === undefined) {
+      throw new Error("A domain-repair request requires a prior physical call and source phase");
+    }
+    const secrets = this.options.secrets ?? [];
+    const redactedOperationId = redactSecrets(
+      request.domainRepairCause.logicalOperationId,
+      secrets,
+    );
+    const logicalOperationId =
+      redactedOperationId === request.domainRepairCause.logicalOperationId
+        ? redactedOperationId.slice(0, 256)
+        : `sha256:${hashPlaytestValue(request.domainRepairCause.logicalOperationId)}`;
+    return PlaytestDomainRepairCauseSchema.parse({
+      logicalOperationId,
+      priorCallId: this.callId(sequence - 1),
+      sourcePhase: request.repairOfPhase,
+      validationStage: request.domainRepairCause.validationStage,
+      errorName: request.domainRepairCause.errorName,
+      errorMessage: sanitizeDomainRepairMessage(
+        redactSecrets(request.domainRepairCause.errorMessage, secrets),
+      ),
+      errorFingerprint: request.domainRepairCause.errorFingerprint,
+    });
+  }
+
+  private async persistDomainRepairDiagnostic(record: PlaytestCallRecord): Promise<void> {
+    if (!record.domainRepairCause) return;
+    try {
+      await mkdir(this.options.diagnosticsDir, { recursive: true });
+      await atomicWriteJson(
+        path.join(this.options.diagnosticsDir, `${record.id}-domain-repair.json`),
+        PlaytestDomainRepairDiagnosticSchema.parse({
+          schemaVersion: 1,
+          kind: "domain_repair",
+          createdAt: record.timestamp,
+          jobId: record.jobId,
+          actor: record.actor,
+          callId: record.id,
+          schemaName: record.schemaName,
+          provider: record.provider,
+          model: record.model,
+          route: record.route,
+          executionProfileFingerprint: record.executionProfileFingerprint,
+          cause: record.domainRepairCause,
+        }),
+      );
+    } catch {
+      // The typed call record is authoritative; the standalone diagnostic is derivative.
+    }
   }
 
   private async persistDiagnostic(

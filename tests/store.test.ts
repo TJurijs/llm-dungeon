@@ -41,9 +41,7 @@ describe("Markdown state store", () => {
     });
 
     const context = await store.buildContext();
-    expect(context).toContain(
-      "STARTING PREMISE AND CHARACTER CONCEPT — IMMUTABLE ORIGIN EVIDENCE",
-    );
+    expect(context).toContain("STARTING PREMISE AND CHARACTER CONCEPT — IMMUTABLE ORIGIN EVIDENCE");
     expect(context).toContain(premise);
     expect(context).toContain(character);
     expect(context).toContain("setup compression must not silently discard them");
@@ -132,14 +130,12 @@ describe("Markdown state store", () => {
     });
 
     const context = await store.buildContext();
-    expect(context).toContain("RELEVANT TRAITS AND CAPABILITIES — AUTHORITATIVE CONTRACTS");
+    expect(context).toContain("RELEVANT ENTITIES — INCLUDES DM-ONLY STATE");
     expect(context).toContain(JSON.stringify(capability));
     expect(context).toContain(JSON.stringify(itemCapability));
-    expect(context).toContain("Apply every quoted entry as a whole");
+    expect(context).toContain("Apply each included trait as a whole");
     expect(context).toContain("RECENT CHECK CALIBRATION — HISTORICAL EVIDENCE");
-    expect(context).toContain(
-      "Turn 2: Echo Reading; difficulty 50; modifiers: Echo Reading +15",
-    );
+    expect(context).toContain("Turn 2: Echo Reading; difficulty 50; modifiers: Echo Reading +15");
     expect(context).toContain("never repeat a prior outcome or roll");
 
     const character = await store.inspect("character");
@@ -250,7 +246,7 @@ describe("Markdown state store", () => {
     const letter = [...reloaded.entities.values()].find(
       (entity) => entity.name === "Sealed Letter",
     );
-    expect(letter?.id).toMatch(/^item:sealed-letter-turn-1/);
+    expect(letter?.id).toBe("item:sealed-letter");
     expect(reloaded.entities.get("player:hero")?.inventory).toContainEqual({
       entityId: letter?.id,
       quantity: 1,
@@ -559,6 +555,201 @@ describe("Markdown state store", () => {
     expect((await store.load()).manifest.turn).toBe(1);
   });
 
+  it("rejects an unconserved credit when another owner already holds the item", async () => {
+    const store = await createTestStore();
+
+    await expect(
+      store.commitTurn({
+        action: "I retrieve the travel sword without removing it from its former place.",
+        resolved: {
+          narration: "The same sword cannot remain in two places.",
+          turnSummary: "The unconserved retrieval was rejected.",
+          operations: [
+            {
+              type: "change_inventory",
+              ownerId: "location:crooked-crown",
+              itemId: "item:travel-sword",
+              quantityDelta: 1,
+            },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/already owned by player:hero.*use transfer_item/);
+
+    const loaded = await store.load();
+    expect(loaded.manifest.turn).toBe(0);
+    expect(loaded.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+    expect(loaded.entities.get("location:crooked-crown")?.inventory).toEqual([]);
+  });
+
+  it("keeps legacy duplicate ownership readable and permits reducing it", async () => {
+    const store = await createTestStore();
+    const initial = await store.load();
+    const mara = initial.entities.get("npc:mara-venn")!;
+    const maraPath = path.join(store.currentDir, "entities", initial.entityFiles.get(mara.id)!);
+    await writeFile(
+      maraPath,
+      renderEntity({
+        ...mara,
+        inventory: [{ entityId: "item:travel-sword", quantity: 1 }],
+      }),
+      "utf8",
+    );
+
+    const legacy = await store.load();
+    expect(legacy.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+    expect(legacy.entities.get("npc:mara-venn")?.inventory).toContainEqual({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+
+    await store.commitTurn({
+      action: "I wait without changing the old custody records.",
+      resolved: {
+        narration: "The legacy record remains readable.",
+        turnSummary: "The campaign advanced without enlarging the anomaly.",
+        operations: [{ type: "add_condition", targetId: "player:hero", condition: "waiting" }],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    await store.commitTurn({
+      action: "Mara relinquishes the duplicate legacy entry.",
+      resolved: {
+        narration: "Mara's obsolete custody entry is removed.",
+        turnSummary: "The legacy duplicate ownership was resolved.",
+        operations: [
+          {
+            type: "change_inventory",
+            ownerId: "npc:mara-venn",
+            itemId: "item:travel-sword",
+            quantityDelta: -1,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const resolved = await store.load();
+    expect(resolved.manifest.turn).toBe(2);
+    expect(resolved.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+    expect(resolved.entities.get("npc:mara-venn")?.inventory).toEqual([]);
+  });
+
+  it("allows a conserved stack split followed by a handoff to a replacement owner", async () => {
+    const store = await createTestStore();
+    await store.commitTurn({
+      action: "Mara counts out two trade tokens.",
+      resolved: {
+        narration: "Mara holds two distinct trade tokens of the same issue.",
+        turnSummary: "Mara received two trade tokens.",
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:trade-tokens",
+              kind: "item",
+              name: "Trade Tokens",
+              status: "valid",
+              tags: ["currency"],
+              description: "Two fungible stamped trade tokens.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
+          {
+            type: "change_inventory",
+            ownerId: "npc:mara-venn",
+            itemId: "item:trade-tokens",
+            quantityDelta: 2,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+    const beforeTransfer = await store.load();
+    const tokenId = [...beforeTransfer.entities.values()].find(
+      (entity) => entity.name === "Trade Tokens",
+    )!.id;
+
+    await store.commitTurn({
+      action: "Mara gives me one of the two trade tokens.",
+      resolved: {
+        narration: "Mara retains one token and transfers the other to you.",
+        turnSummary: "Mara transferred one trade token to the hero.",
+        operations: [
+          {
+            type: "transfer_item",
+            fromId: "npc:mara-venn",
+            toId: "player:hero",
+            itemId: tokenId,
+            quantity: 1,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const split = await store.load();
+    expect(split.entities.get("npc:mara-venn")?.inventory).toContainEqual({
+      entityId: tokenId,
+      quantity: 1,
+    });
+    expect(split.entities.get("player:hero")?.inventory).toContainEqual({
+      entityId: tokenId,
+      quantity: 1,
+    });
+
+    await store.commitTurn({
+      action: "I leave my trade token on the Crooked Crown's counter.",
+      resolved: {
+        narration: "You place your token on the counter while Mara keeps hers.",
+        turnSummary: "The hero transferred one trade token to the Crooked Crown.",
+        operations: [
+          {
+            type: "transfer_item",
+            fromId: "player:hero",
+            toId: "location:crooked-crown",
+            itemId: tokenId,
+            quantity: 1,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const handedOff = await store.load();
+    expect(handedOff.entities.get("npc:mara-venn")?.inventory).toContainEqual({
+      entityId: tokenId,
+      quantity: 1,
+    });
+    expect(handedOff.entities.get("player:hero")?.inventory).not.toContainEqual({
+      entityId: tokenId,
+      quantity: 1,
+    });
+    expect(handedOff.entities.get("location:crooked-crown")?.inventory).toContainEqual({
+      entityId: tokenId,
+      quantity: 1,
+    });
+  });
+
   it("repairs uniquely matching type-compatible references with an omitted namespace", async () => {
     const store = await createTestStore();
     const initial = await store.load();
@@ -604,6 +795,13 @@ describe("Markdown state store", () => {
     expect(loaded.threads.find((candidate) => candidate.id === thread.id)?.summary).toBe(
       "Mara revealed a new lead.",
     );
+    expect(loaded.threads.find((candidate) => candidate.id === thread.id)?.objective).toBe(
+      "Travelers have stopped arriving from the north.",
+    );
+    expect(loaded.threads.find((candidate) => candidate.id === thread.id)).toMatchObject({
+      createdTurn: 0,
+      updatedTurn: 1,
+    });
     expect(
       loaded.entities
         .get("npc:mara-venn")
@@ -672,6 +870,28 @@ describe("Markdown state store", () => {
       }),
     ).rejects.toThrow(/Unknown thread reference does-not-exist/);
     expect((await unknownStore.load()).manifest.turn).toBe(0);
+
+    const bracketedStore = await createTestStore();
+    const realThreadId = (await bracketedStore.load()).threads[0]!.id;
+    await expect(
+      bracketedStore.commitTurn({
+        action: "I pursue a bracketed display reference.",
+        resolved: {
+          narration: "The display delimiters are not an ID.",
+          turnSummary: "Nothing changed.",
+          operations: [
+            {
+              type: "update_thread",
+              threadId: `[${realThreadId}]`,
+              summary: "This must not commit.",
+            },
+          ],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(new RegExp(`Unknown thread reference \\[${realThreadId}\\]`));
+    expect((await bracketedStore.load()).manifest.turn).toBe(0);
   });
 
   it("applies movement, relationships, threads, fact replacement, and campaign endings", async () => {
@@ -792,6 +1012,11 @@ describe("Markdown state store", () => {
     expect(loaded.threads.find((thread) => thread.title === "The Blue Mark")?.id).toMatch(
       /^thread:/,
     );
+    expect(loaded.threads.find((thread) => thread.title === "The Blue Mark")).toMatchObject({
+      objective: "The blue mark points north.",
+      createdTurn: 1,
+      updatedTurn: 1,
+    });
     expect(
       loaded.chronicle.find((event) => event.text === "The hero found the blue mark.")?.id,
     ).toMatch(/^event:/);
@@ -1299,7 +1524,7 @@ describe("Markdown state store", () => {
       model: "fake-model",
     });
     const context = await store.buildContext();
-    expect(context).toContain("# Gate Warden");
+    expect(context).toContain('name="Gate Warden"');
     expect(context).toContain("The warden secretly marks certain wagons.");
   });
 
@@ -1337,9 +1562,9 @@ describe("Markdown state store", () => {
     });
     const context = await store.buildContext();
     expect(context).toContain("AUTHORITATIVE LOCATION DIRECTORY");
-    expect(context).toContain("# Lantern Ward");
+    expect(context).toContain('name="Lantern Ward"');
     expect(context).toContain("Lantern Ward surrounds the Crooked Crown.");
-    expect(context).toContain("parent=[location:lantern-ward-turn-1]");
+    expect(context).toContain("parent=[location:lantern-ward]");
   });
 
   it("finishes an interrupted prepared commit idempotently", async () => {
@@ -1409,7 +1634,7 @@ describe("Markdown state store", () => {
     }
     const context = await store.buildContext();
     expect(context).toContain("watch captain takes bribes");
-    expect(context).toContain("PLAYER INVENTORY — AUTHORITATIVE CLOSED LIST");
+    expect(context).toContain("owns=1x[item:travel-sword]");
     expect(context).toContain("DURABLE SUMMARY 2");
     expect(context).not.toContain("VERBOSE NARRATION 2");
     expect(context).toContain("VERBOSE NARRATION 9");
@@ -1453,9 +1678,8 @@ describe("Markdown state store", () => {
     const context = await store.buildContext();
     const loaded = await store.load();
     const token = [...loaded.entities.values()].find((entity) => entity.name === "Mara's Token");
-    expect(context).toContain("RELEVANT ENTITY INVENTORIES — AUTHORITATIVE");
-    expect(context).toContain(`1 × [${token?.id}] Mara's Token`);
-    expect(context).toContain("# Mara's Token");
+    expect(context).toContain(`owns=1x[${token?.id}] "Mara's Token"`);
+    expect(context).toContain(`ENTITY [${token?.id}]`);
     expect(context).toContain("A hidden notch marks its edge.");
   });
 });

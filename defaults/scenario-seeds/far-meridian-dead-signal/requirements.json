@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "entities": [
+    {
+      "id": "location:mercy-end",
+      "kinds": ["location"],
+      "purpose": "the colony-wide root containing its separate ground sites"
+    },
+    {
+      "id": "location:landing-pad",
+      "kinds": ["location"],
+      "purpose": "the colony landing pad"
+    },
+    {
+      "id": "location:wayward-sun",
+      "kinds": ["location"],
+      "purpose": "the named courier ship with its durable movement and defense limits",
+      "minimumTraits": 1
+    },
+    {
+      "id": "location:medical-bay",
+      "kinds": ["location"],
+      "purpose": "the colony medical bay seen in the recording"
+    },
+    {
+      "id": "location:mine-entrance",
+      "kinds": ["location"],
+      "purpose": "the reusable exterior mine threshold"
+    },
+    {
+      "id": "location:deep-sealed-boundary",
+      "kinds": ["location"],
+      "purpose": "the distinct deeper boundary that can still be opened"
+    },
+    {
+      "id": "location:shelter",
+      "kinds": ["location"],
+      "purpose": "the colonists' exact opening shelter or holding place"
+    },
+    {
+      "id": "npc:tala-venn",
+      "kinds": ["person"],
+      "purpose": "Jace's pilot and mechanic",
+      "mustHaveLocation": true
+    },
+    {
+      "id": "npc:eli-mercer",
+      "kinds": ["person"],
+      "purpose": "Jace's medic and field scientist",
+      "mustHaveLocation": true
+    },
+    {
+      "id": "npc:mara-venn",
+      "kinds": ["person"],
+      "purpose": "the colony administrator with a definite private fate",
+      "mustHaveLocation": true
+    },
+    {
+      "id": "faction:mercy-end-colonists",
+      "kinds": ["faction"],
+      "purpose": "the ninety-four missing residents with exact opening placement",
+      "mustHaveLocation": true
+    },
+    {
+      "id": "other:hidden-actor",
+      "kinds": ["person", "creature", "other"],
+      "purpose": "the exact hidden actor or source responsible for the recording and Mara's attack, unless its facts establish an explicit shared mechanism",
+      "mustHaveLocation": true
+    },
+    {
+      "id": "item:crate-alpha",
+      "kinds": ["item"],
+      "purpose": "the missing medicine and filter cargo with exact post-landing custody",
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:sealed-object",
+      "kinds": ["item"],
+      "purpose": "the same sealed object shown in the recording",
+      "minimumTraits": 1,
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:containment-key",
+      "kinds": ["item"],
+      "purpose": "a distinct containment key with its own chronology",
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:transfer-device",
+      "kinds": ["item", "other"],
+      "purpose": "the exact transfer mechanism with bounded capability and route",
+      "minimumTraits": 1,
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:ship-field-equipment",
+      "kinds": ["item"],
+      "purpose": "one aggregate ship-owned record whose named components preserve both the utility drone and environmental suits and their distinct functions",
+      "minimumTraits": 2,
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:jace-sidearm",
+      "kinds": ["item"],
+      "purpose": "Jace's practical sidearm",
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:revoked-marshal-badge",
+      "kinds": ["item"],
+      "purpose": "Jace's revoked marshal badge",
+      "mustHaveCustody": true
+    },
+    {
+      "id": "item:jace-field-kit",
+      "kinds": ["item"],
+      "purpose": "Jace's compact environmental coat, breathing mask, portable scanner, and survival gear with each usable component and limit retained",
+      "minimumTraits": 2,
+      "mustHaveCustody": true
+    }
+  ],
+  "locationParents": [
+    {
+      "childId": "location:landing-pad",
+      "parentId": "location:mercy-end"
+    },
+    {
+      "childId": "location:wayward-sun",
+      "parentId": "location:landing-pad"
+    },
+    {
+      "childId": "location:medical-bay",
+      "parentId": "location:mercy-end"
+    },
+    {
+      "childId": "location:mine-entrance",
+      "parentId": "location:mercy-end"
+    },
+    {
+      "childId": "location:deep-sealed-boundary",
+      "parentId": "location:mine-entrance"
+    },
+    {
+      "childId": "location:shelter",
+      "parentId": "location:mercy-end"
+    }
+  ],
+  "inventory": [
+    {
+      "ownerId": "location:wayward-sun",
+      "itemId": "item:ship-field-equipment"
+    },
+    {
+      "ownerId": "player:hero",
+      "itemId": "item:jace-sidearm"
+    },
+    {
+      "ownerId": "player:hero",
+      "itemId": "item:revoked-marshal-badge"
+    },
+    {
+      "ownerId": "player:hero",
+      "itemId": "item:jace-field-kit"
+    }
+  ],
+  "threadLinks": [
+    {
+      "label": "Crate Alpha disappearance",
+      "relatedEntityIds": [
+        "item:crate-alpha",
+        "item:transfer-device",
+        "location:wayward-sun",
+        "location:landing-pad"
+      ]
+    },
+    {
+      "label": "Mercy's End disappearance",
+      "relatedEntityIds": [
+        "faction:mercy-end-colonists",
+        "npc:mara-venn",
+        "other:hidden-actor",
+        "item:sealed-object",
+        "item:containment-key",
+        "location:shelter",
+        "location:deep-sealed-boundary"
+      ]
+    }
+  ],
+  "ongoing": [
+    {
+      "kind": "custody_chain",
+      "code": "crate-alpha-single-custody",
+      "itemId": "item:crate-alpha"
+    },
+    {
+      "kind": "custody_chain",
+      "code": "containment-key-single-custody",
+      "itemId": "item:containment-key"
+    },
+    {
+      "kind": "thread_open_until",
+      "code": "colonists-thread-open-until-found",
+      "threadLabel": "disappearance",
+      "untilKnown": "faction:mercy-end-colonists"
+    },
+    {
+      "kind": "never_coalesce",
+      "code": "distinct-mine-boundaries",
+      "locationIds": ["location:mine-entrance", "location:deep-sealed-boundary"]
+    },
+    {
+      "kind": "fact_provenance_required",
+      "code": "hidden-actor-evidence-sourced",
+      "subjectIds": ["other:hidden-actor", "npc:mara-venn"]
+    },
+    {
+      "kind": "clock_monotonic",
+      "code": "campaign-clock-monotonic"
+    }
+  ]
+}

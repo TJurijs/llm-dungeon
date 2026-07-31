@@ -39,10 +39,10 @@ class SmokeProvider implements LlmProvider {
       data = structuredClone(setupFixture);
     } else if (request.schemaName.startsWith("connection_campaign_setup_")) {
       data = JSON.parse(request.prompt.slice(request.prompt.indexOf("{")));
-    } else if (request.schemaName.startsWith("connection_gameplay_contract_v1_")) {
+    } else if (request.schemaName.startsWith("connection_gameplay_contract_v2_")) {
       const marker = "Schema enforcement verified.";
       data = { kind: "resolved", narration: marker, turnSummary: marker, operations: [] };
-    } else if (request.schemaName === "turn_decision_v1") {
+    } else if (request.schemaName === "turn_decision_v2") {
       data = {
         kind: "check_required",
         check: {
@@ -56,7 +56,7 @@ class SmokeProvider implements LlmProvider {
           failureCampaignStatus: "none",
         },
       };
-    } else if (request.schemaName === "turn_resolution_v1") {
+    } else if (request.schemaName === "turn_resolution_v2") {
       data = {
         narration: TURN_NARRATION,
         turnSummary: "The scout recovered the cellar ledger.",

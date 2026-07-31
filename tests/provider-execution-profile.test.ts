@@ -97,6 +97,12 @@ describe("profile-driven provider execution", () => {
       fetchMock as typeof fetch,
       profile,
     );
+    expect(
+      provider.effectiveOutputTokenBudget({
+        maxOutputTokens: 777,
+        generationPhase: "setup",
+      }),
+    ).toBe(8_000);
     const result = await provider.generateStructured({
       schemaName: "profiled_setup",
       schema: AnswerSchema,
@@ -219,4 +225,299 @@ describe("profile-driven provider execution", () => {
       outputTokenBudget: 4_000,
     });
   }, 3_000);
+
+  it("hard-bounds response headers when fetch ignores abort and cleans up a late response", async () => {
+    vi.useFakeTimers();
+    try {
+      const profile = terraProfile();
+      const { frozen: _frozen, fingerprint: _fingerprint, ...selected } = profile;
+      const timedProfile = freezeModelExecutionProfile({
+        ...selected,
+        timeout: { ...profile.timeout, decisionMs: 1_000 },
+      });
+      let resolveHeaders!: (response: Response) => void;
+      const headers = new Promise<Response>((resolve) => {
+        resolveHeaders = resolve;
+      });
+      let receivedSignal: AbortSignal | undefined;
+      const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        receivedSignal = init?.signal ?? undefined;
+        return headers;
+      });
+      const provider = new OpenAIProvider(
+        profile.key.model,
+        "key",
+        { temperature: 0.8, maxOutputTokens: 1_000 },
+        "https://example.test/chat",
+        fetchMock as typeof fetch,
+        timedProfile,
+      );
+      let settled = false;
+      const outcome = provider
+        .generateStructured({
+          schemaName: "profiled_header_timeout",
+          schema: AnswerSchema,
+          system: "system",
+          prompt: "prompt",
+          generationPhase: "decision",
+        })
+        .then(
+          () => ({ failure: undefined }),
+          (failure: unknown) => ({ failure }),
+        )
+        .finally(() => {
+          settled = true;
+        });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+      expect(receivedSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const { failure } = await outcome;
+
+      expect(failure).toMatchObject({ kind: "network", retryable: true });
+      expect((failure as Error).message).toContain("timed out after 1000ms");
+      expect(attemptMetadataFor(failure)).toMatchObject({
+        timeoutMs: 1_000,
+        outputTokenBudget: 4_000,
+      });
+      expect(receivedSignal?.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+
+      const lateResponse = new Response('{"answer":"too late"}', { status: 200 });
+      const cancel = vi.spyOn(lateResponse.body!, "cancel");
+      resolveHeaders(lateResponse);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns caller cancellation when fetch ignores abort and consumes its late rejection", async () => {
+    const profile = terraProfile();
+    const controller = new AbortController();
+    let rejectHeaders!: (error: Error) => void;
+    const headers = new Promise<Response>((_resolve, reject) => {
+      rejectHeaders = reject;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? undefined;
+      return headers;
+    });
+    const provider = new OpenAIProvider(
+      profile.key.model,
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1_000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+      profile,
+    );
+    const outcome = provider
+      .generateStructured({
+        schemaName: "profiled_header_cancel",
+        schema: AnswerSchema,
+        system: "system",
+        prompt: "prompt",
+        generationPhase: "decision",
+        signal: controller.signal,
+      })
+      .then(
+        () => ({ failure: undefined }),
+        (failure: unknown) => ({ failure }),
+      );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(receivedSignal?.aborted).toBe(false);
+    controller.abort();
+    const { failure } = await outcome;
+
+    expect(failure).toMatchObject({ kind: "cancelled", retryable: false });
+    expect(attemptMetadataFor(failure)).toMatchObject({
+      timeoutMs: 120_000,
+      outputTokenBudget: 4_000,
+    });
+    expect(receivedSignal?.aborted).toBe(true);
+
+    const unhandled: unknown[] = [];
+    const captureUnhandled = (error: unknown): void => {
+      unhandled.push(error);
+    };
+    process.on("unhandledRejection", captureUnhandled);
+    try {
+      rejectHeaders(new Error("late ignored fetch rejection"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", captureUnhandled);
+    }
+  });
+
+  it.each([
+    { case: "successful", status: 200, reader: "json" as const },
+    { case: "error", status: 503, reader: "text" as const },
+  ])("keeps the profile timeout active while a $case response body stalls", async (testCase) => {
+    vi.useFakeTimers();
+    try {
+      const profile = terraProfile();
+      const { frozen: _frozen, fingerprint: _fingerprint, ...selected } = profile;
+      const timedProfile = freezeModelExecutionProfile({
+        ...selected,
+        timeout: { ...profile.timeout, decisionMs: 1_000 },
+      });
+      let markBodyStarted!: () => void;
+      const bodyStarted = new Promise<void>((resolve) => {
+        markBodyStarted = resolve;
+      });
+      const response = new Response("", { status: testCase.status });
+      const stalledBody = (): Promise<never> => {
+        markBodyStarted();
+        return new Promise<never>(() => undefined);
+      };
+      if (testCase.reader === "json") vi.spyOn(response, "json").mockImplementation(stalledBody);
+      else vi.spyOn(response, "text").mockImplementation(stalledBody);
+      let resolveHeaders!: (response: Response) => void;
+      const headers = new Promise<Response>((resolve) => {
+        resolveHeaders = resolve;
+      });
+      const provider = new OpenAIProvider(
+        profile.key.model,
+        "key",
+        { temperature: 0.8, maxOutputTokens: 1_000 },
+        "https://example.test/chat",
+        vi.fn(() => headers) as typeof fetch,
+        timedProfile,
+      );
+      const outcome = provider
+        .generateStructured({
+          schemaName: `profiled_${testCase.reader}_body_timeout`,
+          schema: AnswerSchema,
+          system: "system",
+          prompt: "prompt",
+          generationPhase: "decision",
+        })
+        .then(
+          () => ({ failure: undefined }),
+          (failure: unknown) => ({ failure }),
+        );
+
+      await vi.advanceTimersByTimeAsync(600);
+      resolveHeaders(response);
+      await bodyStarted;
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(399);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const { failure } = await outcome;
+
+      expect(failure).toMatchObject({ kind: "network", retryable: true });
+      expect((failure as Error).message).toContain("timed out after 1000ms");
+      expect(attemptMetadataFor(failure)).toMatchObject({
+        timeoutMs: 1_000,
+        outputTokenBudget: 4_000,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a stalled response body as cancellation and releases the profile timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const profile = terraProfile();
+      const controller = new AbortController();
+      let markBodyStarted!: () => void;
+      const bodyStarted = new Promise<void>((resolve) => {
+        markBodyStarted = resolve;
+      });
+      const response = new Response("", { status: 200 });
+      vi.spyOn(response, "json").mockImplementation(() => {
+        markBodyStarted();
+        return new Promise<never>(() => undefined);
+      });
+      const provider = new OpenAIProvider(
+        profile.key.model,
+        "key",
+        { temperature: 0.8, maxOutputTokens: 1_000 },
+        "https://example.test/chat",
+        vi.fn(async () => response) as typeof fetch,
+        profile,
+      );
+      const outcome = provider
+        .generateStructured({
+          schemaName: "profiled_body_cancel",
+          schema: AnswerSchema,
+          system: "system",
+          prompt: "prompt",
+          generationPhase: "decision",
+          signal: controller.signal,
+        })
+        .then(
+          () => ({ failure: undefined }),
+          (failure: unknown) => ({ failure }),
+        );
+
+      await bodyStarted;
+      expect(vi.getTimerCount()).toBe(1);
+      controller.abort();
+      const { failure } = await outcome;
+
+      expect(failure).toMatchObject({ kind: "cancelled", retryable: false });
+      expect(attemptMetadataFor(failure)).toMatchObject({ timeoutMs: 120_000 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("composes terminal user cancellation with the profile timeout signal", async () => {
+    const profile = terraProfile();
+    const controller = new AbortController();
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const provider = new OpenAIProvider(
+      profile.key.model,
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1_000 },
+      "https://example.test/chat",
+      vi.fn(
+        async (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const rejectAbort = (): void => reject(new DOMException("aborted", "AbortError"));
+            init?.signal?.addEventListener("abort", rejectAbort, { once: true });
+            markStarted?.();
+            if (init?.signal?.aborted) rejectAbort();
+          }),
+      ) as typeof fetch,
+      profile,
+    );
+    const pending = provider.generateStructured({
+      schemaName: "profiled_cancel",
+      schema: AnswerSchema,
+      system: "system",
+      prompt: "prompt",
+      generationPhase: "decision",
+      signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    let failure: unknown;
+    try {
+      await pending;
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ kind: "cancelled", retryable: false });
+    expect(attemptMetadataFor(failure)).toMatchObject({
+      timeoutMs: 120_000,
+      outputTokenBudget: 4_000,
+      attemptKind: "initial",
+    });
+  });
 });

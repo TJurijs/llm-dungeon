@@ -1,9 +1,66 @@
 import { describe, expect, it } from "vitest";
+import {
+  assertCampaignStateConsistency,
+  inventoryCycleEdges,
+  inventoryOwnershipSnapshot,
+} from "../src/domain/state-consistency.js";
 import { TransactionValidationError, applyTransaction } from "../src/domain/transaction.js";
 import type { Entity, StateOperation } from "../src/schemas.js";
 import { createTestStore } from "./helpers.js";
 
 describe("transaction boundary", () => {
+  it("rejects enlarged duplicate ownership at the whole-state boundary", async () => {
+    const loaded = await (await createTestStore()).load();
+    const projected = new Map(
+      [...loaded.entities.entries()].map(([id, entity]) => [id, structuredClone(entity)]),
+    );
+    projected.get("location:crooked-crown")!.inventory.push({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+
+    expect(() =>
+      assertCampaignStateConsistency(loaded.manifest, projected, loaded.threads, loaded.chronicle, {
+        allowedInventoryCycleEdges: inventoryCycleEdges(loaded.entities),
+        baselineInventoryOwnership: inventoryOwnershipSnapshot(loaded.entities),
+      }),
+    ).toThrow(/increases total quantity from 1 to 2/);
+
+    const legacyBaseline = new Map(
+      [...loaded.entities.entries()].map(([id, entity]) => [id, structuredClone(entity)]),
+    );
+    legacyBaseline
+      .get("player:hero")!
+      .inventory.find((entry) => entry.entityId === "item:travel-sword")!.quantity = 2;
+    legacyBaseline.get("npc:mara-venn")!.inventory.push({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+    const spreadLegacyDuplicate = new Map(
+      [...legacyBaseline.entries()].map(([id, entity]) => [id, structuredClone(entity)]),
+    );
+    spreadLegacyDuplicate
+      .get("player:hero")!
+      .inventory.find((entry) => entry.entityId === "item:travel-sword")!.quantity = 1;
+    spreadLegacyDuplicate.get("location:crooked-crown")!.inventory.push({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+
+    expect(() =>
+      assertCampaignStateConsistency(
+        loaded.manifest,
+        spreadLegacyDuplicate,
+        loaded.threads,
+        loaded.chronicle,
+        {
+          allowedInventoryCycleEdges: inventoryCycleEdges(legacyBaseline),
+          baselineInventoryOwnership: inventoryOwnershipSnapshot(legacyBaseline),
+        },
+      ),
+    ).toThrow(/spreads a legacy duplicate to a new owner/);
+  });
+
   it("resolves a suffix-only first owner for a newly created item", async () => {
     const store = await createTestStore();
     const result = await store.commitTurnWithResult({
@@ -47,6 +104,507 @@ describe("transaction boundary", () => {
       entityId: created?.entity.id,
       quantity: 1,
     });
+  });
+
+  it("rejects newly introduced mutable or localized tags while retaining legacy tags", async () => {
+    const loaded = await (await createTestStore()).load();
+    const apply = (operations: StateOperation[], entities = loaded.entities) =>
+      applyTransaction(operations, 1, loaded.manifest, entities, loaded.threads, loaded.chronicle);
+
+    expect(() =>
+      apply([
+        {
+          type: "create_entity",
+          entity: {
+            id: "npc:new-scout",
+            kind: "person",
+            name: "New Scout",
+            status: "watchful",
+            tags: ["missing"],
+            description: "A frontier scout.",
+            establishedFacts: [],
+            secrets: [],
+            playerKnowledge: [],
+          },
+        },
+      ]),
+    ).toThrow(/reserved mutable-state tag "missing"/);
+
+    for (const tag of ["unknown", "known", "hidden", "discovered", "undiscovered"]) {
+      expect(() =>
+        apply([
+          {
+            type: "set_entity_state",
+            targetId: "npc:mara-venn",
+            tags: ["innkeeper", tag],
+          },
+        ]),
+      ).toThrow(new RegExp(`reserved mutable-state tag "${tag}"`, "u"));
+    }
+
+    expect(() =>
+      apply([
+        {
+          type: "set_entity_state",
+          targetId: "npc:mara-venn",
+          tags: ["innkeeper", "Вооружена"],
+        },
+      ]),
+    ).toThrow(/tags must be lowercase ASCII taxonomy tokens in kebab-case/);
+
+    const legacy = new Map(
+      [...loaded.entities].map(([id, entity]) => [id, structuredClone(entity)]),
+    );
+    legacy.get("npc:mara-venn")!.tags.push("missing", "unknown");
+    expect(() =>
+      apply(
+        [
+          {
+            type: "set_entity_state",
+            targetId: "mara-venn",
+            tags: ["innkeeper", "missing", "unknown", "community-leader"],
+          },
+        ],
+        legacy,
+      ),
+    ).not.toThrow();
+  });
+
+  it("reports every admission fault in one collected correction", async () => {
+    const loaded = await (await createTestStore()).load();
+    let thrown: unknown;
+    try {
+      applyTransaction(
+        [
+          { type: "add_trait", targetId: "npc:nobody", trait: "Watchful" },
+          { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["innkeeper", "missing"] },
+          {
+            type: "add_fact",
+            targetId: "player:hero",
+            section: "established",
+            factId: "generated:auto",
+            text: "x".repeat(900),
+          },
+        ],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(TransactionValidationError);
+    const message = (thrown as Error).message;
+    expect(message).toContain("Transaction validation failed:");
+    // Each independent fault must be actionable from one correction rather
+    // than consuming the whole bounded repair budget one at a time.
+    expect(message).toContain("[durable_text_limit]");
+    expect(message).toContain("[reserved_mutable_state_tag]");
+    expect(message).toContain("[unknown_entity_reference]");
+  });
+
+  it("reports each unresolvable reference once instead of cascading", async () => {
+    const loaded = await (await createTestStore()).load();
+    let thrown: unknown;
+    try {
+      applyTransaction(
+        [
+          { type: "move_entity", targetId: "npc:mara-venn", locationId: "location:nowhere" },
+          {
+            type: "add_fact",
+            targetId: "location:nowhere",
+            section: "established",
+            factId: "generated:auto",
+            text: "A place that was never established.",
+          },
+          { type: "add_condition", targetId: "location:nowhere", condition: "sealed" },
+          { type: "add_trait", targetId: "npc:also-missing", trait: "Watchful" },
+        ],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    const message = (thrown as Error).message;
+    // Both unknown IDs are named so one correction can fix the whole response,
+    // but the three operations sharing one bad ID report it only once.
+    expect(message).toContain("location:nowhere");
+    expect(message).toContain("npc:also-missing");
+    expect(message.match(/location:nowhere/gu)).toHaveLength(1);
+  });
+
+  it("drops already-satisfied operations from the ledger instead of failing the turn", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const existingFact = loaded.entities
+      .get("npc:mara-venn")!
+      .facts.find((fact) => fact.section === "established")!;
+    const thread = loaded.threads[0]!;
+
+    const result = await store.commitTurnWithResult({
+      action: "I confirm what I already know about Mara.",
+      resolved: {
+        narration: "Mara repeats what you already knew, and nothing about the room changes.",
+        turnSummary: "Nothing new was established.",
+        operations: [
+          // Every one of these already holds; none should reject the turn.
+          {
+            type: "add_fact",
+            targetId: "npc:mara-venn",
+            section: "established",
+            factId: "generated:auto",
+            text: existingFact.text,
+          },
+          { type: "remove_condition", targetId: "npc:mara-venn", condition: "shaken" },
+          {
+            type: "set_relationship",
+            sourceId: "npc:mara-venn",
+            targetId: "player:hero",
+            summary: "Wary but cooperative.",
+          },
+          {
+            type: "set_relationship",
+            sourceId: "npc:mara-venn",
+            targetId: "player:hero",
+            summary: "Wary but cooperative.",
+          },
+          {
+            type: "update_thread",
+            threadId: thread.id,
+            summary: thread.summary,
+          },
+        ],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    // The one genuine change survives; the rest never enter the durable ledger.
+    expect(result.operations).toHaveLength(1);
+    expect(result.operations[0]).toMatchObject({ type: "set_relationship" });
+
+    const after = await store.load();
+    expect(after.threads.find((candidate) => candidate.id === thread.id)?.summary).toBe(
+      thread.summary,
+    );
+    expect(after.entities.get("npc:mara-venn")?.facts.filter((fact) => fact.active).length).toBe(
+      loaded.entities.get("npc:mara-venn")!.facts.filter((fact) => fact.active).length,
+    );
+  });
+
+  it("derives movement from the declared end-of-turn scene", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const thread = loaded.threads[0]!;
+
+    const result = await store.commitTurnWithResult({
+      action: "I lead Mara out to the watch post.",
+      resolved: {
+        narration: "You cross the road with Mara and stop at the old watch post.",
+        turnSummary: "The hero and Mara reached the watch post.",
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "location:watch-post",
+              kind: "location",
+              name: "Watch Post",
+              status: "open",
+              tags: [],
+              description: "A stone post across the northern road.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
+        ],
+        // Narration moved both actors but supplied no movement effect. The
+        // declaration is what the application reconciles against.
+        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
+        sceneState: { locationId: "location:watch-post", presentActorIds: ["npc:mara-venn"] },
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    const moves = result.operations.filter((operation) => operation.type === "move_entity");
+    const destination = result.operations.find((operation) => operation.type === "create_entity")
+      ?.entity.id;
+    expect(moves.map((move) => move.targetId).sort()).toEqual(["npc:mara-venn", "player:hero"]);
+    expect(new Set(moves.map((move) => move.locationId))).toEqual(new Set([destination]));
+
+    const after = await store.load();
+    expect(after.manifest.currentLocationId).toBe(destination);
+    expect(after.entities.get("npc:mara-venn")?.location).toBe(destination);
+  });
+
+  it("treats an unaudited thread as unchanged while still requiring a scene", async () => {
+    const loaded = await (await createTestStore()).load();
+    let thrown: unknown;
+    try {
+      applyTransaction(
+        [],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+        [],
+        { threadAudit: [], playerId: loaded.manifest.playerId },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    // An omission behaves as "unchanged" and is measured, not rejected: making
+    // it fatal cost a bounded repair on every turn of the first V2 autoplay.
+    const message = (thrown as Error).message;
+    expect(message).not.toContain("thread audit omitted");
+    expect(message).toContain("must declare the end-of-turn location");
+  });
+
+  it("requires a reason before accepting an unchanged verdict on a changed thread", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const thread = loaded.threads[0]!;
+    const linked = { ...thread, relatedEntityIds: ["npc:mara-venn"] };
+    const declare = (text: string) =>
+      applyTransaction(
+        [{ type: "add_condition", targetId: "npc:mara-venn", condition: "shaken" }],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        [linked],
+        loaded.chronicle,
+        [],
+        {
+          threadAudit: [{ threadIndex: 1, verdict: "unchanged", text }],
+          sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+          playerId: loaded.manifest.playerId,
+        },
+      );
+
+    // The thread stays unchanged either way, so an unstated reason is recorded
+    // for review rather than spending the turn's one bounded correction.
+    const unexplained = declare("");
+    expect(unexplained.signals.map((signal) => signal.code)).toEqual([
+      "thread_audit_unjustified_unchanged",
+    ]);
+
+    const explained = declare("Mara's nerves do not change the missing-caravan question.");
+    expect(explained.signals).toEqual([]);
+  });
+
+  it("requires a successor when the last active thread closes", async () => {
+    const loaded = await (await createTestStore()).load();
+    const thread = loaded.threads[0]!;
+    const audit = [{ threadIndex: 1, verdict: "resolved" as const, text: "Answered." }];
+    const declarations = {
+      threadAudit: audit,
+      sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+      playerId: loaded.manifest.playerId,
+    };
+    const apply = (operations: StateOperation[]) =>
+      applyTransaction(
+        operations,
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+        [],
+        declarations,
+      );
+
+    // Lifecycle is derived from the audit, so the closure needs no operation.
+    expect(() => apply([])).toThrow(/closed the last active thread without creating a successor/u);
+    expect(() =>
+      apply([
+        {
+          type: "create_thread",
+          threadId: "generated:auto",
+          title: "Who silenced the road",
+          summary: "The answer exposed a new pursuit.",
+          relatedEntityIds: [],
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("persists fact provenance and requires a source for reported evidence", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const thread = loaded.threads[0]!;
+    const declarations = {
+      threadAudit: [{ threadIndex: 1, verdict: "unchanged" as const, text: "" }],
+      sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+    };
+
+    await store.commitTurnWithResult({
+      action: "I ask Mara what she heard.",
+      resolved: {
+        narration: "Mara says a courier told her the north road bridge is out.",
+        turnSummary: "Mara relayed a courier's report.",
+        operations: [
+          {
+            type: "add_fact",
+            targetId: "npc:mara-venn",
+            section: "knowledge",
+            factId: "generated:auto",
+            text: "A courier told Mara the north road bridge is out.",
+            basis: "reported",
+            sourceId: "npc:mara-venn",
+          },
+        ],
+        ...declarations,
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    // Provenance must survive the Markdown round trip, or evidence strength is
+    // unmeasurable on every later turn.
+    const after = await store.load();
+    const persisted = after.entities
+      .get("npc:mara-venn")!
+      .facts.find((fact) => fact.text.startsWith("A courier told Mara"))!;
+    expect(persisted).toMatchObject({ basis: "reported", sourceId: "npc:mara-venn" });
+
+    expect(() =>
+      applyTransaction(
+        [
+          {
+            type: "add_fact",
+            targetId: "npc:mara-venn",
+            section: "knowledge",
+            factId: "generated:auto",
+            text: "Someone must have sabotaged the bridge.",
+            basis: "inferred",
+          },
+        ],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+        [],
+        { ...declarations, playerId: loaded.manifest.playerId },
+      ),
+    ).toThrow(/must name the source record it came from/u);
+  });
+
+  it("resolves thread verdicts by number so an ID can never be mistyped", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const thread = loaded.threads[0]!;
+
+    const result = await store.commitTurnWithResult({
+      action: "I follow the lead north.",
+      resolved: {
+        narration: "The road gives up one more detail.",
+        turnSummary: "The hero narrowed the lead.",
+        operations: [],
+        // No thread ID anywhere in the model's output.
+        threadAudit: [{ threadIndex: 1, verdict: "progressed", text: "A courier was seen." }],
+        sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+
+    expect(result.operations).toEqual([
+      expect.objectContaining({
+        type: "update_thread",
+        threadId: thread.id,
+        summary: "A courier was seen.",
+      }),
+    ]);
+    expect((await store.load()).threads[0]?.summary).toBe("A courier was seen.");
+  });
+
+  it("rejects a thread number that context never listed", async () => {
+    const loaded = await (await createTestStore()).load();
+
+    expect(() =>
+      applyTransaction(
+        [],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+        [],
+        {
+          threadAudit: [{ threadIndex: 9, verdict: "progressed", text: "Nowhere." }],
+          sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+          playerId: loaded.manifest.playerId,
+        },
+      ),
+    ).toThrow(/outside the 1 active thread\(s\) supplied in context/u);
+  });
+
+  it("classifies how a reference missed without repeating what it said", async () => {
+    const loaded = await (await createTestStore()).load();
+    const thread = loaded.threads[0]!;
+    const stem = thread.id.replace(/-turn-\d+$/u, "");
+    const classify = (threadId: string): string | undefined => {
+      try {
+        applyTransaction(
+          [{ type: "update_thread", threadId, summary: "Progress." }],
+          1,
+          loaded.manifest,
+          loaded.entities,
+          loaded.threads,
+          loaded.chronicle,
+        );
+        return undefined;
+      } catch (error) {
+        return (error as { violations?: { detail?: string }[] }).violations?.[0]?.detail;
+      }
+    };
+
+    // Dropping the application's own turn suffix resolves to the one record it
+    // can mean, so it is no longer reported at all.
+    expect(classify(stem)).toBeUndefined();
+
+    // It still has to be nameable where resolution cannot apply: the same stem
+    // under the wrong namespace is a near miss, not an invention.
+    expect(classify(stem.replace(/^thread:/u, "npc:"))).toBe("generated_suffix_variant");
+    expect(classify(`${thread.id}-extra`)).toBe("stem_shared");
+    expect(classify("npc:not-a-thread-namespace")).toBe("namespace_mismatch");
+    expect(classify("thread:zzz")).toBe("unrecognized");
+  });
+
+  it("resolves a reference that drops the application's own generated suffix", async () => {
+    const loaded = await (await createTestStore()).load();
+    const thread = loaded.threads[0]!;
+
+    const result = applyTransaction(
+      [
+        {
+          type: "update_thread",
+          threadId: thread.id.replace(/-turn-\d+$/u, ""),
+          summary: "Progress.",
+        },
+      ],
+      1,
+      loaded.manifest,
+      loaded.entities,
+      loaded.threads,
+      loaded.chronicle,
+    );
+
+    expect(result.threads.find((candidate) => candidate.id === thread.id)?.summary).toBe(
+      "Progress.",
+    );
   });
 
   it("wraps domain violations but lets parsing and programming failures escape", async () => {

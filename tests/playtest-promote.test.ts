@@ -357,15 +357,19 @@ describe("promoteModelEvidence", () => {
 
   it("ships every execution override and reconstructs the certified fingerprint", async () => {
     const root = await tempProjectRoot();
-    const profile = await seedFullyCurrent(root, {}, {
-      structuredOutput: {
-        mode: "native_strict_json_schema",
-        projection: "identity_v1",
+    const profile = await seedFullyCurrent(
+      root,
+      {},
+      {
+        structuredOutput: {
+          mode: "native_strict_json_schema",
+          projection: "identity_v1",
+        },
+        temperature: { policy: "fixed", value: 0.4 },
+        reasoning: { policy: "deepseek_thinking_disabled" },
+        outputTokenField: "max_completion_tokens",
       },
-      temperature: { policy: "fixed", value: 0.4 },
-      reasoning: { policy: "deepseek_thinking_disabled" },
-      outputTokenField: "max_completion_tokens",
-    });
+    );
 
     await promoteModelEvidence({ projectRoot: root, ...TARGET });
     const profilesFile = JSON.parse(

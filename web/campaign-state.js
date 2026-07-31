@@ -1,12 +1,27 @@
+/** @typedef {import("../src/web/contracts.js").BrowserCampaignInspectionResponse} BrowserCampaignInspectionResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserCampaignStateSnapshot} BrowserCampaignStateSnapshot */
+
 const STATE_VIEWS = ["character", "location", "threads"];
 
+/**
+ * @param {unknown} state
+ * @returns {state is BrowserCampaignStateSnapshot}
+ */
 function validCampaignState(state) {
+  if (!state || typeof state !== "object") return false;
+  const candidate = /** @type {Record<string, unknown>} */ (state);
   return (
-    state &&
-    typeof state === "object" &&
-    typeof state.revision === "string" &&
-    state.revision.length > 0 &&
-    STATE_VIEWS.every((view) => state[view]?.view === view)
+    typeof candidate.revision === "string" &&
+    candidate.revision.length > 0 &&
+    STATE_VIEWS.every((view) => {
+      const inspection = candidate[view];
+      return (
+        inspection !== null &&
+        typeof inspection === "object" &&
+        "view" in inspection &&
+        inspection.view === view
+      );
+    })
   );
 }
 
@@ -25,8 +40,11 @@ export function campaignRevision(campaign) {
  */
 export class CampaignStateCache {
   constructor() {
+    /** @type {Map<string, BrowserCampaignStateSnapshot>} */
     this.entries = new Map();
+    /** @type {Map<string, {expectedRevision: string, generation: number, promise: Promise<BrowserCampaignStateSnapshot | null>}>} */
     this.loads = new Map();
+    /** @type {Map<string, number>} */
     this.generations = new Map();
   }
 
@@ -52,7 +70,8 @@ export class CampaignStateCache {
   /**
    * @param {string} campaignId
    * @param {string} expectedRevision
-   * @param {() => Promise<{state: unknown}>} fetchState
+   * @param {() => Promise<BrowserCampaignInspectionResponse>} fetchState
+   * @returns {Promise<BrowserCampaignStateSnapshot | null>}
    */
   async refresh(campaignId, expectedRevision, fetchState) {
     const cached = this.get(campaignId);
@@ -75,7 +94,7 @@ export class CampaignStateCache {
     const promise = Promise.resolve()
       .then(fetchState)
       .then((body) => {
-        const state = /** @type {any} */ (body?.state);
+        const state = body.state;
         if (!validCampaignState(state)) throw new Error("Campaign state response is invalid");
         if ((this.generations.get(campaignId) ?? 0) !== generation) {
           return this.get(campaignId);

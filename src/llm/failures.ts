@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 import { ProtocolDecodeError } from "./gameplay-protocol.js";
 
 export type FailureKind =
+  | "cancelled"
   | "network"
   | "rate_limit"
   | "provider"
@@ -23,6 +24,10 @@ export class GenerationFailure extends Error {
     super(message);
     this.name = "GenerationFailure";
   }
+}
+
+export function cancelledGenerationFailure(provider: string): GenerationFailure {
+  return new GenerationFailure("cancelled", `${provider} request was cancelled`, false);
 }
 
 export function classifyFailure(error: unknown): { kind: FailureKind; retryable: boolean } {

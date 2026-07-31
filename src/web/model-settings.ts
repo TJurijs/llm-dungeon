@@ -23,13 +23,8 @@ import type { ModelLanguageQualityRatings } from "../model-quality.js";
 import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
 import { ModelExecutionProfileStore } from "../model-execution-profile-store.js";
 import type { FrozenModelExecutionProfile } from "../model-execution-profile.js";
-import {
-  modelSpeedEstimate,
-  modelSpeedRating,
-  type ModelSpeedEstimate,
-  type ModelSpeedRating,
-} from "../model-speed.js";
-import { modelCostRating, type ModelCostRating } from "../model-cost.js";
+import { modelSpeedEstimate, modelSpeedRating } from "../model-speed.js";
+import { modelCostRating } from "../model-cost.js";
 import type {
   ModelAdapterStatus,
   ModelEvidenceReference,
@@ -44,14 +39,10 @@ import {
 import { checkProviderConnection, type ProviderConnectionResult } from "../provider-connection.js";
 import { createProvider, loadProviderConfig } from "../providers.js";
 import { ProviderConfigSchema, type ProviderConfig } from "../schemas.js";
-import {
-  fetchOpenRouterPrices,
-  OpenRouterPricingCatalog,
-  type FiftyTurnEstimateBasis,
-  type ModelPriceEstimate,
-} from "../pricing.js";
+import { fetchOpenRouterPrices, OpenRouterPricingCatalog } from "../pricing.js";
 import type { LlmProvider } from "../types.js";
 import { asError, WebApiError } from "./http.js";
+import type { BrowserLlmPresentation } from "./contracts.js";
 
 export type ProviderFactory = (
   config: ProviderConfig,
@@ -551,54 +542,7 @@ export class ModelSettingsService {
     return promise;
   }
 
-  async llmPresentation(): Promise<{
-    defaultModel: ModelSelection | null;
-    pricingBasis: FiftyTurnEstimateBasis;
-    providers: Array<{
-      id: string;
-      label: string;
-      envKey: string;
-      recommended: boolean;
-      keyPresent: boolean;
-      keySource: "session" | "environment" | "missing";
-      keyConnectionStatus: ProviderConnectionStatus;
-      models: Array<{
-        id: string;
-        label: string;
-        compatibilityStatus: string;
-        status: string;
-        adapterStatus: ModelAdapterStatus;
-        technicalStatus: ModelLanguageTechnicalStatuses;
-        technicalRecoveries: Partial<Record<LanguageCode, number>>;
-        enabled: boolean;
-        available: boolean;
-        known: boolean;
-        testedLanguages: LanguageCode[];
-        failedLanguages: LanguageCode[];
-        pricing?: ModelPriceEstimate;
-        quality: ModelLanguageQualityRatings;
-        speed?: ModelSpeedRating;
-        speedEstimate?: ModelSpeedEstimate;
-        cost?: ModelCostRating;
-        recommended: boolean;
-        recommendationEligibility: ModelRecommendationEligibility;
-        reasoningDescription?: string;
-        evidence: {
-          compatibility: {
-            testedAt: string;
-            protocolVersion: number;
-            fingerprint: string;
-          } | null;
-          assessment: ModelEvidenceReference[];
-          certificationCurrent: Partial<Record<LanguageCode, boolean>>;
-          profileFingerprint?: string;
-        };
-        hidden: boolean;
-        keyAccess?: "allowed" | "not_allowed";
-        error?: string;
-      }>;
-    }>;
-  }> {
+  async llmPresentation(): Promise<BrowserLlmPresentation> {
     const snapshot = await this.modelSnapshot();
     const keys = this.keyStatus();
     const environment = this.effectiveEnvironment();

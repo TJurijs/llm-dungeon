@@ -1,4 +1,5 @@
 import { GAMEPLAY_CONTRACT } from "./blocks.js";
+import { APPEAL_DOMAIN_RULES } from "./rules.js";
 import { renderPrompt, section, type PromptDocument } from "./render.js";
 
 export const APPEAL_SYSTEM_SECTIONS = [
@@ -59,6 +60,7 @@ export function appealPromptDocument(
 - Do not repeat an effect already represented in current durable state. Narration and summary must describe only the administrative decision and its exact correction, not new in-fiction action.`,
     ),
     GAMEPLAY_CONTRACT,
+    APPEAL_DOMAIN_RULES,
   ]);
 }
 

@@ -16,8 +16,9 @@ import {
 } from "../src/persistence/campaign-catalog.js";
 import { renderTurnLog } from "../src/persistence/markdown.js";
 import { acquireFileLock } from "../src/persistence/lock.js";
+import { DURABLE_TEXT_LIMITS } from "../src/domain/durable-state-policy.js";
 import type { ProviderConfig } from "../src/schemas.js";
-import { StateStore } from "../src/store.js";
+import { NEW_CAMPAIGN_IMMUTABLE_CONTEXT_LIMITS, StateStore } from "../src/store.js";
 import type { NewGameInput } from "../src/types.js";
 import { setupFixture } from "./helpers.js";
 
@@ -45,6 +46,89 @@ function setup(title: string) {
 }
 
 describe("campaign catalog", () => {
+  it("publishes a tagged autoplay snapshot once and keeps it read-only", async () => {
+    const dataRoot = await temporaryDataRoot();
+    const sourceRoot = path.join(path.dirname(dataRoot), "playtest-campaign");
+    const source = new StateStore(sourceRoot);
+    const sourceState = await source.createGame({
+      setup: setup("Published Autoplay"),
+      worldRules: "Autoplay rules.",
+      language: "en",
+    });
+    await source.spendingController().importTransferPayload({
+      schemaVersion: 1,
+      limits: { campaignUsd: 10, logicalTurnUsd: 0.75 },
+      baseline: { costUsd: 0, basis: "estimated" },
+      settled: {
+        costUsd: 0.002,
+        attempts: 1,
+        exactAttempts: 1,
+        estimatedAttempts: 0,
+        reservedAttempts: 0,
+        unpricedAttempts: 0,
+      },
+      attempts: [
+        {
+          id: "01234567-89ab-4def-8123-456789abcdef",
+          operationId: "autoplay-turn-1",
+          lane: "gameplay",
+          provider: "gemini",
+          model: "gemini-3.6-flash",
+          schemaName: "turn_decision_v2",
+          generationPhase: "decision",
+          attemptKind: "initial",
+          reservedAt: "2026-07-29T12:00:00.000Z",
+          reservedUsd: 0.01,
+          settledAt: "2026-07-29T12:00:01.000Z",
+          costUsd: 0.002,
+          costBasis: "exact",
+          success: true,
+        },
+      ],
+    });
+    const catalog = new CampaignCatalog(dataRoot);
+    const options = {
+      source: {
+        kind: "autoplay" as const,
+        runId: "test-run",
+        jobId: "job-001",
+        packageId: "campaign-autoplay-v1",
+        packageVersion: 1,
+      },
+      tags: ["Autoplay", "Player: in-character"],
+      providerConfig: gemini,
+    };
+
+    const first = await catalog.publishArchivedCampaign(sourceRoot, options);
+    const repeated = await catalog.publishArchivedCampaign(sourceRoot, options);
+
+    expect(repeated.campaignId).toBe(first.campaignId);
+    const publishedStore = await catalog.readCampaign(first.campaignId);
+    expect(await publishedStore.campaignBudget()).toMatchObject({
+      limits: { campaignUsd: 10, logicalTurnUsd: 0.75 },
+      spentUsd: 0.002,
+      settledAttempts: 1,
+    });
+    expect(
+      await readFile(path.join(publishedStore.dataRoot, "spending-attempts.jsonl"), "utf8"),
+    ).toBe(await readFile(path.join(sourceRoot, "spending-attempts.jsonl"), "utf8"));
+    expect(await catalog.listCampaigns()).toEqual([
+      expect.objectContaining({
+        campaignId: sourceState.campaignId,
+        title: "Published Autoplay",
+        archived: true,
+        tags: ["Autoplay", "Player: in-character"],
+        providerConfig: gemini,
+      }),
+    ]);
+    await expect(catalog.openCampaign(first.campaignId)).rejects.toThrow(/archived/i);
+    await expect(
+      (await catalog.readCampaign(first.campaignId)).setTitle("Changed"),
+    ).rejects.toThrow(/read-only/i);
+    await catalog.deleteArchivedCampaign(first.campaignId);
+    expect(await catalog.listCampaigns()).toEqual([]);
+  });
+
   it("briefly waits for another process to finish a catalog operation", async () => {
     const dataRoot = await temporaryDataRoot();
     const catalog = new CampaignCatalog(dataRoot, { defaultProviderConfig: gemini });
@@ -84,6 +168,7 @@ describe("campaign catalog", () => {
   it("finishes campaign creation from a durable secret-free intent", async () => {
     const dataRoot = await temporaryDataRoot();
     const campaignId = "campaign:interrupted-creation";
+    const setupSpendingRequestId = "b182ab4e-e0a4-4c86-a20e-a4b1d2106474";
     const input: NewGameInput = {
       setup: setup("Recovered Creation"),
       worldRules: "Recovered rules.",
@@ -98,14 +183,50 @@ describe("campaign catalog", () => {
       campaignId,
       registeredAt: new Date().toISOString(),
       archived: false,
+      creationRequestId: setupSpendingRequestId,
       providerConfig: openRouter,
     });
     const intent = CampaignCreationIntentSchema.parse({
       schemaVersion: 1,
       metadata,
       input,
+      setupSpendingRequestId,
+      setupSpending: {
+        schemaVersion: 1,
+        limits: {},
+        baseline: { costUsd: 0, basis: "estimated" },
+        settled: {
+          costUsd: 0.0006,
+          attempts: 1,
+          exactAttempts: 1,
+          estimatedAttempts: 0,
+          reservedAttempts: 0,
+          unpricedAttempts: 0,
+        },
+        attempts: [
+          {
+            id: "a1e6e4df-26b5-4e52-8391-471b65fb2af8",
+            operationId: `draft:${setupSpendingRequestId}`,
+            lane: "setup",
+            provider: "openrouter",
+            model: "test/recovery-model",
+            schemaName: "campaign_setup",
+            generationPhase: "setup",
+            attemptKind: "initial",
+            reservedAt: "2026-07-29T10:00:00.000Z",
+            reservedUsd: 0.002,
+            settledAt: "2026-07-29T10:00:01.000Z",
+            costUsd: 0.0006,
+            costBasis: "exact",
+            success: true,
+          },
+        ],
+      },
     });
     await mkdir(dataRoot, { recursive: true });
+    const draftRoot = path.join(dataRoot, ".drafts", `draft:${setupSpendingRequestId}`);
+    await mkdir(draftRoot, { recursive: true });
+    await writeFile(path.join(draftRoot, "disposable-marker"), "draft", "utf8");
     await writeFile(
       path.join(dataRoot, CAMPAIGN_CREATION_INTENT_FILE),
       `${JSON.stringify(intent, null, 2)}\n`,
@@ -125,6 +246,11 @@ describe("campaign catalog", () => {
     const opening = await readFile(path.join(recovered.currentDir, "turns", "000000.md"), "utf8");
     expect(opening).toContain("provider: openrouter");
     expect(opening).toContain("model: test/recovery-model");
+    expect(await recovered.campaignBudget()).toMatchObject({
+      spentUsd: 0.0006,
+      settledAttempts: 1,
+    });
+    await expect(access(draftRoot)).rejects.toThrow();
     await expect(access(path.join(dataRoot, CAMPAIGN_CREATION_INTENT_FILE))).rejects.toThrow();
   });
 
@@ -168,6 +294,56 @@ describe("campaign catalog", () => {
 
     expect(retried.campaignId).toBe(campaignId);
     expect(await catalog.listCampaigns()).toHaveLength(1);
+  });
+
+  it("recovers an accepted intent that predates newer setup admission policies", async () => {
+    const dataRoot = await temporaryDataRoot();
+    const campaignId = "campaign:legacy-tag-intent";
+    const input: NewGameInput = {
+      setup: setup("Legacy Tag Recovery"),
+      worldRules: "R".repeat(NEW_CAMPAIGN_IMMUTABLE_CONTEXT_LIMITS.worldRules + 1),
+      language: "en",
+    };
+    const legacyMara = input.setup.entities.find((entity) => entity.id === "npc:mara-venn")!;
+    legacyMara.tags = ["missing", "unknown"];
+    legacyMara.description = "D".repeat(DURABLE_TEXT_LIMITS.entityDescription + 1);
+    legacyMara.inventory = [{ entityId: "item:travel-sword", quantity: 1 }];
+    const metadata = CampaignMetadataSchema.parse({
+      schemaVersion: 1,
+      campaignId,
+      registeredAt: new Date().toISOString(),
+      archived: false,
+      providerConfig: gemini,
+    });
+    await mkdir(dataRoot, { recursive: true });
+    await writeFile(
+      path.join(dataRoot, CAMPAIGN_CREATION_INTENT_FILE),
+      `${JSON.stringify(
+        CampaignCreationIntentSchema.parse({
+          schemaVersion: 1,
+          metadata,
+          input,
+        }),
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const catalog = new CampaignCatalog(dataRoot);
+    expect(await catalog.listCampaigns()).toEqual([
+      expect.objectContaining({ campaignId, title: "Legacy Tag Recovery" }),
+    ]);
+    const recovered = await catalog.openCampaign(campaignId);
+    const recoveredMara = (await recovered.load()).entities.get("npc:mara-venn");
+    expect(recoveredMara?.tags).toContain("missing");
+    expect(recoveredMara?.tags).toContain("unknown");
+    expect(recoveredMara?.description).toHaveLength(DURABLE_TEXT_LIMITS.entityDescription + 1);
+    expect(recoveredMara?.inventory).toContainEqual({
+      entityId: "item:travel-sword",
+      quantity: 1,
+    });
+    await expect(access(path.join(dataRoot, CAMPAIGN_CREATION_INTENT_FILE))).rejects.toThrow();
   });
 
   it("clears a creation intent after validating an already-promoted campaign", async () => {
@@ -447,7 +623,10 @@ describe("campaign catalog", () => {
       }),
     ).rejects.toThrow(/read-only/);
 
-    await catalog.deleteArchivedCampaign(created.campaignId);
+    await expect(catalog.deleteArchivedCampaign(created.campaignId, "Wrong title")).rejects.toThrow(
+      /title confirmation/i,
+    );
+    await catalog.deleteArchivedCampaign(created.campaignId, created.state.title);
     expect(
       (await catalog.listCampaigns()).some(
         (campaign) => campaign.campaignId === created.campaignId,

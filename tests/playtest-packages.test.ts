@@ -48,7 +48,7 @@ describe("versioned playtest packages", () => {
       "mechanics-v1",
       "tuning-v1",
     ]);
-    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([3, 1, 1, 1, 1, 1]);
+    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([3, 2, 1, 1, 1, 1]);
     expect(packages.map((playtestPackage) => playtestPackage.purpose)).toEqual([
       "certification",
       "autoplay",
@@ -232,9 +232,9 @@ describe("versioned playtest packages", () => {
     expect(CAMPAIGN_AUTOPLAY_PACKAGE).toMatchObject({
       purpose: "autoplay",
       turnDriver: { kind: "model" },
-      turns: { minimum: 25, maximum: 200, default: 25 },
+      turns: { minimum: 15, maximum: 200, default: 25 },
       rollPolicy: { kind: "seeded_random" },
-      judgePolicy: { kind: "checkpoints_and_final" },
+      judgePolicy: { kind: "none" },
     });
     expect(PERSISTENCE_SOAK_PACKAGE.turnDriver.kind).toBe("hybrid");
     expect(ADVERSARIAL_BOUNDARIES_PACKAGE.turnDriver.kind).toBe("hybrid");

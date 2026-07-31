@@ -692,6 +692,26 @@ export const PlaytestJobStatusSchema = z.enum([
   "cancelled",
 ]);
 
+export const PlaytestCompletedStoryStatusSchema = z.enum([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cost_limit",
+  "duration_limit",
+  "cancelled",
+  "not_applicable",
+]);
+
+export const PlaytestCompletedStorySchema = z
+  .object({
+    status: PlaytestCompletedStoryStatusSchema,
+    attempts: z.number().int().nonnegative().default(0),
+    error: z.string().min(1).optional(),
+  })
+  .strict();
+export type PlaytestCompletedStory = z.infer<typeof PlaytestCompletedStorySchema>;
+
 export const PlaytestJobSchema = z
   .object({
     id: z.string().regex(/^job-[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
@@ -719,6 +739,9 @@ export const PlaytestJobSchema = z
       .optional(),
     failureOwner: FailureOwnerSchema.optional(),
     error: z.string().min(1).optional(),
+    completedStory: PlaytestCompletedStorySchema.optional(),
+    publishedCampaignId: SafeIdSchema.optional(),
+    publicationError: z.string().min(1).optional(),
   })
   .strict();
 
@@ -756,12 +779,43 @@ export const PlaytestManifestSchema = z
 
 export type PlaytestManifest = z.infer<typeof PlaytestManifestSchema>;
 
+export const PlaytestDomainRepairCauseSchema = z
+  .object({
+    logicalOperationId: z.string().min(1).max(256),
+    priorCallId: z.string().min(1).max(256),
+    sourcePhase: z.enum(["setup", "decision", "locked_resolution"]),
+    validationStage: z.enum(["setup", "turn_commit"]),
+    errorName: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/),
+    errorMessage: z.string().min(1).max(1_000),
+    errorFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type PlaytestDomainRepairCause = z.infer<typeof PlaytestDomainRepairCauseSchema>;
+
+export const PlaytestDomainRepairDiagnosticSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("domain_repair"),
+    createdAt: z.string().datetime(),
+    jobId: PlaytestJobSchema.shape.id,
+    actor: z.enum(["calibration", "candidate", "player_driver", "judge", "artifact"]),
+    callId: z.string().min(1).max(256),
+    schemaName: z.string().min(1).max(256),
+    provider: z.string().min(1).max(256),
+    model: z.string().min(1).max(256),
+    route: z.string().min(1).max(256),
+    executionProfileFingerprint: z.string().min(1).max(256),
+    cause: PlaytestDomainRepairCauseSchema,
+  })
+  .strict();
+export type PlaytestDomainRepairDiagnostic = z.infer<typeof PlaytestDomainRepairDiagnosticSchema>;
+
 export const PlaytestCallRecordSchema = z
   .object({
     id: z.string().min(1),
     timestamp: z.string().datetime(),
     jobId: PlaytestJobSchema.shape.id,
-    actor: z.enum(["calibration", "candidate", "player_driver", "judge"]),
+    actor: z.enum(["calibration", "candidate", "player_driver", "judge", "artifact"]),
     phase: z.enum([
       "calibration",
       "setup",
@@ -771,6 +825,7 @@ export const PlaytestCallRecordSchema = z
       "player_action",
       "checkpoint_judge",
       "final_judge",
+      "completed_story",
     ]),
     sequence: z.number().int().positive(),
     schemaName: z.string().min(1),
@@ -810,7 +865,8 @@ export const PlaytestCallRecordSchema = z
     costBasis: z.enum(["reported_usage", "reserved_estimate"]).default("reported_usage"),
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
-    repairKind: z.enum(["schema", "transient", "domain"]).optional(),
+    repairKind: z.enum(["schema", "content", "transient", "domain"]).optional(),
+    domainRepairCause: PlaytestDomainRepairCauseSchema.optional(),
     failureKind: z.string().min(1).optional(),
     failureOwner: FailureOwnerSchema.optional(),
     failureFingerprint: z
@@ -833,6 +889,13 @@ export const PlaytestCallRecordSchema = z
         code: "custom",
         path: ["failureFingerprint"],
         message: "every failed call requires a stable fingerprint",
+      });
+    }
+    if (call.domainRepairCause !== undefined && call.repairKind !== "domain") {
+      context.addIssue({
+        code: "custom",
+        path: ["domainRepairCause"],
+        message: "only a domain-repair call may carry a domain-repair cause",
       });
     }
   });
@@ -859,6 +922,45 @@ export const PlaytestTurnRecordSchema = z
     operations: z.array(StateOperationSchema).default([]),
     status: z.enum(["completed", "failed"]),
     invariantStatus: z.enum(["passed", "failed", "not_checked"]),
+    /**
+     * Declared thread verdicts and how many active threads went unaudited.
+     * An omission behaves as "unchanged" and no longer fails the turn, so this
+     * is the only way the omission rate stays visible.
+     */
+    threadAudit: z
+      .object({
+        unchanged: z.number().int().nonnegative(),
+        progressed: z.number().int().nonnegative(),
+        closed: z.number().int().nonnegative(),
+        omitted: z.number().int().nonnegative(),
+        invented: z.number().int().nonnegative().default(0),
+      })
+      .strict()
+      .optional(),
+    /**
+     * Ongoing continuity the scenario seed asserts about its own campaign.
+     * Review evidence only: a seed author is describing intent about fiction
+     * that has not happened yet, so a signal never fails a turn.
+     */
+    scenarioSignals: z
+      .array(
+        z
+          .object({
+            code: z.string().min(1).max(80),
+            kind: z.string().min(1).max(40),
+            message: z.string().min(1).max(400),
+          })
+          .strict(),
+      )
+      .default([]),
+    /**
+     * Domain rules declared review-only that this turn tripped. The turn
+     * committed: these measure DM judgment across a run rather than enforcing
+     * it against any single turn.
+     */
+    domainSignals: z
+      .array(z.object({ code: z.string().min(1).max(80) }).strict())
+      .default([]),
     failureOwner: FailureOwnerSchema.optional(),
     error: z.string().optional(),
     contextObservation: z

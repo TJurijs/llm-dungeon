@@ -78,7 +78,9 @@ describe("browser terminal history", () => {
     expect(app).not.toContain("data-appeal-turn");
     expect(app).not.toContain("--turn");
     expect(styles).not.toContain(".chat-turn-actions");
-    expect(app).toContain('const endpoint = action === ":retry" ? "retry" : "play";');
+    expect(app).toContain('action === ":retry"');
+    expect(app).toContain('api("retry"');
+    expect(app).toContain('api("play"');
     expect(app).toContain('if (action === ":discard")');
     expect(styles).toContain(".ask-button:hover");
     expect(styles).toContain(".appeal-button:hover");
@@ -118,8 +120,8 @@ describe("browser terminal history", () => {
     expect(copy).toContain("Kept only in server memory until restart");
     expect(setup).toContain('keyInput.type = "password"');
     expect(setup).toContain('keyInput.autocomplete = "new-password"');
-    expect(setup).toContain('"/api/llm/keys"');
-    expect(setup).toContain('"/api/llm/models/test"');
+    expect(setup).toContain('api("setSessionKey"');
+    expect(setup).toContain('api("testModel"');
   });
 
   it("builds encoded campaign-scoped paths and chooses a stable available campaign", () => {
@@ -147,7 +149,8 @@ describe("browser terminal history", () => {
   it("keeps async gameplay responses scoped to the campaign captured at submission", async () => {
     const source = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
     expect(source).toContain("const campaignId = campaign?.campaignId;");
-    expect(source).toContain("api(campaignApiPath(campaignId, endpoint)");
+    expect(source).toContain('api("play", {');
+    expect(source).toContain("params: { campaignId }");
     expect(source).toContain("appendCommittedResponse(campaignId, result)");
     expect(source).toContain(
       "if (selectedCampaignId === campaignId) renderChat({ scroll: true });",

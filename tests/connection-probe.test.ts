@@ -5,6 +5,8 @@ import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/ty
 function resolvedWire(marker: string) {
   return {
     decision: "resolved",
+    threadAudit: [],
+    sceneState: { locationId: "", presentActorIds: [] },
     narration: marker,
     effects: [],
     summary: marker,
@@ -60,14 +62,14 @@ describe("provider compatibility probe", () => {
 
     expect(provider.schemaNames).toEqual([
       "connection_campaign_setup_en",
-      "connection_gameplay_contract_v1_en",
+      "connection_gameplay_contract_v2_en",
       "connection_campaign_setup_ru",
-      "connection_gameplay_contract_v1_ru",
+      "connection_gameplay_contract_v2_ru",
     ]);
     expect(result).toMatchObject({
       provider: "fake",
       model: "fake-model",
-      protocolVersion: 1,
+      protocolVersion: 2,
       testedLanguages: ["en", "ru"],
       usage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
     });
@@ -85,7 +87,7 @@ describe("provider compatibility probe", () => {
 
     expect(provider.schemaNames).toEqual([
       "connection_campaign_setup_en",
-      "connection_gameplay_contract_v1_en",
+      "connection_gameplay_contract_v2_en",
     ]);
     expect(result.testedLanguages).toEqual(["en"]);
   });

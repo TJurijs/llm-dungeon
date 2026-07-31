@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { CampaignSpendingTransferPayloadSchema } from "../spending.js";
 import { LanguageCodeSchema } from "../language.js";
 import { ProviderConfigSchema, SafeIdSchema, SetupResultSchema } from "../schemas.js";
 import { UsageSchema } from "../usage.js";
@@ -11,6 +12,7 @@ import { campaignIdAt } from "./replacement.js";
 
 export const CAMPAIGNS_DIRECTORY = "campaigns";
 export const CAMPAIGN_METADATA_FILE = "campaign-metadata.json";
+export const CAMPAIGN_PROVENANCE_FILE = "campaign-provenance.json";
 export const CAMPAIGN_MIGRATION_INTENT_FILE = ".campaign-migration.json";
 export const CAMPAIGN_CREATION_INTENT_FILE = ".campaign-creation.json";
 
@@ -53,6 +55,27 @@ export const CampaignMetadataSchema = z.discriminatedUnion("archived", [
 
 export type CampaignMetadata = z.infer<typeof CampaignMetadataSchema>;
 
+export const CampaignSourceSchema = z
+  .object({
+    kind: z.literal("autoplay"),
+    runId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+    jobId: z.string().regex(/^job-[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+    packageId: z.string().regex(/^[a-z][a-z0-9-]*$/),
+    packageVersion: z.number().int().positive(),
+  })
+  .strict();
+export type CampaignSource = z.infer<typeof CampaignSourceSchema>;
+
+export const CampaignProvenanceSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    campaignId: SafeIdSchema,
+    tags: z.array(z.string().trim().min(1).max(80)).max(8),
+    source: CampaignSourceSchema,
+  })
+  .strict();
+export type CampaignProvenance = z.infer<typeof CampaignProvenanceSchema>;
+
 export const CatalogNewGameInputSchema = z
   .object({
     setup: SetupResultSchema,
@@ -81,6 +104,13 @@ export const CampaignCreationIntentSchema = z
     schemaVersion: z.literal(1),
     metadata: ActiveCampaignMetadataSchema,
     input: CatalogNewGameInputSchema,
+    /** Browser setup-attempt ledger to import before publishing the campaign. */
+    setupSpendingRequestId: z.string().uuid().optional(),
+    /**
+     * Self-contained setup spending evidence. Embedding it keeps creation
+     * recovery independent from the disposable browser-draft directory.
+     */
+    setupSpending: CampaignSpendingTransferPayloadSchema.optional(),
   })
   .strict();
 
@@ -130,6 +160,10 @@ export function campaignMetadataPath(scopeRoot: string): string {
   return path.join(scopeRoot, CAMPAIGN_METADATA_FILE);
 }
 
+export function campaignProvenancePath(scopeRoot: string): string {
+  return path.join(scopeRoot, CAMPAIGN_PROVENANCE_FILE);
+}
+
 export async function readCampaignMetadata(scopeRoot: string): Promise<CampaignMetadata> {
   return CampaignMetadataSchema.parse(
     JSON.parse(await readFile(campaignMetadataPath(scopeRoot), "utf8")),
@@ -141,6 +175,24 @@ export function writeCampaignMetadata(
   metadata: CampaignMetadata,
 ): Promise<void> {
   return atomicWriteJson(campaignMetadataPath(scopeRoot), CampaignMetadataSchema.parse(metadata));
+}
+
+export async function readCampaignProvenance(
+  scopeRoot: string,
+): Promise<CampaignProvenance | undefined> {
+  const target = campaignProvenancePath(scopeRoot);
+  if (!(await pathExists(target))) return undefined;
+  return CampaignProvenanceSchema.parse(JSON.parse(await readFile(target, "utf8")));
+}
+
+export function writeCampaignProvenance(
+  scopeRoot: string,
+  provenance: CampaignProvenance,
+): Promise<void> {
+  return atomicWriteJson(
+    campaignProvenancePath(scopeRoot),
+    CampaignProvenanceSchema.parse(provenance),
+  );
 }
 
 function legacySourcePath(dataRoot: string, source: LegacyCampaignSource): string {

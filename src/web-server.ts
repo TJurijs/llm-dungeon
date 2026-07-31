@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import {
 import { probeProviderConnection } from "./connection-probe.js";
 import { DungeonEngine } from "./engine.js";
 import { campaignStateRevision } from "./inspection.js";
+import { INPUT_CHARACTER_LIMITS } from "./input-budget.js";
 import {
   campaignSetupDefaults,
   LANGUAGES,
@@ -34,11 +36,11 @@ import { listScenarioSeeds, loadScenarioSeed } from "./scenario-seeds.js";
 import {
   ProviderConfigSchema,
   SafeIdSchema,
-  type GameState,
   type ProviderConfig,
   type SetupResult,
 } from "./schemas.js";
 import { StateStore } from "./store.js";
+import type { CampaignSpendingTransferPayload } from "./spending.js";
 import type { CampaignCostSummary } from "./campaign-cost.js";
 import type { CampaignStateSnapshot, GenerationMetadata, StateView } from "./types.js";
 import { resolveWorldProfile, saveWorldProfile } from "./world-profile.js";
@@ -56,11 +58,34 @@ import {
 import { serveStaticAsset } from "./web/static-assets.js";
 import {
   ModelSettingsService,
-  type BrowserModelSelection,
   type ProviderConnectionTester,
   type ProviderFactory,
 } from "./web/model-settings.js";
-import { pendingStatus, playerTurnResponse, setupPreview } from "./web/presentation.js";
+import {
+  completedStoryResponse,
+  pendingStatus,
+  playerTurnResponse,
+  setupPreview,
+} from "./web/presentation.js";
+import type {
+  BrowserApiOperation,
+  BrowserApiResponse,
+  BrowserCampaignCreatedResponse,
+  BrowserCampaignPresentation,
+  BrowserCampaignStatusResponse,
+  BrowserSetupDraftResponse,
+  BrowserStatusResponse,
+} from "./web/contracts.js";
+
+function sendBrowserJson<Operation extends BrowserApiOperation>(
+  response: ServerResponse,
+  status: number,
+  operation: Operation,
+  payload: BrowserApiResponse<NoInfer<Operation>>,
+): void {
+  void operation;
+  sendJson(response, status, payload);
+}
 
 export type { ProviderFactory, ProviderConnectionTester } from "./web/model-settings.js";
 
@@ -84,27 +109,27 @@ interface SetupDraft {
   config: ProviderConfig;
   premise: string;
   character: string;
+  spending: CampaignSpendingTransferPayload;
 }
 
-interface CampaignPresentation extends Omit<CampaignCatalogSummary, "providerConfig"> {
-  stateRevision: string;
-  busy: boolean;
-  pending: unknown;
-  campaignCost: CampaignCostSummary | null;
-  config: BrowserModelSelection | null;
+interface ActiveSetupDraftRequest {
+  detached: boolean;
 }
 
 const SetupModelConfigSchema = z.union([ModelSelectionSchema, ProviderConfigSchema.strict()]);
 
 const SetupDraftRequestSchema = z
   .object({
-    premise: z.string().max(100_000).default(""),
-    character: z.string().max(100_000).default(""),
+    premise: z.string().max(INPUT_CHARACTER_LIMITS.premise).default(""),
+    character: z.string().max(INPUT_CHARACTER_LIMITS.character).default(""),
     language: LanguageCodeSchema.optional(),
-    worldRules: z.string().min(1).max(500_000).optional(),
+    worldRules: z.string().min(1).max(INPUT_CHARACTER_LIMITS.worldRules).optional(),
     config: SetupModelConfigSchema.optional(),
+    requestId: z.string().uuid().optional(),
   })
   .strict();
+
+const SetupDraftDetachRequestSchema = z.object({ requestId: z.string().uuid() }).strict();
 
 const ModelEnabledRequestSchema = ModelSelectionSchema.extend({ enabled: z.boolean() }).strict();
 const ModelTestRequestSchema = ModelSelectionSchema.extend({
@@ -119,6 +144,8 @@ const SessionProviderKeyRequestSchema = z
 
 const STATE_VIEWS: StateView[] = ["character", "location", "threads"];
 const MAX_DRAFTS = 20;
+const MAX_DETACHED_SETUP_REQUESTS = 100;
+const DETACHED_SETUP_REQUEST_TTL_MS = 10 * 60_000;
 
 function decodeCampaignId(segment: string): string {
   let decoded: string;
@@ -136,11 +163,28 @@ function decodeCampaignId(segment: string): string {
 
 function campaignRoute(pathname: string): { campaignId: string; action: string } | undefined {
   const match =
-    /^\/api\/campaigns\/([^/]+)\/(status|play|retry|discard|archive|delete|inspect|transcript|export|config|setup|title)$/.exec(
+    /^\/api\/campaigns\/([^/]+)\/(status|budget|play|retry|discard|archive|delete|inspect|transcript|export|config|setup|story|title)$/.exec(
       pathname,
     );
   if (!match) return undefined;
   return { campaignId: decodeCampaignId(match[1]!), action: match[2]! };
+}
+
+function campaignBudgetErrorDetails(
+  error: unknown,
+): { code: "campaign_budget_exhausted"; scope: "campaign" | "logical_turn" } | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = error as { code?: unknown; reason?: unknown; scope?: unknown };
+  if (value.code !== "campaign_budget_exhausted") return undefined;
+  const scope =
+    value.scope === "logical_turn" || value.reason === "logical_turn_limit"
+      ? "logical_turn"
+      : value.scope === "campaign" ||
+          value.reason === "campaign_limit" ||
+          value.reason === "pricing_unavailable"
+        ? "campaign"
+        : undefined;
+  return scope === undefined ? undefined : { code: value.code, scope };
 }
 
 export class DungeonWebController {
@@ -149,6 +193,8 @@ export class DungeonWebController {
   readonly settings: ModelSettingsService;
   private readonly operations: CampaignOperationCoordinator;
   private readonly drafts = new Map<string, SetupDraft>();
+  private readonly activeSetupDraftRequests = new Map<string, ActiveSetupDraftRequest>();
+  private readonly detachedSetupRequestIds = new Map<string, number>();
   private readonly activeModelUses = new Map<string, number>();
   private readonly activeModelRemovals = new Set<string>();
   private readonly costCache = new Map<string, { updatedAt: string; cost: CampaignCostSummary }>();
@@ -170,6 +216,38 @@ export class DungeonWebController {
 
   safeError(error: unknown, fallback?: string): string {
     return this.settings.safeError(error, fallback);
+  }
+
+  private pruneDetachedSetupRequests(now = Date.now()): void {
+    const cutoff = now - DETACHED_SETUP_REQUEST_TTL_MS;
+    for (const [requestId, detachedAt] of this.detachedSetupRequestIds) {
+      if (detachedAt < cutoff) this.detachedSetupRequestIds.delete(requestId);
+    }
+    while (this.detachedSetupRequestIds.size > MAX_DETACHED_SETUP_REQUESTS) {
+      this.detachedSetupRequestIds.delete(this.detachedSetupRequestIds.keys().next().value!);
+    }
+  }
+
+  private setupDraftRoot(requestId: string): string {
+    return path.join(this.dataRoot, ".drafts", `draft:${requestId}`);
+  }
+
+  private async removeSetupDraft(requestId: string): Promise<void> {
+    this.drafts.delete(requestId);
+    await rm(this.setupDraftRoot(requestId), { recursive: true, force: true });
+  }
+
+  private async detachSetupDraft(requestId: string): Promise<void> {
+    const active = this.activeSetupDraftRequests.get(requestId);
+    if (active) active.detached = true;
+    const removed = this.drafts.delete(requestId);
+    if (!active && !removed) {
+      this.detachedSetupRequestIds.set(requestId, Date.now());
+      this.pruneDetachedSetupRequests();
+    }
+    // An active provider request owns this root until its finally block settles
+    // the physical attempt. Completed and not-yet-started drafts are disposable.
+    if (!active) await rm(this.setupDraftRoot(requestId), { recursive: true, force: true });
   }
 
   private modelOperationKey(selection: ModelSelection): string {
@@ -265,7 +343,7 @@ export class DungeonWebController {
 
   private async campaignPresentation(
     summary: CampaignCatalogSummary,
-  ): Promise<CampaignPresentation> {
+  ): Promise<BrowserCampaignPresentation> {
     const store = await this.readStore(summary);
     const { providerConfig, ...manifest } = summary;
     return {
@@ -274,6 +352,7 @@ export class DungeonWebController {
       busy: this.operations.isBusy(summary.campaignId),
       pending: pendingStatus(await store.getPending()),
       campaignCost: await this.campaignCost(summary, store),
+      budget: await store.campaignBudget(),
       config:
         providerConfig === undefined ? null : this.settings.presentedSelection(providerConfig),
     };
@@ -311,15 +390,9 @@ export class DungeonWebController {
     return (await this.catalog()).openCampaign(campaignId);
   }
 
-  private async confirmedCampaignResponse(requestId: string): Promise<
-    | {
-        state: GameState;
-        playerName: string;
-        openingNarration: string;
-        config: BrowserModelSelection | null;
-      }
-    | undefined
-  > {
+  private async confirmedCampaignResponse(
+    requestId: string,
+  ): Promise<BrowserCampaignCreatedResponse | undefined> {
     const catalog = await this.catalog();
     const created = await catalog.findCampaignByCreationRequest(requestId);
     if (created === undefined) return undefined;
@@ -379,10 +452,10 @@ export class DungeonWebController {
     const language = (await loadAppConfig(this.root)).language;
     const summaries = await (await this.catalog()).listCampaigns();
     const llm = await this.settings.llmPresentation();
-    sendJson(response, 200, {
+    const payload: BrowserStatusResponse = {
       language,
       languages: Object.entries(LANGUAGES).map(([code, value]) => ({
-        code,
+        code: LanguageCodeSchema.parse(code),
         name: value.nativeName,
         setupDefaults: value.setupDefaults,
       })),
@@ -391,7 +464,8 @@ export class DungeonWebController {
       keyStatus: this.settings.keyStatus(),
       llm,
       campaigns: await Promise.all(summaries.map((summary) => this.campaignPresentation(summary))),
-    });
+    };
+    sendBrowserJson(response, 200, "bootstrap", payload);
     return true;
   }
 
@@ -407,7 +481,7 @@ export class DungeonWebController {
         .strict()
         .parse(await readJsonBody(request));
       await saveAppConfig(this.root, { language: body.language });
-      sendJson(response, 200, { language: body.language });
+      sendBrowserJson(response, 200, "saveLanguage", { language: body.language });
       return true;
     }
 
@@ -419,7 +493,9 @@ export class DungeonWebController {
     if (url.pathname === "/api/llm/keys" && method === "PUT") {
       const body = SessionProviderKeyRequestSchema.parse(await readJsonBody(request));
       this.settings.setSessionKey(body.provider, body.key.trim());
-      sendJson(response, 200, { llm: await this.settings.llmPresentation() });
+      sendBrowserJson(response, 200, "setSessionKey", {
+        llm: await this.settings.llmPresentation(),
+      });
       return true;
     }
 
@@ -481,7 +557,7 @@ export class DungeonWebController {
           }
         });
         const first = results[0];
-        sendJson(response, 200, {
+        sendBrowserJson(response, 200, "testModel", {
           ok: passed.length > 0,
           provider: first?.provider ?? selection.provider,
           model: first?.model ?? selection.model,
@@ -501,7 +577,10 @@ export class DungeonWebController {
 
     if (url.pathname === "/api/llm/environment/reload" && method === "POST") {
       this.settings.reloadEnvironment();
-      sendJson(response, 200, { reloaded: true, llm: await this.settings.llmPresentation() });
+      sendBrowserJson(response, 200, "reloadEnvironment", {
+        reloaded: true,
+        llm: await this.settings.llmPresentation(),
+      });
       return true;
     }
 
@@ -513,7 +592,10 @@ export class DungeonWebController {
         body.provider === undefined
           ? await this.settings.testConnections()
           : [await this.settings.testProviderConnection(body.provider)];
-      sendJson(response, 200, { results, llm: await this.settings.llmPresentation() });
+      sendBrowserJson(response, 200, "testProviderConnection", {
+        results,
+        llm: await this.settings.llmPresentation(),
+      });
       return true;
     }
 
@@ -523,7 +605,10 @@ export class DungeonWebController {
       try {
         this.settings.requirePublicSelection(selection);
         const snapshot = await this.settings.modelCatalog.addModel(selection);
-        sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+        sendBrowserJson(response, 200, "addModel", {
+          saved: true,
+          defaultModel: snapshot.defaultModel,
+        });
       } finally {
         releaseModel();
       }
@@ -537,7 +622,10 @@ export class DungeonWebController {
       try {
         this.settings.requirePublicSelection(selection);
         const snapshot = await this.settings.modelCatalog.setEnabled(selection, body.enabled);
-        sendJson(response, 200, { saved: true, defaultModel: snapshot.defaultModel });
+        sendBrowserJson(response, 200, "setModelEnabled", {
+          saved: true,
+          defaultModel: snapshot.defaultModel,
+        });
       } finally {
         releaseModel();
       }
@@ -583,7 +671,10 @@ export class DungeonWebController {
           if (draftUsesModel)
             throw new WebApiError(409, "Model is used by a campaign preview and cannot be removed");
         });
-        sendJson(response, 200, { saved: true, defaultModel: saved.defaultModel });
+        sendBrowserJson(response, 200, "removeModel", {
+          saved: true,
+          defaultModel: saved.defaultModel,
+        });
       } finally {
         releaseRemoval();
       }
@@ -597,7 +688,10 @@ export class DungeonWebController {
         this.settings.requirePublicSelection(selection);
         this.settings.requireProviderKey(selection);
         await this.settings.modelCatalog.setDefault(selection);
-        sendJson(response, 200, { saved: true, defaultModel: selection });
+        sendBrowserJson(response, 200, "setDefaultModel", {
+          saved: true,
+          defaultModel: selection,
+        });
       } finally {
         releaseModel();
       }
@@ -608,7 +702,11 @@ export class DungeonWebController {
       const configured = (await loadAppConfig(this.root)).language;
       const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
       const profile = await resolveWorldProfile(this.root, language);
-      sendJson(response, 200, { language, markdown: profile.markdown, source: profile.source });
+      sendBrowserJson(response, 200, "readWorldProfile", {
+        language,
+        markdown: profile.markdown,
+        source: profile.source,
+      });
       return true;
     }
 
@@ -616,18 +714,24 @@ export class DungeonWebController {
       const body = z
         .object({
           language: LanguageCodeSchema.optional(),
-          markdown: z.string().min(1).max(500_000),
+          markdown: z.string().min(1).max(INPUT_CHARACTER_LIMITS.worldRules),
         })
         .strict()
         .parse(await readJsonBody(request));
       const language = body.language ?? (await loadAppConfig(this.root)).language;
       await saveWorldProfile(this.root, language, body.markdown);
-      sendJson(response, 200, { saved: true, language, source: "localized_override" });
+      sendBrowserJson(response, 200, "saveWorldProfile", {
+        saved: true,
+        language,
+        source: "localized_override",
+      });
       return true;
     }
 
     if (url.pathname === "/api/scenario-seeds" && method === "GET") {
-      sendJson(response, 200, { seeds: await listScenarioSeeds(this.root) });
+      sendBrowserJson(response, 200, "listScenarioSeeds", {
+        seeds: await listScenarioSeeds(this.root),
+      });
       return true;
     }
 
@@ -636,7 +740,7 @@ export class DungeonWebController {
       const configured = (await loadAppConfig(this.root)).language;
       const language = LanguageCodeSchema.parse(url.searchParams.get("language") ?? configured);
       const seed = await loadScenarioSeed(this.root, id, language);
-      sendJson(response, 200, { seed });
+      sendBrowserJson(response, 200, "readScenarioSeed", { seed });
       return true;
     }
     return false;
@@ -648,31 +752,62 @@ export class DungeonWebController {
     response: ServerResponse,
     url: URL,
   ): Promise<boolean> {
+    if (url.pathname === "/api/campaigns/draft/detach" && method === "POST") {
+      const body = SetupDraftDetachRequestSchema.parse(await readJsonBody(request));
+      await this.detachSetupDraft(body.requestId);
+      sendBrowserJson(response, 200, "detachDraft", { detached: true });
+      return true;
+    }
+
     if (url.pathname === "/api/campaigns/draft" && method === "POST") {
       const body = SetupDraftRequestSchema.parse(await readJsonBody(request));
-      const language = body.language ?? (await loadAppConfig(this.root)).language;
-      const requestedSelection =
-        body.config === undefined
-          ? this.settings.effectivePublicDefault(await this.settings.modelSnapshot())
-          : this.settings.selection(body.config);
-      if (requestedSelection === null) {
-        throw new WebApiError(
-          409,
-          "Test a compatible model and choose it as the default before creating a campaign",
-        );
+      const requestId = body.requestId ?? randomUUID();
+      this.pruneDetachedSetupRequests();
+      if (this.activeSetupDraftRequests.has(requestId) || this.drafts.has(requestId)) {
+        throw new WebApiError(409, "Campaign preview request ID is already in use");
       }
-      const releaseModel = this.reserveModelUse(requestedSelection);
+      const activeRequest: ActiveSetupDraftRequest = {
+        detached:
+          this.detachedSetupRequestIds.delete(requestId) || request.aborted || response.destroyed,
+      };
+      this.activeSetupDraftRequests.set(requestId, activeRequest);
+      const markRequestAborted = (): void => {
+        activeRequest.detached = true;
+        this.drafts.delete(requestId);
+      };
+      const markResponseClosed = (): void => {
+        if (!response.writableFinished) {
+          activeRequest.detached = true;
+          this.drafts.delete(requestId);
+        }
+      };
+      request.once("aborted", markRequestAborted);
+      response.once("close", markResponseClosed);
+      let releaseModel: (() => void) | undefined;
       try {
+        const language = body.language ?? (await loadAppConfig(this.root)).language;
+        const requestedSelection =
+          body.config === undefined
+            ? this.settings.effectivePublicDefault(await this.settings.modelSnapshot())
+            : this.settings.selection(body.config);
+        if (requestedSelection === null) {
+          throw new WebApiError(
+            409,
+            "Test a compatible model and choose it as the default before creating a campaign",
+          );
+        }
+        releaseModel = this.reserveModelUse(requestedSelection);
         const config = await this.settings.availableConfig(requestedSelection, language);
         const worldRules =
           body.worldRules ?? (await resolveWorldProfile(this.root, language)).markdown;
         const defaults = campaignSetupDefaults(language);
         const premise = body.premise.trim() || defaults.premise;
         const character = body.character.trim() || defaults.characterConcept;
-        const operationId = `draft:${randomUUID()}`;
+        const operationId = `draft:${requestId}`;
         const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
+          const draftStore = new StateStore(this.setupDraftRoot(requestId));
           const engine = new DungeonEngine(
-            new StateStore(path.join(this.dataRoot, ".drafts", operationId)),
+            draftStore,
             await this.settings.provider(config, language),
           );
           const generated = await engine.generateSetupWithMetadata({
@@ -689,19 +824,34 @@ export class DungeonWebController {
             config,
             premise,
             character,
+            spending: await draftStore.spendingController().exportTransferPayload(),
           };
         });
-        const draftId = randomUUID();
-        this.drafts.set(draftId, draft);
-        while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value!);
-        sendJson(response, 200, {
-          draftId,
+        if (!activeRequest.detached) {
+          this.drafts.set(requestId, draft);
+          while (this.drafts.size > MAX_DRAFTS) {
+            const evicted = this.drafts.keys().next().value!;
+            await this.removeSetupDraft(evicted);
+          }
+        } else {
+          await this.removeSetupDraft(requestId);
+        }
+        const payload: BrowserSetupDraftResponse = {
+          draftId: requestId,
           setup: setupPreview(draft.setup),
           config: this.settings.presentedSelection(config),
           language,
-        });
+        };
+        if (!response.destroyed && !response.writableEnded)
+          sendBrowserJson(response, 200, "createDraft", payload);
       } finally {
-        releaseModel();
+        request.off("aborted", markRequestAborted);
+        response.off("close", markResponseClosed);
+        if (activeRequest.detached || !this.drafts.has(requestId)) {
+          await this.removeSetupDraft(requestId);
+        }
+        this.activeSetupDraftRequests.delete(requestId);
+        releaseModel?.();
       }
       return true;
     }
@@ -715,7 +865,7 @@ export class DungeonWebController {
       if (!draft) {
         const replay = await this.confirmedCampaignResponse(body.draftId);
         if (!replay) throw new WebApiError(404, "Campaign draft was not found; generate it again");
-        sendJson(response, 200, replay);
+        sendBrowserJson(response, 200, "confirmDraft", replay);
         return true;
       }
       let created: Awaited<ReturnType<CampaignCatalog["createCampaign"]>>;
@@ -734,19 +884,22 @@ export class DungeonWebController {
               {
                 providerConfig: draft.config,
                 requestId: body.draftId,
+                setupSpendingRequestId: body.draftId,
+                setupSpending: draft.spending,
               },
             ),
         );
       } catch (error) {
         this.removedModelConflict(error, "the campaign preview was awaiting confirmation");
       }
-      if (this.drafts.get(body.draftId) === draft) this.drafts.delete(body.draftId);
-      sendJson(response, 200, {
+      if (this.drafts.get(body.draftId) === draft) await this.removeSetupDraft(body.draftId);
+      const payload: BrowserCampaignCreatedResponse = {
         state: created.state,
         playerName: draft.setup.player.name,
         openingNarration: draft.setup.openingNarration,
         config: this.settings.presentedSelection(draft.config),
-      });
+      };
+      sendBrowserJson(response, 200, "confirmDraft", payload);
       return true;
     }
     return false;
@@ -763,22 +916,112 @@ export class DungeonWebController {
     const { campaignId, action } = route;
 
     if (action === "status" && method === "GET") {
-      sendJson(response, 200, {
+      const payload: BrowserCampaignStatusResponse = {
         campaign: await this.campaignPresentation(await this.requireSummary(campaignId)),
+      };
+      sendBrowserJson(response, 200, "campaignStatus", payload);
+      return true;
+    }
+
+    if (action === "budget" && method === "GET") {
+      const summary = await this.requireSummary(campaignId);
+      const budget = await (await this.readStore(summary)).campaignBudget();
+      sendBrowserJson(response, 200, "campaignBudget", { budget });
+      return true;
+    }
+
+    if (action === "budget" && method === "PUT") {
+      const body = z
+        .object({
+          campaignUsd: z.number().finite().positive().nullable().optional(),
+          logicalTurnUsd: z.number().finite().positive().nullable().optional(),
+        })
+        .strict()
+        .parse(await readJsonBody(request));
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Another operation is still running for this campaign");
+      const budget = await this.operations.run(campaignId, async () => {
+        const store = await this.readStore(await this.requireSummary(campaignId));
+        return store.updateCampaignBudget({
+          ...(body.campaignUsd === undefined ? {} : { campaignUsd: body.campaignUsd }),
+          ...(body.logicalTurnUsd === undefined ? {} : { logicalTurnUsd: body.logicalTurnUsd }),
+        });
       });
+      sendBrowserJson(response, 200, "updateCampaignBudget", { budget });
       return true;
     }
 
     if (action === "setup" && method === "GET") {
       const summary = await this.requireSummary(campaignId);
       const store = await this.readStore(summary);
-      sendJson(response, 200, { setup: (await store.campaignStartSettings()) ?? null });
+      sendBrowserJson(response, 200, "campaignSetup", {
+        setup: (await store.campaignStartSettings()) ?? null,
+      });
+      return true;
+    }
+
+    if (action === "story" && method === "GET") {
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Campaign story is temporarily busy");
+      const summary = await this.requireSummary(campaignId);
+      const store = await this.readStore(summary);
+      sendBrowserJson(
+        response,
+        200,
+        "campaignStory",
+        completedStoryResponse(await store.completedStory()),
+      );
+      return true;
+    }
+
+    if (action === "story" && method === "POST") {
+      if (this.operations.isBusy(campaignId))
+        throw new WebApiError(409, "Another operation is still running for this campaign");
+      const artifact = await this.operations.run(campaignId, async () => {
+        const summary = await this.requireSummary(campaignId);
+        const store = await this.readStore(summary);
+        return store.withCampaignLock(async () => {
+          const metadata = await readCampaignMetadata(store.dataRoot);
+          const manifest = await store.readManifest();
+          if (!metadata.archived && manifest.status === "active") {
+            throw new WebApiError(
+              409,
+              "Finish or archive the campaign before generating its short story",
+            );
+          }
+          if (await store.getPending()) {
+            throw new WebApiError(
+              409,
+              "Resolve or discard the pending turn before generating its short story",
+            );
+          }
+          const config = metadata.providerConfig;
+          if (!config) {
+            throw new WebApiError(
+              409,
+              "Choose a provider and model for this campaign before generating its short story",
+            );
+          }
+          const engine = new DungeonEngine(
+            store,
+            await this.settings.provider(config, manifest.language),
+          );
+          const settledActiveSnapshot = metadata.archived && manifest.status === "active";
+          return engine.generateCompletedStory(
+            settledActiveSnapshot ? { settledSnapshot: true } : undefined,
+          );
+        });
+      });
+      this.costCache.delete(campaignId);
+      if (!response.destroyed && !response.writableEnded) {
+        sendBrowserJson(response, 200, "generateCampaignStory", completedStoryResponse(artifact));
+      }
       return true;
     }
 
     if (action === "play" && method === "POST") {
       const body = z
-        .object({ action: z.string().trim().min(1).max(10_000) })
+        .object({ action: z.string().trim().min(1).max(INPUT_CHARACTER_LIMITS.action) })
         .strict()
         .parse(await readJsonBody(request));
       const result = await this.runCampaign(campaignId, async (engine) => {
@@ -788,14 +1031,14 @@ export class DungeonWebController {
         return appeal ? engine.appeal(appeal) : engine.play(body.action);
       });
       this.costCache.delete(campaignId);
-      sendJson(response, 200, playerTurnResponse(result));
+      sendBrowserJson(response, 200, "play", playerTurnResponse(result));
       return true;
     }
 
     if (action === "retry" && method === "POST") {
       const result = await this.runCampaign(campaignId, (engine) => engine.resumePendingTurn());
       this.costCache.delete(campaignId);
-      sendJson(response, 200, playerTurnResponse(result));
+      sendBrowserJson(response, 200, "retry", playerTurnResponse(result));
       return true;
     }
 
@@ -803,7 +1046,7 @@ export class DungeonWebController {
       await this.runCampaign(campaignId, async (engine) => {
         await engine.discardPendingTurn();
       });
-      sendJson(response, 200, { discarded: true });
+      sendBrowserJson(response, 200, "discard", { discarded: true });
       return true;
     }
 
@@ -813,7 +1056,7 @@ export class DungeonWebController {
       await this.operations.run(campaignId, async () => {
         await (await this.catalog()).archiveCampaign(campaignId);
       });
-      sendJson(response, 200, { archived: true });
+      sendBrowserJson(response, 200, "archiveCampaign", { archived: true });
       return true;
     }
 
@@ -827,13 +1070,15 @@ export class DungeonWebController {
       const campaign = await this.operations.run(campaignId, async () =>
         (await this.catalog()).renameCampaign(campaignId, body.title),
       );
-      sendJson(response, 200, { campaign: await this.campaignPresentation(campaign) });
+      sendBrowserJson(response, 200, "renameCampaign", {
+        campaign: await this.campaignPresentation(campaign),
+      });
       return true;
     }
 
     if (action === "delete" && method === "DELETE") {
       const body = z
-        .object({ title: z.string().min(1) })
+        .object({ title: z.string().min(1).optional() })
         .strict()
         .parse(await readJsonBody(request));
       if (this.operations.isBusy(campaignId))
@@ -841,14 +1086,14 @@ export class DungeonWebController {
       const summary = await this.requireSummary(campaignId);
       if (!summary.archived)
         throw new WebApiError(409, "Archive the campaign before permanently deleting it");
-      if (body.title !== summary.title)
+      if (summary.deleteRequiresTitleConfirmation && body.title !== summary.title)
         throw new WebApiError(409, "Campaign title confirmation does not match");
       await this.operations.run(campaignId, async () => {
-        await (await this.catalog()).deleteArchivedCampaign(campaignId);
+        await (await this.catalog()).deleteArchivedCampaign(campaignId, body.title);
       });
       this.costCache.delete(campaignId);
       this.stateCache.delete(campaignId);
-      sendJson(response, 200, { deleted: true });
+      sendBrowserJson(response, 200, "deleteCampaign", { deleted: true });
       return true;
     }
 
@@ -892,7 +1137,9 @@ export class DungeonWebController {
           }
           throw error;
         }
-        sendJson(response, 200, { config: this.settings.presentedSelection(saved) });
+        sendBrowserJson(response, 200, "setCampaignModel", {
+          config: this.settings.presentedSelection(saved),
+        });
       } finally {
         releaseModel();
       }
@@ -908,7 +1155,7 @@ export class DungeonWebController {
         throw new WebApiError(409, "Campaign state is temporarily busy");
       const state = await this.campaignState(summary);
       if (view === null) {
-        sendJson(response, 200, { state });
+        sendBrowserJson(response, 200, "campaignInspection", { state });
       } else {
         sendJson(response, 200, { revision: state.revision, inspection: state[view] });
       }
@@ -920,13 +1167,16 @@ export class DungeonWebController {
       if (this.operations.isBusy(campaignId))
         throw new WebApiError(409, "Campaign transcript is temporarily busy");
       const snapshot = await (await this.readStore(summary)).campaignLogSnapshot();
-      sendJson(response, 200, { playerName: snapshot.playerName, turns: snapshot.turns });
+      sendBrowserJson(response, 200, "campaignTranscript", {
+        playerName: snapshot.playerName,
+        turns: snapshot.turns,
+      });
       return true;
     }
 
     if (action === "export" && method === "GET") {
       const format = url.searchParams.get("format") ?? "markdown";
-      if (!['markdown', 'md', 'html'].includes(format))
+      if (!["markdown", "md", "html"].includes(format))
         throw new WebApiError(400, `Unsupported campaign export format: ${format}`);
       const summary = await this.requireSummary(campaignId);
       if (this.operations.isBusy(campaignId))
@@ -982,7 +1232,13 @@ export function createDungeonWebServer(options: WebServerOptions): Server {
         await controller.static(response, url.pathname);
       }
     } catch (error) {
-      sendJson(response, statusFor(error), { error: controller.safeError(error) });
+      if (!response.destroyed && !response.writableEnded) {
+        const budgetDetails = campaignBudgetErrorDetails(error);
+        sendJson(response, budgetDetails ? 409 : statusFor(error), {
+          error: controller.safeError(error),
+          ...(budgetDetails ?? {}),
+        });
+      }
     }
   };
   return createServer((request, response) => {

@@ -22,6 +22,11 @@ import { setupFixture } from "./helpers.js";
 
 type RequestHook = (request: StructuredRequest<unknown>, model: string) => void | Promise<void>;
 
+const COMPLETED_STORY_FIXTURE = Array.from(
+  { length: 420 },
+  (_, index) => `chronicle${index + 1}`,
+).join(" ");
+
 class WebFakeProvider implements LlmProvider {
   readonly id = "fake";
 
@@ -38,7 +43,7 @@ class WebFakeProvider implements LlmProvider {
       (data as typeof setupFixture).campaignTitle = `Campaign ${this.model}`;
     } else if (request.schemaName.startsWith("connection_campaign_setup_")) {
       data = JSON.parse(request.prompt.slice(request.prompt.indexOf("{")));
-    } else if (request.schemaName.startsWith("connection_gameplay_contract_v1_")) {
+    } else if (request.schemaName.startsWith("connection_gameplay_contract_v2_")) {
       const marker = request.schemaName.endsWith("_ru")
         ? "Проверка схемы выполнена."
         : "Schema enforcement verified.";
@@ -50,6 +55,8 @@ class WebFakeProvider implements LlmProvider {
       };
     } else if (request.schemaName === "campaign_question") {
       data = { answer: "Use one primary consequential action while under immediate pressure." };
+    } else if (request.schemaName === "completed_campaign_story_v1") {
+      data = { story: COMPLETED_STORY_FIXTURE };
     } else {
       data = {
         kind: "resolved",
@@ -81,7 +88,7 @@ class SensitiveWebProvider extends WebFakeProvider {
   override async generateStructured<T>(
     request: StructuredRequest<T>,
   ): Promise<StructuredResult<T>> {
-    if (request.schemaName === "turn_decision_v1") {
+    if (request.schemaName === "turn_decision_v2") {
       return {
         data: request.schema.parse({
           kind: "check_required",
@@ -100,7 +107,7 @@ class SensitiveWebProvider extends WebFakeProvider {
         model: this.model,
       };
     }
-    if (request.schemaName === "turn_resolution_v1") {
+    if (request.schemaName === "turn_resolution_v2") {
       return {
         data: request.schema.parse({
           narration: "Mara gives you a guarded but useful answer.",
@@ -238,6 +245,13 @@ async function json(base: string, route: string, method = "GET", body?: unknown)
   const value = await response.json();
   if (!response.ok) throw new Error(value.error);
   return value;
+}
+
+async function bodylessJsonMutation(base: string, route: string): Promise<Response> {
+  return fetch(`${base}${route}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function rawRequest(
@@ -445,6 +459,105 @@ describe("multi-campaign Web server", () => {
     );
   });
 
+  it("reads and explicitly generates a player-safe story only after campaign completion", async () => {
+    const root = await fixtureRoot();
+    const catalog = new CampaignCatalog(path.join(root, "data"), {
+      defaultProviderConfig: DEFAULT_CONFIG,
+    });
+    const created = await catalog.createCampaign(
+      {
+        setup: { ...structuredClone(setupFixture), campaignTitle: "Completed Chronicle" },
+        worldRules: "# Test World\n",
+        language: "en",
+      },
+      { providerConfig: DEFAULT_CONFIG },
+    );
+    let storyCalls = 0;
+    const { base } = await start(root, {
+      providerFactory: (config) =>
+        new WebFakeProvider(config.model, (request) => {
+          if (request.schemaName === "completed_campaign_story_v1") storyCalls += 1;
+        }),
+    });
+    const route = campaignRoute(created.campaignId, "story");
+
+    expect(await json(base, route)).toEqual({ status: "missing" });
+    const activeResponse = await bodylessJsonMutation(base, route);
+    expect(activeResponse.status).toBe(409);
+    expect(await activeResponse.json()).toEqual({
+      error: "Finish or archive the campaign before generating its short story",
+    });
+    expect(storyCalls).toBe(0);
+
+    await created.store.commitTurn({
+      action: "I accept the final page.",
+      resolved: {
+        narration: "The road ends beneath a clear dawn.",
+        turnSummary: "The campaign reached its ending.",
+        operations: [{ type: "end_campaign", status: "ended", reason: "The quest is complete." }],
+      },
+      provider: "fake",
+      model: "fake-model",
+    });
+    const before = await created.store.campaignLogSnapshot();
+
+    const generatedResponse = await bodylessJsonMutation(base, route);
+    expect(generatedResponse.status).toBe(200);
+    const generated = await generatedResponse.json();
+    expect(generated).toMatchObject({
+      status: "ready",
+      story: COMPLETED_STORY_FIXTURE,
+      sourceTurn: 1,
+    });
+    expect(generated.generatedAt).toEqual(expect.any(String));
+    expect(JSON.stringify(generated)).not.toMatch(/provider|model|usage/i);
+    expect(storyCalls).toBe(1);
+    expect(await json(base, route)).toEqual(generated);
+
+    const idempotentResponse = await bodylessJsonMutation(base, route);
+    expect(await idempotentResponse.json()).toEqual(generated);
+    expect(storyCalls).toBe(1);
+    const after = await created.store.campaignLogSnapshot();
+    expect(after.state).toEqual(before.state);
+    expect(after.turns).toEqual(before.turns);
+  });
+
+  it("generates a settled story for an archived active campaign without resuming gameplay", async () => {
+    const root = await fixtureRoot();
+    const catalog = new CampaignCatalog(path.join(root, "data"), {
+      defaultProviderConfig: DEFAULT_CONFIG,
+    });
+    const created = await catalog.createCampaign(
+      {
+        setup: { ...structuredClone(setupFixture), campaignTitle: "Archived Chronicle" },
+        worldRules: "# Test World\n",
+        language: "en",
+      },
+      { providerConfig: DEFAULT_CONFIG },
+    );
+    await catalog.archiveCampaign(created.campaignId);
+    const readable = await catalog.readCampaign(created.campaignId);
+    const before = await readable.campaignLogSnapshot();
+    const { base } = await start(root);
+    const route = campaignRoute(created.campaignId, "story");
+
+    const response = await bodylessJsonMutation(base, route);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "ready",
+      story: COMPLETED_STORY_FIXTURE,
+      sourceTurn: 0,
+    });
+    const after = await readable.campaignLogSnapshot();
+    expect(after.state).toEqual(before.state);
+    expect(after.turns).toEqual(before.turns);
+    expect(after.completedStory).toMatchObject({
+      provider: "fake",
+      model: DEFAULT_CONFIG.model,
+      story: COMPLETED_STORY_FIXTURE,
+    });
+  });
+
   it("ships the recommended Gemini model as the default independently of key presence", async () => {
     const root = await fixtureRoot();
     const { base } = await start(root, { environment: {} });
@@ -453,25 +566,26 @@ describe("multi-campaign Web server", () => {
     const recommended = gemini.models.find((model: any) => model.id === "gemini-3.6-flash");
 
     expect(gemini).toMatchObject({ recommended: true, keyPresent: false, keySource: "missing" });
+    // The V2 contract retires shipped compatibility and certification
+    // evidence: the browser must show the recommended default awaiting a fresh
+    // probe rather than claiming results from a schema that no longer exists.
     expect(recommended).toMatchObject({
       recommended: true,
       known: true,
-      compatibilityStatus: "compatible",
-      status: "compatible",
+      compatibilityStatus: "untested",
       enabled: true,
       available: false,
-      testedLanguages: ["en", "ru"],
-      adapterStatus: "calibrated",
-      technicalStatus: { en: "clean", ru: "clean" },
-      quality: { en: "high", ru: "high" },
+      adapterStatus: "uncalibrated",
+      technicalStatus: { en: "inconclusive", ru: "inconclusive" },
+      quality: { en: "unrated", ru: "unrated" },
       recommendationEligibility: {
         eligible: true,
         reasons: ["product_recommended_default"],
       },
       evidence: {
-        compatibility: expect.objectContaining({ protocolVersion: 1 }),
+        compatibility: null,
         assessment: expect.arrayContaining([expect.objectContaining({ source: "calibration" })]),
-        certificationCurrent: { en: true, ru: true },
+        certificationCurrent: { en: false, ru: false },
       },
     });
     expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
@@ -699,6 +813,12 @@ describe("multi-campaign Web server", () => {
       worldRules: "# One World\n",
       config: { provider: DEFAULT_CONFIG.provider, model: DEFAULT_CONFIG.model },
     });
+    const draftRoot = path.join(root, "data", ".drafts", `draft:${draft.draftId}`);
+    expect(existsSync(draftRoot)).toBe(true);
+    expect(await new StateStore(draftRoot).campaignBudget()).toMatchObject({
+      spentUsd: 0.0006,
+      settledAttempts: 1,
+    });
 
     const confirmations = await Promise.all([
       responseJson(base, "/api/campaigns/confirm", "POST", { draftId: draft.draftId }),
@@ -707,6 +827,23 @@ describe("multi-campaign Web server", () => {
     expect(confirmations.map((response) => response.status)).toEqual([200, 200]);
     const bodies = await Promise.all(confirmations.map((response) => response.json()));
     expect(bodies[0].state.campaignId).toBe(bodies[1].state.campaignId);
+    expect(existsSync(draftRoot)).toBe(false);
+    const acceptedStore = await new CampaignCatalog(path.join(root, "data")).openCampaign(
+      bodies[0].state.campaignId,
+    );
+    expect(await acceptedStore.campaignBudget()).toMatchObject({
+      spentUsd: 0.0006,
+      settledAttempts: 1,
+    });
+    const acceptedAttempts = (
+      await readFile(path.join(acceptedStore.dataRoot, "spending-attempts.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(acceptedAttempts).toEqual([
+      expect.objectContaining({ lane: "setup", schemaName: "campaign_setup", costUsd: 0.0006 }),
+    ]);
     const replay = await json(base, "/api/campaigns/confirm", "POST", { draftId: draft.draftId });
     expect(replay.state.campaignId).toBe(bodies[0].state.campaignId);
     expect((await json(base, "/api/status")).campaigns).toHaveLength(1);
@@ -760,6 +897,54 @@ describe("multi-campaign Web server", () => {
     });
   });
 
+  it("updates operational spending limits for archives while keeping their narrative immutable", async () => {
+    const root = await fixtureRoot();
+    const { base } = await start(root);
+    const campaign = await createCampaign(base);
+    const route = campaignRoute(campaign.state.campaignId, "budget");
+
+    expect(await json(base, route)).toMatchObject({
+      budget: {
+        limits: { campaignUsd: null, logicalTurnUsd: null },
+        spentUsd: expect.any(Number),
+        reservedUsd: expect.any(Number),
+        paused: false,
+      },
+    });
+    const updated = await json(base, route, "PUT", {
+      campaignUsd: 10,
+      logicalTurnUsd: 0.5,
+    });
+    expect(updated.budget.limits).toEqual({ campaignUsd: 10, logicalTurnUsd: 0.5 });
+    expect((await json(base, "/api/status")).campaigns[0].budget.limits).toEqual({
+      campaignUsd: 10,
+      logicalTurnUsd: 0.5,
+    });
+    expect((await responseJson(base, route, "PUT", { campaignUsd: 0 })).status).toBe(400);
+
+    await json(base, campaignRoute(campaign.state.campaignId, "archive"), "POST", {});
+    expect((await json(base, route)).budget.limits).toEqual({
+      campaignUsd: 10,
+      logicalTurnUsd: 0.5,
+    });
+    const archivedUpdate = await json(base, route, "PUT", {
+      campaignUsd: null,
+      logicalTurnUsd: 1,
+    });
+    expect(archivedUpdate.budget.limits).toEqual({ campaignUsd: null, logicalTurnUsd: 1 });
+    expect((await json(base, route)).budget.limits).toEqual({
+      campaignUsd: null,
+      logicalTurnUsd: 1,
+    });
+    expect(
+      (
+        await responseJson(base, campaignRoute(campaign.state.campaignId, "play"), "POST", {
+          action: "Continue the archived story",
+        })
+      ).status,
+    ).toBe(409);
+  });
+
   it("runs different campaigns concurrently, rejects same-campaign overlap, and enforces the global bound", async () => {
     const root = await fixtureRoot();
     const gate = deferred();
@@ -771,7 +956,7 @@ describe("multi-campaign Web server", () => {
       maxConcurrentCampaignOperations: 2,
       providerFactory: (config) =>
         new WebFakeProvider(config.model, async (request) => {
-          if (!holdTurns || request.schemaName !== "turn_decision_v1") return;
+          if (!holdTurns || request.schemaName !== "turn_decision_v2") return;
           started += 1;
           active += 1;
           maximumActive = Math.max(maximumActive, active);
@@ -821,7 +1006,7 @@ describe("multi-campaign Web server", () => {
       },
       providerFactory: (config, environment) =>
         new WebFakeProvider(config.model, (request) => {
-          if (request.schemaName === "turn_decision_v1") {
+          if (request.schemaName === "turn_decision_v2") {
             turnModels.push(`${config.model}:${environment.GEMINI_API_KEY ?? "missing"}`);
           }
         }),
@@ -966,6 +1151,10 @@ describe("multi-campaign Web server", () => {
       ).status,
     ).toBe(409);
     expect(
+      (await responseJson(base, campaignRoute(first.state.campaignId, "delete"), "DELETE", {}))
+        .status,
+    ).toBe(409);
+    expect(
       (
         await responseJson(base, campaignRoute(first.state.campaignId, "delete"), "DELETE", {
           title: "Wrong title",
@@ -985,6 +1174,46 @@ describe("multi-campaign Web server", () => {
     expect(
       (await fetch(`${base}${campaignRoute(first.state.campaignId, "transcript")}`)).status,
     ).toBe(404);
+  });
+
+  it("deletes an archived autoplay publication without accepting a title-confirmation bypass", async () => {
+    const root = await fixtureRoot();
+    const sourceRoot = path.join(root, "playtests", "runs", "autoplay-delete", "campaign");
+    const source = new StateStore(sourceRoot);
+    await source.createGame({
+      setup: { ...structuredClone(setupFixture), campaignTitle: "Disposable Autoplay" },
+      worldRules: "Autoplay deletion fixture rules.",
+      language: "en",
+    });
+    const catalog = new CampaignCatalog(path.join(root, "data"));
+    const published = await catalog.publishArchivedCampaign(sourceRoot, {
+      source: {
+        kind: "autoplay",
+        runId: "autoplay-delete",
+        jobId: "job-001",
+        packageId: "campaign-autoplay-v1",
+        packageVersion: 1,
+      },
+      tags: ["Autoplay"],
+      providerConfig: DEFAULT_CONFIG,
+    });
+    const { base } = await start(root);
+
+    expect((await json(base, "/api/status")).campaigns).toContainEqual(
+      expect.objectContaining({
+        campaignId: published.campaignId,
+        archived: true,
+        deleteRequiresTitleConfirmation: false,
+      }),
+    );
+    expect(await json(base, campaignRoute(published.campaignId, "delete"), "DELETE", {})).toEqual({
+      deleted: true,
+    });
+    expect(
+      (await json(base, "/api/status")).campaigns.some(
+        (campaign: { campaignId: string }) => campaign.campaignId === published.campaignId,
+      ),
+    ).toBe(false);
   });
 
   it("renames a started campaign and rejects invalid or archived renames", async () => {
@@ -1048,9 +1277,7 @@ describe("multi-campaign Web server", () => {
     expect(state.state.revision).toEqual(expect.any(String));
     expect(JSON.stringify(state)).not.toContain(PRIVATE_OPERATION_FACT);
     expect(JSON.stringify(state)).not.toContain("Mara Venn");
-    expect(
-      (await json(base, "/api/status")).campaigns[0].stateRevision,
-    ).toBe(state.state.revision);
+    expect((await json(base, "/api/status")).campaigns[0].stateRevision).toBe(state.state.revision);
 
     const location = await json(
       base,
@@ -1197,7 +1424,7 @@ describe("multi-campaign Web server", () => {
     expect(discoveredKeys).toEqual([secret]);
     expect(openai.models.find((model: any) => model.id === "gpt-5.4")).toMatchObject({
       keyAccess: "allowed",
-      compatibilityStatus: "compatible",
+      compatibilityStatus: "untested",
     });
     expect(status.llm.providers.find((provider: any) => provider.id === "gemini").models).toEqual(
       expect.not.arrayContaining([expect.objectContaining({ keyAccess: expect.anything() })]),
@@ -1493,6 +1720,171 @@ describe("multi-campaign Web server", () => {
     });
     releaseDraft();
     expect((await draft).status).toBe(200);
+  });
+
+  it("discards a detached setup result instead of retaining an unreachable preview", async () => {
+    const root = await fixtureRoot();
+    const draftBlocked = deferred();
+    const draftStarted = deferred();
+    const selection = { provider: "gemini", model: "custom-detached-draft" };
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    const { base } = await start(root, {
+      providerFactory: (config) =>
+        new WebFakeProvider(config.model, async (request) => {
+          if (request.schemaName === "campaign_setup") {
+            draftStarted.resolve();
+            await draftBlocked.promise;
+          }
+        }),
+    });
+    await json(base, "/api/llm/models", "POST", selection);
+    await json(base, "/api/llm/models/test", "POST", { ...selection, language: "en" });
+
+    const draft = responseJson(base, "/api/campaigns/draft", "POST", {
+      requestId,
+      premise: "A preview the browser stopped awaiting.",
+      character: "A patient scout.",
+      language: "en",
+      config: selection,
+    });
+    await draftStarted.promise;
+    expect(await json(base, "/api/campaigns/draft/detach", "POST", { requestId })).toEqual({
+      detached: true,
+    });
+    draftBlocked.resolve();
+
+    const completed = await draft;
+    expect(completed.status).toBe(200);
+    expect((await completed.json()).draftId).toBe(requestId);
+    expect(existsSync(path.join(root, "data", ".drafts", `draft:${requestId}`))).toBe(false);
+    const confirmation = await responseJson(base, "/api/campaigns/confirm", "POST", {
+      draftId: requestId,
+    });
+    expect(confirmation.status).toBe(404);
+    expect(await json(base, "/api/llm/models", "DELETE", selection)).toMatchObject({
+      saved: true,
+    });
+  });
+
+  it("releases a completed preview when the browser abandons it", async () => {
+    const root = await fixtureRoot();
+    const selection = { provider: "gemini", model: "custom-abandoned-preview" };
+    const requestId = "33333333-3333-4333-8333-333333333333";
+    const { base } = await start(root);
+    await json(base, "/api/llm/models", "POST", selection);
+    await json(base, "/api/llm/models/test", "POST", { ...selection, language: "en" });
+
+    const draft = await json(base, "/api/campaigns/draft", "POST", {
+      requestId,
+      premise: "A completed preview the player edits instead of accepting.",
+      character: "A patient scout.",
+      language: "en",
+      config: selection,
+    });
+    expect(draft.draftId).toBe(requestId);
+    expect((await responseJson(base, "/api/llm/models", "DELETE", selection)).status).toBe(409);
+
+    await json(base, "/api/campaigns/draft/detach", "POST", { requestId });
+    expect(existsSync(path.join(root, "data", ".drafts", `draft:${requestId}`))).toBe(false);
+    expect(
+      (
+        await responseJson(base, "/api/campaigns/confirm", "POST", {
+          draftId: requestId,
+        })
+      ).status,
+    ).toBe(404);
+    expect(await json(base, "/api/llm/models", "DELETE", selection)).toMatchObject({
+      saved: true,
+    });
+  });
+
+  it("honors a detach that races ahead of setup request registration", async () => {
+    const root = await fixtureRoot();
+    const selection = { provider: "gemini", model: "custom-early-detach" };
+    const requestId = "44444444-4444-4444-8444-444444444444";
+    const { base } = await start(root);
+    await json(base, "/api/llm/models", "POST", selection);
+    await json(base, "/api/llm/models/test", "POST", { ...selection, language: "en" });
+
+    await json(base, "/api/campaigns/draft/detach", "POST", { requestId });
+    const draft = await json(base, "/api/campaigns/draft", "POST", {
+      requestId,
+      premise: "The cleanup request arrived before the generation request.",
+      character: "A patient scout.",
+      language: "en",
+      config: selection,
+    });
+    expect(draft.draftId).toBe(requestId);
+    expect(
+      (
+        await responseJson(base, "/api/campaigns/confirm", "POST", {
+          draftId: requestId,
+        })
+      ).status,
+    ).toBe(404);
+    expect(await json(base, "/api/llm/models", "DELETE", selection)).toMatchObject({
+      saved: true,
+    });
+  });
+
+  it("does not retain a setup preview when its original response connection closes", async () => {
+    const root = await fixtureRoot();
+    const draftBlocked = deferred();
+    const draftStarted = deferred();
+    const selection = { provider: "gemini", model: "custom-closed-draft-response" };
+    const requestId = "22222222-2222-4222-8222-222222222222";
+    const { base } = await start(root, {
+      providerFactory: (config) =>
+        new WebFakeProvider(config.model, async (request) => {
+          if (request.schemaName === "campaign_setup") {
+            draftStarted.resolve();
+            await draftBlocked.promise;
+          }
+        }),
+    });
+    await json(base, "/api/llm/models", "POST", selection);
+    await json(base, "/api/llm/models/test", "POST", { ...selection, language: "en" });
+
+    const target = new URL("/api/campaigns/draft", base);
+    let settleClient!: () => void;
+    const clientSettled = new Promise<void>((resolve) => {
+      settleClient = resolve;
+    });
+    const client = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    client.once("error", settleClient);
+    client.once("close", settleClient);
+    client.end(
+      JSON.stringify({
+        requestId,
+        premise: "A preview whose tab closes.",
+        character: "A patient scout.",
+        language: "en",
+        config: selection,
+      }),
+    );
+    await draftStarted.promise;
+    client.destroy();
+    await clientSettled;
+
+    const activeRemoval = await responseJson(base, "/api/llm/models", "DELETE", selection);
+    expect(activeRemoval.status).toBe(409);
+    draftBlocked.resolve();
+
+    let removal: Response | undefined;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      removal = await responseJson(base, "/api/llm/models", "DELETE", selection);
+      if (removal.status === 200) break;
+      expect(removal.status).toBe(409);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(removal?.status).toBe(200);
   });
 
   it("does not confirm a draft whose custom model was removed by another Web process", async () => {

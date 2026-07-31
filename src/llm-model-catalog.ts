@@ -385,11 +385,16 @@ function canonicalize(
 ): PersistedCatalog {
   const models = new Map<string, PersistedModel>();
   for (const model of input.models) {
-    const stale =
-      model.state !== "untested" &&
-      model.state !== "stale" &&
-      !isCurrentTest(model, protocolVersion, testFingerprint);
-    const normalized = stale ? { ...model, state: "stale" as const, enabled: false } : model;
+    const current = isCurrentTest(model, protocolVersion, testFingerprint);
+    const stale = model.state !== "untested" && !current;
+    // Staleness is a statement about the recorded test, not a permanent
+    // verdict. Latching it meant a model whose evidence is current again could
+    // never recover without another probe, so a passing record self-heals.
+    const normalized = stale
+      ? { ...model, state: "stale" as const, enabled: false }
+      : model.state === "stale" && current
+        ? { ...model, state: "compatible" as const, enabled: true }
+        : model;
     models.set(selectionKey(normalized), normalized);
   }
   for (const selection of additions) {

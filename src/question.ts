@@ -1,9 +1,12 @@
+import { INPUT_CHARACTER_LIMITS } from "./input-budget.js";
+
 const QUESTION_COMMAND = ":ask";
 
 function validateQuestion(value: string): string {
   const question = value.trim();
   if (!question) throw new Error("Question requires text after :ask");
-  if (question.length > 10_000) throw new Error("Question exceeds 10,000 characters");
+  if (question.length > INPUT_CHARACTER_LIMITS.question)
+    throw new Error("Question exceeds 10,000 characters");
   return question;
 }
 

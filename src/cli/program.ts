@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { APPLICATION_VERSION } from "../version.js";
 import { LANGUAGES, LanguageCodeSchema } from "../language.js";
+import { createProjectBackup, formatDoctorReport, inspectProject } from "../maintenance.js";
 import {
   sanitizeTerminalText,
   terminalBanner,
@@ -84,6 +85,32 @@ export function createCliProgram(project: CliProjectContext): Command {
       const language = LanguageCodeSchema.parse(value.toLowerCase());
       await project.setLanguage(language);
       p.log.success(`Default language set to ${language}. New campaigns will use it.`);
+    });
+
+  program
+    .command("doctor")
+    .description("Inspect campaign storage without changing or recovering it")
+    .helpGroup("Configuration")
+    .action(async () => {
+      const report = await inspectProject(project.paths.root);
+      console.log(sanitizeTerminalText(formatDoctorReport(report)));
+      if (!report.healthy) process.exitCode = 1;
+    });
+
+  program
+    .command("backup <target>")
+    .description("Create a coherent restorable backup without provider secrets")
+    .helpGroup("Configuration")
+    .action(async (target: string) => {
+      const result = await createProjectBackup(project.paths.root, target);
+      p.log.success(
+        `Backup saved to ${sanitizeTerminalText(path.relative(project.paths.root, result.target) || result.target)} (${result.manifest.files.length} files).`,
+      );
+      if (result.doctor.warningCount > 0) {
+        p.log.warn(
+          `The snapshot contains ${result.doctor.warningCount} recoverable warning(s); run llm-dungeon doctor for details.`,
+        );
+      }
     });
 
   const world = program

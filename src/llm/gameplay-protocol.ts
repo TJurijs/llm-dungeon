@@ -2,27 +2,38 @@ import { z } from "zod";
 import {
   CheckSpecSchema,
   ResolvedTurnSchema,
+  SafeIdSchema,
+  SceneStateSchema,
   StateOperationSchema,
+  ThreadAuditEntrySchema,
   TurnDecisionSchema,
   type Entity,
   type Fact,
+  type FactBasis,
   type ResolvedTurn,
+  type SceneState,
   type StateOperation,
+  type ThreadAuditEntry,
   type TurnDecision,
 } from "../schemas.js";
 import type { StructuredRequest } from "../types.js";
 
-export const GAMEPLAY_PROTOCOL_VERSION = 1 as const;
+export const GAMEPLAY_PROTOCOL_VERSION = 2 as const;
 
 export const GAMEPLAY_SCHEMA_NAMES = {
-  decision: "turn_decision_v1",
-  resolution: "turn_resolution_v1",
-  appealResolution: "appeal_resolution_v1",
-  domainCorrection: "domain_repair_turn_resolution_v1",
-  appealDomainCorrection: "domain_repair_appeal_resolution_v1",
-  connectionProbe: "connection_gameplay_contract_v1",
+  decision: "turn_decision_v2",
+  resolution: "turn_resolution_v2",
+  appealResolution: "appeal_resolution_v2",
+  domainCorrection: "domain_repair_turn_resolution_v2",
+  appealDomainCorrection: "domain_repair_appeal_resolution_v2",
+  connectionProbe: "connection_gameplay_contract_v2",
 } as const;
 
+/**
+ * V2 removes update_thread and resolve_thread as effects. Thread lifecycle
+ * moves to the required threadAudit declaration, which makes a declaration
+ * that disagrees with its operations impossible to express.
+ */
 const EffectKindSchema = z.enum([
   "create_entity",
   "add_fact",
@@ -36,12 +47,32 @@ const EffectKindSchema = z.enum([
   "add_trait",
   "set_relationship",
   "create_thread",
-  "update_thread",
-  "resolve_thread",
   "record_major_event",
   "advance_time",
   "end_campaign",
 ]);
+
+const ThreadVerdictCodeSchema = z.number().int().min(0).max(4);
+const FactBasisCodeSchema = z.number().int().min(0).max(5);
+
+const THREAD_VERDICT_BY_CODE: Readonly<
+  Record<number, "unchanged" | "progressed" | "resolved" | "failed" | undefined>
+> = {
+  0: undefined,
+  1: "unchanged",
+  2: "progressed",
+  3: "resolved",
+  4: "failed",
+};
+
+const FACT_BASIS_BY_CODE: Readonly<Record<number, FactBasis | undefined>> = {
+  0: undefined,
+  1: "observed",
+  2: "reported",
+  3: "inferred",
+  4: "recorded",
+  5: "established",
+};
 
 const EntityKindCodeSchema = z.number().int().min(0).max(7);
 const FactSectionCodeSchema = z.number().int().min(0).max(6);
@@ -86,6 +117,7 @@ const WireEffectSchema = z
     itemId: z.string(),
     entityKindCode: EntityKindCodeSchema,
     factSectionCode: FactSectionCodeSchema,
+    factBasisCode: FactBasisCodeSchema,
     lifecycleCode: LifecycleCodeSchema,
     name: z.string(),
     status: z.string(),
@@ -96,11 +128,29 @@ const WireEffectSchema = z
   })
   .strict();
 
+const WireThreadAuditSchema = z
+  .object({
+    threadIndex: z.number().int(),
+    verdictCode: ThreadVerdictCodeSchema,
+    text: z.string(),
+    references: z.array(z.string().min(1)),
+  })
+  .strict();
+
+const WireSceneStateSchema = z
+  .object({
+    locationId: z.string(),
+    presentActorIds: z.array(z.string().min(1)).max(20),
+  })
+  .strict();
+
 export const WireTurnSchema = z
   .object({
     decision: z.enum(["resolved", "check_required"]),
     narration: z.string(),
     effects: z.array(WireEffectSchema).max(40),
+    threadAudit: z.array(WireThreadAuditSchema).max(20),
+    sceneState: WireSceneStateSchema,
     summary: z.string(),
     checkName: z.string(),
     difficulty: z.number().int().min(0).max(95),
@@ -141,6 +191,8 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
     "decision",
     "narration",
     "effects",
+    "threadAudit",
+    "sceneState",
     "summary",
     "checkName",
     "difficulty",
@@ -177,6 +229,7 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
           "itemId",
           "entityKindCode",
           "factSectionCode",
+          "factBasisCode",
           "lifecycleCode",
           "name",
           "status",
@@ -192,6 +245,13 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
           itemId: { type: "string" },
           entityKindCode: { type: "integer", minimum: 0, maximum: 7 },
           factSectionCode: { type: "integer", minimum: 0, maximum: 6 },
+          factBasisCode: {
+            type: "integer",
+            minimum: 0,
+            maximum: 5,
+            description:
+              "How add_fact knows its proposition: 0 unused, 1 directly observed, 2 reported by a source, 3 inferred from evidence, 4 read from a record, 5 established world truth. Codes 2 and 3 require relatedId to name the source record.",
+          },
           lifecycleCode: { type: "integer", minimum: 0, maximum: 4 },
           name: { type: "string" },
           status: { type: "string" },
@@ -207,6 +267,62 @@ export const GAMEPLAY_WIRE_JSON_SCHEMA: Record<string, unknown> = {
           },
           tags: { type: "array", items: { type: "string" } },
           references: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    threadAudit: {
+      type: "array",
+      description:
+        "For decision=resolved, exactly one entry for every active thread listed in context, addressed by its 1-based number. No extra entries and no numbers outside the list. Must be exactly empty for decision=check_required.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadIndex", "verdictCode", "text", "references"],
+        properties: {
+          threadIndex: {
+            type: "integer",
+            minimum: 1,
+            description:
+              "The 1-based number of an active thread as listed in context. Never an ID or a title.",
+          },
+          verdictCode: {
+            type: "integer",
+            minimum: 0,
+            maximum: 4,
+            description:
+              "1 unchanged, 2 progressed, 3 resolved, 4 failed. Judge the thread's immutable objective, not the latest scene.",
+          },
+          text: {
+            type: "string",
+            description:
+              "For 2, the complete rolling case brief. For 3 and 4, the closure outcome. For 1, empty, or a brief reason when linked records changed this turn.",
+          },
+          references: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              'Complete related entity IDs, or the single value "$unchanged" to keep the current links.',
+          },
+        },
+      },
+    },
+    sceneState: {
+      type: "object",
+      additionalProperties: false,
+      required: ["locationId", "presentActorIds"],
+      description:
+        "The end-of-turn scene for decision=resolved. Use empty strings and an empty array for decision=check_required.",
+      properties: {
+        locationId: {
+          type: "string",
+          description:
+            "The exact location ID physically containing the player character when the turn ends, or a same-turn create_entity hint for a location created now.",
+        },
+        presentActorIds: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Every other actor physically present at that location when the turn ends. The application moves each one there, so omit anyone who left.",
         },
       },
     },
@@ -307,6 +423,111 @@ function optionalList(values: string[], path: string): string[] | undefined {
   return values;
 }
 
+function remapWireEntityReferences(
+  effect: WireEffect,
+  replacements: ReadonlyMap<string, string>,
+): WireEffect {
+  const replace = (value: string): string => replacements.get(value) ?? value;
+  switch (effect.kind) {
+    case "create_entity":
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        relatedId: replace(effect.relatedId),
+      };
+    case "add_fact":
+      // relatedId is the evidence source entity, so it is remapped too;
+      // supersede_fact keeps relatedId as a fact ID and must not be.
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        relatedId: replace(effect.relatedId),
+      };
+    case "set_entity_state":
+    case "add_condition":
+    case "remove_condition":
+    case "add_trait":
+      return { ...effect, targetId: replace(effect.targetId) };
+    case "supersede_fact":
+      return { ...effect, targetId: replace(effect.targetId) };
+    case "move_entity":
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        relatedId: replace(effect.relatedId),
+      };
+    case "change_inventory":
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        itemId: replace(effect.itemId),
+      };
+    case "transfer_item":
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        relatedId: replace(effect.relatedId),
+        itemId: replace(effect.itemId),
+      };
+    case "set_relationship":
+      return {
+        ...effect,
+        targetId: replace(effect.targetId),
+        relatedId: replace(effect.relatedId),
+      };
+    case "create_thread":
+      return { ...effect, references: effect.references.map(replace) };
+    case "record_major_event":
+    case "advance_time":
+    case "end_campaign":
+      return effect;
+  }
+}
+
+/**
+ * Provider schema projections cannot all enforce SafeIdSchema's pattern. Keep
+ * established references strict, but let an unsafe same-response create hint
+ * enter the existing application-owned durable-ID allocator. Only byte-exact
+ * references to that definition are remapped.
+ */
+function normalizeUnsafeCreatedEntityHints(effects: WireEffect[]): WireEffect[] {
+  const occupied = new Set(
+    effects.flatMap((effect) => [
+      effect.targetId,
+      effect.relatedId,
+      effect.itemId,
+      ...effect.references,
+    ]),
+  );
+  const seenCreateHints = new Set<string>();
+  const replacements = new Map<string, string>();
+
+  for (const [index, effect] of effects.entries()) {
+    if (effect.kind !== "create_entity" || effect.targetId.trim().length === 0) continue;
+    if (seenCreateHints.has(effect.targetId)) {
+      throw new ProtocolDecodeError(
+        "duplicate create_entity targetId hint",
+        `effects[${index}].targetId`,
+      );
+    }
+    seenCreateHints.add(effect.targetId);
+    if (SafeIdSchema.safeParse(effect.targetId).success) continue;
+
+    const base = `generated:wire-create-${index + 1}`;
+    let synthetic = base;
+    let suffix = 2;
+    while (occupied.has(synthetic)) {
+      synthetic = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    occupied.add(synthetic);
+    replacements.set(effect.targetId, synthetic);
+  }
+
+  if (!replacements.size) return effects;
+  return effects.map((effect) => remapWireEntityReferences(effect, replacements));
+}
+
 function decodeEffect(effect: WireEffect, index: number): StateOperation {
   const at = (field: string) => `effects[${index}].${field}`;
   const targetId = () => required(effect.targetId, at("targetId"));
@@ -332,13 +553,23 @@ function decodeEffect(effect: WireEffect, index: number): StateOperation {
           playerKnowledge: [],
         },
       });
-    case "add_fact":
+    case "add_fact": {
+      const basis = FACT_BASIS_BY_CODE[effect.factBasisCode];
+      if ((basis === "reported" || basis === "inferred") && effect.relatedId === "") {
+        throw new ProtocolDecodeError(
+          "reported and inferred facts must name their source record in relatedId",
+          at("relatedId"),
+        );
+      }
       return StateOperationSchema.parse({
         type: "add_fact",
         targetId: targetId(),
         section: requiredCode(FACT_SECTION_BY_CODE, effect.factSectionCode, at("factSectionCode")),
         text: text(),
+        ...(basis === undefined ? {} : { basis }),
+        ...(effect.relatedId === "" ? {} : { sourceId: effect.relatedId }),
       });
+    }
     case "supersede_fact":
       return StateOperationSchema.parse({
         type: "supersede_fact",
@@ -415,27 +646,6 @@ function decodeEffect(effect: WireEffect, index: number): StateOperation {
         summary: text(),
         relatedEntityIds: effect.references,
       });
-    case "update_thread": {
-      const references = optionalList(effect.references, at("references"));
-      return StateOperationSchema.parse({
-        type: "update_thread",
-        threadId: targetId(),
-        summary: text(),
-        ...(references === undefined ? {} : { relatedEntityIds: references }),
-      });
-    }
-    case "resolve_thread": {
-      const status = requiredCode(LIFECYCLE_BY_CODE, effect.lifecycleCode, at("lifecycleCode"));
-      if (status !== "resolved" && status !== "failed") {
-        throw new ProtocolDecodeError("must be 1 (resolved) or 2 (failed)", at("lifecycleCode"));
-      }
-      return StateOperationSchema.parse({
-        type: "resolve_thread",
-        threadId: targetId(),
-        outcome: text(),
-        status,
-      });
-    }
     case "record_major_event":
       return StateOperationSchema.parse({ type: "record_major_event", text: text() });
     case "advance_time":
@@ -454,12 +664,52 @@ function decodeEffect(effect: WireEffect, index: number): StateOperation {
   }
 }
 
+function decodeThreadAudit(wire: WireTurn): ThreadAuditEntry[] {
+  const seen = new Set<number>();
+  return wire.threadAudit.map((entry, index) => {
+    const at = (field: string) => `threadAudit[${index}].${field}`;
+    const threadIndex = entry.threadIndex;
+    if (threadIndex < 1) {
+      throw new ProtocolDecodeError("thread numbers start at 1", at("threadIndex"));
+    }
+    if (seen.has(threadIndex)) {
+      throw new ProtocolDecodeError(
+        "each active thread is audited exactly once",
+        at("threadIndex"),
+      );
+    }
+    seen.add(threadIndex);
+    const verdict = requiredCode(THREAD_VERDICT_BY_CODE, entry.verdictCode, at("verdictCode"));
+    if (verdict !== "unchanged" && entry.text.trim() === "") {
+      throw new ProtocolDecodeError(
+        "a progressed, resolved, or failed thread requires its summary or outcome",
+        at("text"),
+      );
+    }
+    const references = optionalList(entry.references, at("references"));
+    return ThreadAuditEntrySchema.parse({
+      threadIndex,
+      verdict,
+      text: entry.text,
+      ...(references === undefined ? {} : { relatedEntityIds: references }),
+    });
+  });
+}
+
+function decodeSceneState(wire: WireTurn): SceneState | undefined {
+  if (wire.sceneState.locationId.trim() === "") return undefined;
+  return SceneStateSchema.parse({
+    locationId: wire.sceneState.locationId,
+    presentActorIds: wire.sceneState.presentActorIds,
+  });
+}
+
 const AUTOMATIC_SUCCESS_MARKER = "$automatic_success";
 const AUTOMATIC_FAILURE_MARKER = "$automatic_failure";
 
-function automaticDecision(wire: WireTurn):
-  | { kind: "automatic_success" | "automatic_failure"; reason: string }
-  | undefined {
+function automaticDecision(
+  wire: WireTurn,
+): { kind: "automatic_success" | "automatic_failure"; reason: string } | undefined {
   const success = wire.successStakes === AUTOMATIC_SUCCESS_MARKER;
   const failure = wire.failureStakes === AUTOMATIC_FAILURE_MARKER;
   if (!success && !failure) return undefined;
@@ -494,18 +744,22 @@ function assertResolvedShape(wire: WireTurn, allowAutomatic = true): void {
   if (!wire.summary) throw new ProtocolDecodeError("required for a resolved outcome", "summary");
   const automatic = automaticDecision(wire);
   if (automatic && !allowAutomatic) {
-    throw new ProtocolDecodeError("locked resolution cannot return an automatic outcome", "decision");
+    throw new ProtocolDecodeError(
+      "locked resolution cannot return an automatic outcome",
+      "decision",
+    );
   }
-  if (!automatic && (
-    wire.checkName !== "" ||
-    wire.difficulty !== 0 ||
-    wire.modifiers.length ||
-    wire.exceptionalSuccessStakes !== "" ||
-    wire.successStakes !== "" ||
-    wire.failureStakes !== "" ||
-    wire.severeFailureStakes !== "" ||
-    wire.failureCampaignStatus !== "none"
-  )) {
+  if (
+    !automatic &&
+    (wire.checkName !== "" ||
+      wire.difficulty !== 0 ||
+      wire.modifiers.length ||
+      wire.exceptionalSuccessStakes !== "" ||
+      wire.successStakes !== "" ||
+      wire.failureStakes !== "" ||
+      wire.severeFailureStakes !== "" ||
+      wire.failureCampaignStatus !== "none")
+  ) {
     throw new ProtocolDecodeError(
       "check strings must be empty, difficulty 0, modifiers empty, and failureCampaignStatus none when decision=resolved",
       "decision",
@@ -518,17 +772,29 @@ export function decodeTurnDecision(input: unknown): TurnDecision {
   if (wire.decision === "resolved") {
     assertResolvedShape(wire);
     const automatic = automaticDecision(wire);
+    const effects = normalizeUnsafeCreatedEntityHints(wire.effects);
+    const threadAudit = decodeThreadAudit(wire);
+    const sceneState = decodeSceneState(wire);
     return TurnDecisionSchema.parse({
       kind: automatic?.kind ?? "resolved",
       narration: wire.narration,
       turnSummary: wire.summary,
-      operations: wire.effects.map(decodeEffect),
+      operations: effects.map(decodeEffect),
+      threadAudit,
+      ...(sceneState ? { sceneState } : {}),
       ...(automatic ? { reason: automatic.reason } : {}),
     });
   }
-  if (wire.narration !== "" || wire.summary !== "" || wire.effects.length) {
+  if (
+    wire.narration !== "" ||
+    wire.summary !== "" ||
+    wire.effects.length ||
+    wire.threadAudit.length ||
+    wire.sceneState.locationId !== "" ||
+    wire.sceneState.presentActorIds.length
+  ) {
     throw new ProtocolDecodeError(
-      "narration and summary must be empty and effects absent when a check is requested",
+      "narration, summary, effects, threadAudit, and sceneState must be empty when a check is requested",
       "decision",
     );
   }
@@ -552,9 +818,14 @@ export function decodeResolvedTurn(input: unknown): ResolvedTurn {
   if (wire.decision !== "resolved")
     throw new ProtocolDecodeError("resolution must return decision=resolved", "decision");
   assertResolvedShape(wire, false);
+  const effects = normalizeUnsafeCreatedEntityHints(wire.effects);
+  const threadAudit = decodeThreadAudit(wire);
+  const sceneState = decodeSceneState(wire);
   return ResolvedTurnSchema.parse({
     narration: wire.narration,
     turnSummary: wire.summary,
-    operations: wire.effects.map(decodeEffect),
+    operations: effects.map(decodeEffect),
+    threadAudit,
+    ...(sceneState ? { sceneState } : {}),
   });
 }

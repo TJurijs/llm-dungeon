@@ -51,6 +51,8 @@ export interface ParsedModelSpec {
 
 /** One blinded, non-mutating judge target keeps scores comparable across candidates. */
 export const DEFAULT_PLAYTEST_JUDGE_SPEC = "gemini:gemini-3.5-flash@direct";
+/** One capable, inexpensive player driver is shared by every model-driven package. */
+export const DEFAULT_PLAYTEST_PLAYER_SPEC = "gemini:gemini-3.6-flash@direct";
 
 /** Parses `provider:model[@route]`; model IDs may contain slashes. */
 export function modelSpec(value: string): ParsedModelSpec {
@@ -155,9 +157,33 @@ export interface PlaytestRunOptions {
   tuningVariable?: string | undefined;
 }
 
+export async function withProcessCancellation<T>(
+  runner: { cancel(): void },
+  operation: () => Promise<T>,
+): Promise<T> {
+  let cancellationRequested = false;
+  const cancel = (): void => {
+    if (cancellationRequested) return;
+    cancellationRequested = true;
+    runner.cancel();
+  };
+  // npm and its command shell may both forward the same terminal interrupt.
+  // Keep both listeners installed until the runner settles so a duplicate
+  // signal cannot restore Node's default immediate-exit behavior mid-cleanup.
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
+  try {
+    return await operation();
+  } finally {
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
+  }
+}
+
 export interface CalibrationOptions {
   target?: string | undefined;
   variants?: string[] | undefined;
+  truncationEvidence?: string[] | undefined;
   evidenceId?: string | undefined;
   maxCost: number;
   inputCost?: number | undefined;
@@ -271,6 +297,15 @@ export class PlaytestCli {
     const variants = options.variants?.length
       ? await readCalibrationVariants(options.variants, this.project.paths.root)
       : undefined;
+    const truncationEvidence = await Promise.all(
+      (options.truncationEvidence ?? []).map(async (reference) => {
+        const bundlePath = path.resolve(this.project.paths.root, reference);
+        return {
+          reference: path.relative(this.project.paths.root, bundlePath).split(path.sep).join("/"),
+          bundle: await readDiagnosticBundle(bundlePath),
+        };
+      }),
+    );
     if ((options.inputCost === undefined) !== (options.outputCost === undefined)) {
       throw new Error("Custom calibration pricing requires both --input-cost and --output-cost");
     }
@@ -282,6 +317,7 @@ export class PlaytestCli {
       route: selected.route,
       maxCostUsd: options.maxCost,
       ...(variants ? { variants } : {}),
+      ...(truncationEvidence.length > 0 ? { truncationEvidence } : {}),
       ...(options.evidenceId ? { evidenceId: options.evidenceId } : {}),
       ...(options.scenarioSeed ? { scenarioSeed: options.scenarioSeed } : {}),
       ...(options.language ? { language: options.language } : {}),
@@ -458,14 +494,16 @@ export class PlaytestCli {
   async resume(runId: string): Promise<void> {
     runId = PlaytestRunIdSchema.parse(runId);
     const renderer = new PlaytestProgressRenderer();
-    const result = await this.project.createPlaytestRunner(renderer.update).resume(runId);
+    const runner = this.project.createPlaytestRunner(renderer.update);
+    const result = await withProcessCancellation(runner, () => runner.resume(runId));
     p.outro(`Playtest ${result.manifest.status}. Report: ${result.reportPath}`);
   }
 
   async judge(runId: string): Promise<void> {
     runId = PlaytestRunIdSchema.parse(runId);
     const renderer = new PlaytestProgressRenderer();
-    const result = await this.project.createPlaytestRunner(renderer.update).judge(runId);
+    const runner = this.project.createPlaytestRunner(renderer.update);
+    const result = await withProcessCancellation(runner, () => runner.judge(runId));
     p.outro(`Judgment ${result.manifest.status}. Report: ${result.reportPath}`);
   }
 
@@ -488,13 +526,14 @@ export class PlaytestCli {
     if (profiles.length !== 1) {
       throw new Error("The deprecated evaluate alias accepts one fixed player profile per run");
     }
+    const defaultPlayer = modelSpec(DEFAULT_PLAYTEST_PLAYER_SPEC);
     const playerProvider = ProviderConfigSchema.shape.provider.parse(
-      options.playerProvider ?? "gemini",
+      options.playerProvider ?? defaultPlayer.config.provider,
     );
     const playerModel =
       options.playerModel ??
-      (playerProvider === "gemini"
-        ? "gemini-3.5-flash-lite"
+      (playerProvider === defaultPlayer.config.provider
+        ? defaultPlayer.config.model
         : playerProvider === "openrouter"
           ? "google/gemini-3.5-flash-lite"
           : undefined);
@@ -519,7 +558,8 @@ export class PlaytestCli {
     p.log.info(
       `${jobs} jobs; ${config.globalWorkerLimit} workers; ${config.latencyMode} latency; hard cost ceiling $${config.maxCostUsd.toFixed(2)}`,
     );
-    const result = await this.project.createPlaytestRunner(renderer.update).run(config);
+    const runner = this.project.createPlaytestRunner(renderer.update);
+    const result = await withProcessCancellation(runner, () => runner.run(config));
     p.outro(`Playtest ${result.manifest.status}. Report: ${result.reportPath}`);
   }
 
@@ -576,16 +616,12 @@ export class PlaytestCli {
     allowedProfiles: readonly ProfileId[],
     options: PlaytestRunOptions,
   ): Promise<PlaytestRunConfig["player"]> {
-    if (!options.player) {
-      throw new Error(
-        "This package requires --player provider:model[@route] and a frozen player profile",
-      );
-    }
     const profile = ProfileIdSchema.parse(options.playerProfile ?? allowedProfiles[0]);
     if (!allowedProfiles.includes(profile)) {
       throw new Error(`Player profile ${profile} is not supported by this package`);
     }
-    return { target: await this.target(modelSpec(options.player), options.modelPrice), profile };
+    const playerSpec = modelSpec(options.player ?? DEFAULT_PLAYTEST_PLAYER_SPEC);
+    return { target: await this.target(playerSpec, options.modelPrice), profile };
   }
 
   private async judgeConfiguration(

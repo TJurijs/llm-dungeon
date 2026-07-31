@@ -36,6 +36,7 @@ const GenerationPhaseSchema = z.enum(["setup", "decision", "locked_resolution", 
 const ReplayAttemptKindSchema = z.enum([
   "initial",
   "schema_repair",
+  "content_repair",
   "transient_retry",
   "domain_repair",
 ]);

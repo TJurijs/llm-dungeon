@@ -1,14 +1,21 @@
-import { assertDeterministicConsistency } from "./operation-consistency.js";
 import { mapOperationReferences, visitOperationReferences } from "./operation-references.js";
 import { rejectDomainChange } from "./validation-error.js";
+import type {
+  DomainViolation,
+  DomainViolationCode,
+  DomainViolationCollector,
+  DomainViolationDetail,
+} from "./violations.js";
 import {
   StateOperationSchema,
   type ChronicleEvent,
   type Entity,
+  type SceneState,
   type StateOperation,
   type Thread,
+  type ThreadAuditEntry,
 } from "../schemas.js";
-import { allocateGeneratedId, canonicalEntityName } from "./ids.js";
+import { allocateGeneratedId, allocateTurnScopedId, canonicalEntityName } from "./ids.js";
 
 function assignGeneratedIds(
   input: StateOperation[],
@@ -31,14 +38,16 @@ function assignGeneratedIds(
   for (const operation of input) {
     if (operation.type !== "create_entity") continue;
     if (entityHints.has(operation.entity.id)) {
-      rejectDomainChange(`Duplicate new entity reference hint ${operation.entity.id}`);
+      rejectDomainChange(
+        `Duplicate new entity reference hint ${operation.entity.id}`,
+        "duplicate_create_hint",
+      );
     }
     entityHints.set(
       operation.entity.id,
       allocateGeneratedId(
         namespaceForKind[operation.entity.kind],
         operation.entity.name,
-        turn,
         usedEntities,
       ),
     );
@@ -71,14 +80,14 @@ function assignGeneratedIds(
   const threadHints = new Map<string, string>();
   const generated = operations.map((operation): StateOperation => {
     if (operation.type === "add_fact") {
-      const factId = allocateGeneratedId("fact", operation.targetId, turn, usedFacts);
+      const factId = allocateTurnScopedId("fact", operation.targetId, turn, usedFacts);
       if (operation.factId !== "generated:auto" && !factHints.has(operation.factId)) {
         factHints.set(operation.factId, factId);
       }
       return { ...operation, factId };
     }
     if (operation.type === "supersede_fact") {
-      const replacementFactId = allocateGeneratedId("fact", operation.targetId, turn, usedFacts);
+      const replacementFactId = allocateTurnScopedId("fact", operation.targetId, turn, usedFacts);
       if (
         operation.replacementFactId !== "generated:auto" &&
         !factHints.has(operation.replacementFactId)
@@ -88,7 +97,7 @@ function assignGeneratedIds(
       return { ...operation, replacementFactId };
     }
     if (operation.type === "create_thread") {
-      const threadId = allocateGeneratedId("thread", operation.title, turn, usedThreads);
+      const threadId = allocateTurnScopedId("thread", operation.title, turn, usedThreads);
       if (operation.threadId !== "generated:auto" && !threadHints.has(operation.threadId)) {
         threadHints.set(operation.threadId, threadId);
       }
@@ -97,7 +106,7 @@ function assignGeneratedIds(
     if (operation.type === "record_major_event") {
       return {
         ...operation,
-        eventId: allocateGeneratedId("event", operation.text, turn, usedEvents),
+        eventId: allocateTurnScopedId("event", operation.text, turn, usedEvents),
       };
     }
     return structuredClone(operation);
@@ -317,15 +326,124 @@ function referenceSuffix(id: string): string {
   return separator === -1 ? id : id.slice(separator + 1);
 }
 
-function resolveReference(raw: string, candidates: Iterable<string>, type: string): string {
+/**
+ * Resolve one reference against the authoritative candidates.
+ *
+ * With a collector, an unresolvable reference is recorded and returned
+ * unchanged so the rest of the transaction can still be checked. Reference
+ * faults are the most common domain-correction cause, and a response naming
+ * three unknown IDs is only repairable if the correction names all three.
+ */
+interface ReferenceCodes {
+  readonly unknown: DomainViolationCode;
+  readonly ambiguous: DomainViolationCode;
+}
+
+const REFERENCE_CODES = {
+  entity: { unknown: "unknown_entity_reference", ambiguous: "ambiguous_entity_reference" },
+  location: { unknown: "unknown_location_reference", ambiguous: "ambiguous_location_reference" },
+  item: { unknown: "unknown_item_reference", ambiguous: "ambiguous_item_reference" },
+  thread: { unknown: "unknown_thread_reference", ambiguous: "ambiguous_thread_reference" },
+  fact: { unknown: "unknown_fact_reference", ambiguous: "ambiguous_fact_reference" },
+} as const satisfies Record<string, ReferenceCodes>;
+
+const GENERATED_ID_SUFFIX = /-turn-\d+$/u;
+
+/** Remove the turn marker the application appends to fact, thread, and event IDs. */
+function stripGeneratedSuffix(id: string): string {
+  return id.replace(GENERATED_ID_SUFFIX, "");
+}
+
+/**
+ * Describe how a reference missed, without repeating what it said.
+ *
+ * The rejected response is deliberately never persisted, so a redacted cause
+ * naming only the rule leaves no way to tell an application-generated-suffix
+ * slip apart from a wholly invented ID. The returned token comes from a closed
+ * vocabulary and carries no campaign content, so it is safe in telemetry.
+ */
+function classifyUnresolvedReference(
+  reference: string,
+  candidates: readonly string[],
+): DomainViolationDetail {
+  const stem = referenceSuffix(reference);
+  const namespace = reference.includes(":")
+    ? reference.slice(0, reference.indexOf(":"))
+    : undefined;
+  const parsed = candidates.map((candidate) => ({
+    namespace: candidate.slice(0, candidate.indexOf(":")),
+    stem: referenceSuffix(candidate),
+  }));
+
+  // Durable IDs are allocated with a "-turn-N" suffix, so a reference that is
+  // exactly one candidate minus that suffix is a recoverable near miss rather
+  // than an invention.
+  const suffixVariants = parsed.filter(
+    (entry) => entry.stem.replace(GENERATED_ID_SUFFIX, "") === stem && entry.stem !== stem,
+  );
+  if (suffixVariants.length === 1) return "generated_suffix_variant";
+
+  if (
+    stem.length >= 4 &&
+    parsed.some((entry) => entry.stem.startsWith(stem) || stem.startsWith(entry.stem))
+  ) {
+    return "stem_shared";
+  }
+
+  if (namespace !== undefined && !parsed.some((entry) => entry.namespace === namespace)) {
+    return "namespace_mismatch";
+  }
+  return "unrecognized";
+}
+
+function resolveReference(
+  raw: string,
+  candidates: Iterable<string>,
+  type: string,
+  codes: ReferenceCodes,
+  collector?: DomainViolationCollector,
+): string {
   const reference = raw.trim();
   const available = [...new Set(candidates)];
   if (available.includes(reference)) return reference;
-  if (reference.includes(":")) rejectDomainChange(`Unknown ${type} reference ${reference}`);
+
+  // Undo the application's own generated suffix rather than reject it.
+  //
+  // This is not similarity matching across the world: the candidate is an
+  // exact string match once a suffix this code appended is removed, so the
+  // resolution is the inverse of a transformation the application performed.
+  // The uniqueness guard keeps it deterministic — two records that collapse to
+  // the same stem stay unresolved and are reported as ambiguous below.
+  const suffixVariants = available.filter(
+    (candidate) => candidate !== reference && stripGeneratedSuffix(candidate) === reference,
+  );
+  if (suffixVariants.length === 1) return suffixVariants[0]!;
+
+  const unresolvable = (code: DomainViolationCode, message: string): string => {
+    const detail = classifyUnresolvedReference(reference, available);
+    if (!collector) rejectDomainChange(message, code, detail);
+    // The same missing ID can be reached through several reference roles. One
+    // report per ID keeps the correction about the record, not the roles.
+    if (!collector.isFailedSubject(reference)) {
+      collector.add(code, message, { subjects: [reference, raw], detail });
+    }
+    return raw;
+  };
+  if (reference.includes(":")) {
+    return unresolvable(codes.unknown, `Unknown ${type} reference ${reference}`);
+  }
   const matches = available.filter((candidate) => referenceSuffix(candidate) === reference);
   if (matches.length === 1) return matches[0]!;
-  if (!matches.length) rejectDomainChange(`Unknown ${type} reference ${reference}`);
-  return rejectDomainChange(
+  if (!matches.length) {
+    // An unqualified reference gets the same suffix inverse as a namespaced one.
+    const bareStemVariants = available.filter(
+      (candidate) => stripGeneratedSuffix(referenceSuffix(candidate)) === reference,
+    );
+    if (bareStemVariants.length === 1) return bareStemVariants[0]!;
+    return unresolvable(codes.unknown, `Unknown ${type} reference ${reference}`);
+  }
+  return unresolvable(
+    codes.ambiguous,
     `Ambiguous ${type} reference ${reference}: ${matches.sort().join(", ")}`,
   );
 }
@@ -338,6 +456,7 @@ function normalizeReferences(
   operations: StateOperation[],
   entities: Map<string, Entity>,
   threads: Thread[],
+  collector?: DomainViolationCollector,
 ): StateOperation[] {
   const entityKinds = new Map([...entities.values()].map((entity) => [entity.id, entity.kind]));
   for (const operation of operations) {
@@ -353,10 +472,14 @@ function normalizeReferences(
       .filter((operation) => operation.type === "create_thread")
       .map((operation) => operation.threadId),
   ];
-  const entity = (value: string) => resolveReference(value, entityIds, "entity");
-  const location = (value: string) => resolveReference(value, locationIds, "location");
-  const item = (value: string) => resolveReference(value, itemIds, "item");
-  const thread = (value: string) => resolveReference(value, threadIds, "thread");
+  const entity = (value: string) =>
+    resolveReference(value, entityIds, "entity", REFERENCE_CODES.entity, collector);
+  const location = (value: string) =>
+    resolveReference(value, locationIds, "location", REFERENCE_CODES.location, collector);
+  const item = (value: string) =>
+    resolveReference(value, itemIds, "item", REFERENCE_CODES.item, collector);
+  const thread = (value: string) =>
+    resolveReference(value, threadIds, "thread", REFERENCE_CODES.thread, collector);
   const normalized = operations.map((operation) =>
     mapOperationReferences(operation, (reference, role) => {
       switch (role.kind) {
@@ -390,7 +513,13 @@ function normalizeReferences(
               : [],
           ),
         ];
-        return resolveReference(reference, facts, `active fact on ${role.targetId}`);
+        return resolveReference(
+          reference,
+          facts,
+          `active fact on ${role.targetId}`,
+          REFERENCE_CODES.fact,
+          collector,
+        );
       }),
     ),
   );
@@ -533,10 +662,16 @@ function normalizeNoOpMovements(
   return StateOperationSchema.array().parse(retained);
 }
 
-function assertNoRepeatedAbstractInventoryCredit(
-  operations: StateOperation[],
-  previousOperations: StateOperation[],
-): void {
+export const REPEATED_ABSTRACT_CREDIT_CODE = "repeated_abstract_inventory_credit";
+
+/**
+ * An abstract credit that exactly repeats one already in the current ledger
+ * window re-applies the same receipt rather than recording a new one.
+ */
+export function collectRepeatedAbstractInventoryCredits(
+  operations: readonly StateOperation[],
+  previousOperations: readonly StateOperation[],
+): DomainViolation[] {
   const previousCredits = new Set(
     previousOperations.flatMap((operation) =>
       operation.type === "change_inventory" && operation.quantityDelta > 0
@@ -544,16 +679,117 @@ function assertNoRepeatedAbstractInventoryCredit(
         : [],
     ),
   );
+  const violations: DomainViolation[] = [];
   for (const operation of operations) {
     if (operation.type !== "change_inventory" || operation.quantityDelta <= 0) continue;
     const fingerprint = `${operation.ownerId}\u0000${operation.itemId}\u0000${operation.quantityDelta}`;
     if (previousCredits.has(fingerprint)) {
-      rejectDomainChange(
-        `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} in the latest gameplay/appeal operation-ledger window. ` +
+      violations.push({
+        code: REPEATED_ABSTRACT_CREDIT_CODE,
+        message:
+          `Repeated abstract inventory credit: ${operation.ownerId} already received +${operation.quantityDelta} ${operation.itemId} in the latest gameplay/appeal operation-ledger window. ` +
           "If this turn only handles, pockets, counts, or stows that existing inventory, remove the operation. A genuinely new receipt must be represented by a distinct current-turn source, preferably transfer_item from its owner.",
-      );
+      });
     }
   }
+  return violations;
+}
+
+/**
+ * Deterministic rewrites only. Admission checks live in the admit stage so one
+ * bounded correction can address a complete violation set.
+ */
+/**
+ * Turn the declared end-of-turn scene into movement.
+ *
+ * Narration routinely relocates actors while the effect list does not, and no
+ * check can read narration. A declared scene is part of the same structured
+ * transaction, so converting it into movement is deterministic normalization
+ * of the kind already applied to a created item's supplied owner. Presence is
+ * authoritative inbound only: an omitted actor states no destination, so their
+ * placement is left alone.
+ */
+function synthesizeDeclaredScene(
+  operations: StateOperation[],
+  playerId: string,
+  scene: SceneState,
+  collector?: DomainViolationCollector,
+): StateOperation[] {
+  const declaredMovers = [playerId, ...scene.presentActorIds].filter(
+    (id, index, all) => all.indexOf(id) === index,
+  );
+  const explicitDestinations = new Map(
+    operations.flatMap((operation) =>
+      operation.type === "move_entity" ? [[operation.targetId, operation.locationId] as const] : [],
+    ),
+  );
+  const synthesized: StateOperation[] = [];
+  for (const targetId of declaredMovers) {
+    const explicit = explicitDestinations.get(targetId);
+    if (explicit !== undefined) {
+      if (explicit !== scene.locationId) {
+        const message = `${targetId} is moved to ${explicit} but the declared end-of-turn scene places them at ${scene.locationId}`;
+        if (!collector) rejectDomainChange(message, "scene_movement_conflict");
+        collector.add("scene_movement_conflict", message, { subjects: [targetId] });
+      }
+      continue;
+    }
+    synthesized.push({ type: "move_entity", targetId, locationId: scene.locationId });
+  }
+  return synthesized;
+}
+
+/**
+ * The active threads an audit ordinal refers to, in the order context lists
+ * them. Both sides read the same array, so the numbering cannot drift.
+ */
+export function auditableThreads(threads: readonly Thread[]): Thread[] {
+  return threads.filter((thread) => thread.status === "active");
+}
+
+/**
+ * Turn declared verdicts into thread operations.
+ *
+ * Lifecycle is derived, never supplied, so a declaration and its operations
+ * cannot disagree. Resolution is by ordinal: the model never reproduces a
+ * generated ID, which removes the transcription errors that mandatory
+ * per-thread auditing would otherwise multiply.
+ */
+export function threadAuditOperations(
+  audit: readonly ThreadAuditEntry[],
+  threads: readonly Thread[],
+  collector?: DomainViolationCollector,
+): StateOperation[] {
+  const active = auditableThreads(threads);
+  const operations: StateOperation[] = [];
+  for (const entry of audit) {
+    const thread = active[entry.threadIndex - 1];
+    if (thread === undefined) {
+      const message = `Audited thread number ${entry.threadIndex} is outside the ${active.length} active thread(s) supplied in context`;
+      if (!collector) rejectDomainChange(message, "thread_audit_index_out_of_range");
+      collector.add("thread_audit_index_out_of_range", message);
+      continue;
+    }
+    if (entry.verdict === "unchanged") continue;
+    operations.push(
+      entry.verdict === "progressed"
+        ? StateOperationSchema.parse({
+            type: "update_thread",
+            threadId: thread.id,
+            summary: entry.text,
+            ...(entry.relatedEntityIds === undefined
+              ? {}
+              : { relatedEntityIds: entry.relatedEntityIds }),
+          })
+        : StateOperationSchema.parse({
+            type: "resolve_thread",
+            threadId: thread.id,
+            outcome: entry.text,
+            status: entry.verdict,
+          }),
+    );
+  }
+  return operations;
 }
 
 export function prepareOperations(
@@ -562,9 +798,31 @@ export function prepareOperations(
   entities: Map<string, Entity>,
   threads: Thread[],
   chronicle: ChronicleEvent[],
-  previousOperations: StateOperation[] = [],
+  collector?: DomainViolationCollector,
+  declarations: {
+    readonly playerId?: string;
+    readonly sceneState?: SceneState;
+    readonly threadAudit?: readonly ThreadAuditEntry[];
+  } = {},
 ): StateOperation[] {
-  const validated = StateOperationSchema.array().parse(operations);
+  const supplied = [
+    ...StateOperationSchema.array().parse(operations),
+    ...(declarations.threadAudit === undefined
+      ? []
+      : threadAuditOperations(declarations.threadAudit, threads, collector)),
+  ];
+  const validated =
+    declarations.sceneState && declarations.playerId
+      ? [
+          ...supplied,
+          ...synthesizeDeclaredScene(
+            supplied,
+            declarations.playerId,
+            declarations.sceneState,
+            collector,
+          ),
+        ]
+      : supplied;
   const nearMisses = normalizeNearMissCreatedEntityReferences(validated, entities);
   const coalesced = coalesceDuplicateLocationCreates(nearMisses, entities);
   const physical = normalizeCreatedItemOwnership(coalesced, entities);
@@ -572,10 +830,8 @@ export function prepareOperations(
     assignGeneratedIds(physical, turn, entities, threads, chronicle),
     entities,
     threads,
+    collector,
   );
   const dropped = normalizeDroppedItemTransfers(referenced);
-  const prepared = normalizeNoOpMovements(normalizeAtomicItemTransfers(dropped), entities);
-  assertNoRepeatedAbstractInventoryCredit(prepared, previousOperations);
-  assertDeterministicConsistency(prepared, entities);
-  return prepared;
+  return normalizeNoOpMovements(normalizeAtomicItemTransfers(dropped), entities);
 }

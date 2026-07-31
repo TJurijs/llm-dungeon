@@ -1,7 +1,8 @@
 import { structuredFailureDetails } from "./structured-error.js";
-import { classifyFailure } from "./failures.js";
+import { cancelledGenerationFailure, classifyFailure } from "./failures.js";
 import type { FailureKind } from "./failures.js";
-import { structuredRepairPrompt } from "../prompts.js";
+import { contentBlockRepairPrompt, structuredRepairPrompt } from "../prompts.js";
+import { assertStructuredInputBudget, resolveEffectiveOutputTokenBudget } from "../input-budget.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../types.js";
 
 export function combineUsage(
@@ -25,8 +26,10 @@ export function combineUsage(
 
 export interface StructuredGenerationOptions {
   maxRepairs?: number;
+  maxContentRepairs?: number;
   maxTransientRetries?: number;
   transientDelayMs?: number;
+  signal?: AbortSignal;
 }
 
 const REPAIRABLE = new Set<FailureKind>([
@@ -35,7 +38,30 @@ const REPAIRABLE = new Set<FailureKind>([
   "domain_decode_violation",
 ]);
 
-type AttemptKind = "initial" | "repair" | "transient_retry";
+type AttemptKind = "initial" | "repair" | "content_repair" | "transient_retry";
+
+async function waitForTransientRetry(
+  delayMs: number,
+  signal: AbortSignal | undefined,
+  provider: string,
+): Promise<void> {
+  if (signal === undefined) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return;
+  }
+  if (signal.aborted) throw cancelledGenerationFailure(provider);
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    }, delayMs);
+    const cancel = (): void => {
+      clearTimeout(timeout);
+      reject(cancelledGenerationFailure(provider));
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}
 
 export class StructuredClient {
   constructor(private readonly provider: LlmProvider) {}
@@ -45,9 +71,12 @@ export class StructuredClient {
     options: StructuredGenerationOptions = {},
   ): Promise<StructuredResult<T>> {
     const maxRepairs = options.maxRepairs ?? 1;
+    const maxContentRepairs = options.maxContentRepairs ?? 1;
     const maxTransientRetries = options.maxTransientRetries ?? 1;
     const delayMs = options.transientDelayMs ?? 150;
+    const signal = options.signal ?? request.signal;
     let repairs = 0;
+    let contentRepairs = 0;
     let transientRetries = 0;
     let prompt = request.prompt;
     let kind: AttemptKind = "initial";
@@ -59,7 +88,8 @@ export class StructuredClient {
 
     for (;;) {
       try {
-        const result = await this.provider.generateStructured({
+        if (signal?.aborted) throw cancelledGenerationFailure(this.provider.id);
+        const attemptRequest: StructuredRequest<T> = {
           ...request,
           schemaName: kind === "initial" ? request.schemaName : `${kind}_${request.schemaName}`,
           prompt,
@@ -68,16 +98,31 @@ export class StructuredClient {
           attemptKind:
             kind === "repair"
               ? "schema_repair"
-              : kind === "transient_retry"
-                ? "transient_retry"
-                : (request.attemptKind ?? "initial"),
+              : kind === "content_repair"
+                ? "content_repair"
+                : kind === "transient_retry"
+                  ? "transient_retry"
+                  : (request.attemptKind ?? "initial"),
           retryBackoffMs: activeRetryBackoffMs,
+          ...(signal === undefined ? {} : { signal }),
           ...(kind === "repair" ? { temperature: Math.min(request.temperature ?? 0.4, 0.4) } : {}),
+        };
+        assertStructuredInputBudget({
+          phase: attemptRequest.generationPhase ?? attemptRequest.schemaName,
+          system: attemptRequest.system,
+          prompt: attemptRequest.prompt,
+          outputTokenReserve: resolveEffectiveOutputTokenBudget(this.provider, attemptRequest),
+          ...(kind === "repair" || request.inputBudgetSections === undefined
+            ? {}
+            : { sections: request.inputBudgetSections }),
         });
+        const result = await this.provider.generateStructured(attemptRequest);
         const usage = combineUsage(accumulatedUsage, result.usage);
         return { ...result, ...(usage ? { usage } : {}) };
       } catch (error) {
         const classified = classifyFailure(error);
+        if (classified.kind === "cancelled") throw error;
+        if (signal?.aborted) throw cancelledGenerationFailure(this.provider.id);
         accumulatedUsage = combineUsage(accumulatedUsage, structuredFailureDetails(error)?.usage);
 
         if (REPAIRABLE.has(classified.kind) && repairs < maxRepairs) {
@@ -90,10 +135,21 @@ export class StructuredClient {
           }
           const failed = structuredFailureDetails(error);
           prompt = structuredRepairPrompt(
-            request.prompt,
+            prompt,
             failed?.parsedResponse ?? failed?.rawText ?? null,
             error,
           );
+          continue;
+        }
+
+        if (classified.kind === "content_block" && contentRepairs < maxContentRepairs) {
+          contentRepairs += 1;
+          kind = "content_repair";
+          activeRetryBackoffMs = 0;
+          // Content-safe rendering changes only the prompt suffix. It retains
+          // the current semantic phase (including repair when a repair output
+          // was blocked), so the frozen profile keeps the correct phase budget.
+          prompt = contentBlockRepairPrompt(prompt);
           continue;
         }
 
@@ -105,7 +161,7 @@ export class StructuredClient {
           transientRetries += 1;
           kind = "transient_retry";
           activeRetryBackoffMs = delayMs * transientRetries;
-          await new Promise((resolve) => setTimeout(resolve, activeRetryBackoffMs));
+          await waitForTransientRetry(activeRetryBackoffMs, signal, this.provider.id);
           continue;
         }
         throw error;

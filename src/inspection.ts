@@ -13,9 +13,7 @@ import type {
 
 const PLAYER_VISIBLE_FACT_SECTIONS = new Set(["established", "knowledge", "history"]);
 
-export function campaignStateRevision(
-  manifest: Pick<GameState, "turn" | "updatedAt">,
-): string {
+export function campaignStateRevision(manifest: Pick<GameState, "turn" | "updatedAt">): string {
   return `${manifest.turn}:${manifest.updatedAt}`;
 }
 
@@ -36,6 +34,24 @@ function playerVisibleFacts(entity: Entity): InspectionFacts {
     }
   }
   return { established, knowledge, history };
+}
+
+function subjectOwnedPlayerKnowledge(
+  player: Entity,
+  entities: Map<string, Entity>,
+): Pick<InspectionFacts, "knowledge" | "history"> {
+  const knowledge: string[] = [];
+  const history: string[] = [];
+  for (const entity of [...entities.values()].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )) {
+    for (const fact of entity.facts) {
+      if (fact.section !== "knowledge") continue;
+      const text = entity.id === player.id ? fact.text : `${entity.name}: ${fact.text}`;
+      (fact.active ? knowledge : history).push(text);
+    }
+  }
+  return { knowledge, history };
 }
 
 function inventoryItems(owner: Entity, entities: Map<string, Entity>): InspectionInventoryItem[] {
@@ -92,6 +108,8 @@ export function projectPlayerInspection(
   if (!player) throw new Error("Player entity is missing");
 
   if (view === "character") {
+    const ownFacts = playerVisibleFacts(player);
+    const knownBySubject = subjectOwnedPlayerKnowledge(player, entities);
     return {
       view,
       language,
@@ -101,7 +119,19 @@ export function projectPlayerInspection(
       traits: [...player.traits],
       conditions: [...player.conditions],
       inventory: inventoryItems(player, entities),
-      facts: playerVisibleFacts(player),
+      facts: {
+        established: ownFacts.established,
+        knowledge: knownBySubject.knowledge,
+        history: [
+          ...ownFacts.history.filter(
+            (text) =>
+              !player.facts.some(
+                (fact) => fact.section === "knowledge" && !fact.active && fact.text === text,
+              ),
+          ),
+          ...knownBySubject.history,
+        ],
+      },
       relationships: player.relationships.map((relationship) => {
         const target = entities.get(relationship.targetId);
         if (!target)
@@ -140,20 +170,8 @@ export function projectCampaignStateSnapshot(
 ): CampaignStateSnapshot {
   return {
     revision: campaignStateRevision(manifest),
-    character: projectPlayerInspection(
-      "character",
-      manifest.language,
-      manifest,
-      entities,
-      threads,
-    ),
-    location: projectPlayerInspection(
-      "location",
-      manifest.language,
-      manifest,
-      entities,
-      threads,
-    ),
+    character: projectPlayerInspection("character", manifest.language, manifest, entities, threads),
+    location: projectPlayerInspection("location", manifest.language, manifest, entities, threads),
     threads: projectPlayerInspection("threads", manifest.language, manifest, entities, threads),
   };
 }

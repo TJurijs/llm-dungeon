@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { GAMEPLAY_PROTOCOL_VERSION } from "./llm/gameplay-protocol.js";
 import path from "node:path";
 import { z } from "zod";
 import { LanguageCodeSchema, type LanguageCode } from "./language.js";
@@ -48,6 +49,12 @@ const CertificationAssessmentSchema = z
     language: LanguageCodeSchema,
     packageId: z.literal("certification-v1"),
     packageVersion: z.string().min(1).max(100),
+    /**
+     * Gameplay contract the run was certified against. Absent on records
+     * written before the protocol was tracked, which correctly retires them:
+     * a contract change means the certified behavior no longer exists.
+     */
+    protocolVersion: z.number().int().nonnegative().optional(),
     profileFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     technicalStatus: ModelTechnicalGameplayStatusSchema,
     recoveryCount: z.number().int().nonnegative().optional(),
@@ -106,6 +113,7 @@ const LEGACY_SHIPPED_CERTIFICATION_VERSION = "3";
 const ShippedCertificationSchema = z
   .object({
     packageVersion: z.string().min(1).default(LEGACY_SHIPPED_CERTIFICATION_VERSION),
+    protocolVersion: z.number().int().nonnegative().optional(),
     language: LanguageCodeSchema,
     technicalStatus: ModelTechnicalGameplayStatusSchema,
     recoveryCount: z.number().int().nonnegative(),
@@ -212,11 +220,13 @@ function mergeShippedAssessments(
       const shippedCertification = certifications.get(certification.language);
       const localCurrent =
         certification.packageVersion === String(CERTIFICATION_PACKAGE_VERSION) &&
+        certification.protocolVersion === GAMEPLAY_PROTOCOL_VERSION &&
         adapter?.status === "calibrated" &&
         adapter.adapterRevision === MODEL_EXECUTION_ADAPTER_REVISION &&
         adapter.profileFingerprint === certification.profileFingerprint;
       const shippedCurrent =
         shippedCertification?.packageVersion === String(CERTIFICATION_PACKAGE_VERSION) &&
+        shippedCertification.protocolVersion === GAMEPLAY_PROTOCOL_VERSION &&
         adapter?.status === "calibrated" &&
         adapter.adapterRevision === MODEL_EXECUTION_ADAPTER_REVISION &&
         adapter.profileFingerprint === shippedCertification.profileFingerprint;
@@ -358,6 +368,7 @@ export class ModelAssessmentCatalog {
       certification !== undefined &&
       adapterCurrent &&
       certification.packageVersion === String(CERTIFICATION_PACKAGE_VERSION) &&
+      certification.protocolVersion === GAMEPLAY_PROTOCOL_VERSION &&
       model?.adapter?.profileFingerprint === certification.profileFingerprint;
     const technicalStatus =
       certification === undefined
@@ -461,6 +472,7 @@ export class ModelAssessmentCatalog {
         language,
         packageId: input.packageId,
         packageVersion: input.packageVersion,
+        protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
         profileFingerprint: input.profileFingerprint,
         technicalStatus: input.technicalStatus,
         recoveryCount: input.recoveryCount ?? 0,

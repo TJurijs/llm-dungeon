@@ -2,7 +2,12 @@ import { GenerationFailure } from "../llm/failures.js";
 import { attachAttemptMetadata, attachStructuredFailure } from "../llm/structured-error.js";
 import type { ProviderConfig } from "../schemas.js";
 import type { FrozenModelExecutionProfile } from "../model-execution-profile.js";
-import type { LlmProvider, StructuredRequest, StructuredResult } from "../types.js";
+import type {
+  LlmProvider,
+  StructuredOutputBudgetRequest,
+  StructuredRequest,
+  StructuredResult,
+} from "../types.js";
 import {
   isRecord,
   jsonSchemaFor,
@@ -50,6 +55,11 @@ export class OpenRouterProvider implements LlmProvider {
     private readonly fetchImpl: FetchLike = fetch,
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
+
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     return generateChatCompletions(request, {
@@ -110,6 +120,11 @@ export class OpenAIProvider implements LlmProvider {
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
+
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const reasoningOptions = openAiReasoningOptions(this.model);
     return generateChatCompletions(request, {
@@ -142,6 +157,11 @@ export class XaiProvider implements LlmProvider {
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
 
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
+
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const reasoningOptions = xaiReasoningOptions(this.model);
     return generateChatCompletions(request, {
@@ -173,6 +193,11 @@ export class DeepSeekProvider implements LlmProvider {
     private readonly fetchImpl: FetchLike = fetch,
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
+
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const thinkingOptions = deepSeekThinkingOptions(this.model);
@@ -217,6 +242,11 @@ export class AnthropicProvider implements LlmProvider {
     private readonly fetchImpl: FetchLike = fetch,
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
+
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const exactSchema = request.jsonSchema ?? jsonSchemaFor(request.wireSchema ?? request.schema);
@@ -288,6 +318,7 @@ export class AnthropicProvider implements LlmProvider {
               },
             },
           }),
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
         },
         secrets,
         timeoutMs,
@@ -298,11 +329,24 @@ export class AnthropicProvider implements LlmProvider {
     }
 
     if (!response.ok) {
-      const failure = httpFailure("Anthropic", response.status, await readError(response, secrets));
+      let details: string;
+      try {
+        details = await readError(response, "Anthropic", secrets, request.signal);
+      } catch (error) {
+        attachAttemptMetadata(error, baseMetadata);
+        throw error;
+      }
+      const failure = httpFailure("Anthropic", response.status, details);
       attachAttemptMetadata(failure, baseMetadata);
       throw failure;
     }
-    const envelope = await readResponseObject(response, "Anthropic");
+    let envelope: Record<string, unknown>;
+    try {
+      envelope = await readResponseObject(response, "Anthropic", request.signal);
+    } catch (error) {
+      attachAttemptMetadata(error, baseMetadata);
+      throw error;
+    }
     const usage = anthropicUsage(envelope.usage);
     const stopReason = typeof envelope.stop_reason === "string" ? envelope.stop_reason : undefined;
     const responseMetadata = responseAttemptMetadata(
@@ -381,6 +425,24 @@ export class AnthropicProvider implements LlmProvider {
   }
 }
 
+const GEMINI_CONTENT_BLOCK_REASONS = new Set([
+  "SAFETY",
+  "RECITATION",
+  "BLOCKLIST",
+  "PROHIBITED_CONTENT",
+  "SPII",
+  "MODEL_ARMOR",
+  "JAILBREAK",
+  "ESCALATION",
+  "IMAGE_SAFETY",
+  "IMAGE_PROHIBITED_CONTENT",
+  "IMAGE_RECITATION",
+]);
+
+function geminiContentBlockReason(value: string | undefined): boolean {
+  return value !== undefined && GEMINI_CONTENT_BLOCK_REASONS.has(value.toUpperCase());
+}
+
 export class GeminiProvider implements LlmProvider {
   readonly id = "gemini";
 
@@ -392,6 +454,11 @@ export class GeminiProvider implements LlmProvider {
     private readonly fetchImpl: FetchLike = fetch,
     private readonly executionProfile?: FrozenModelExecutionProfile,
   ) {}
+
+  effectiveOutputTokenBudget(request: StructuredOutputBudgetRequest): number {
+    if (this.executionProfile) assertProfileTarget(this.executionProfile, this.id, this.model);
+    return configuredOutputBudget(request, this.defaults, this.executionProfile);
+  }
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const url = `${this.endpoint.replace(/\/$/, "")}/models/${encodeURIComponent(this.model)}:generateContent`;
@@ -464,6 +531,7 @@ export class GeminiProvider implements LlmProvider {
               },
             },
           }),
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
         },
         secrets,
         timeoutMs,
@@ -474,52 +542,73 @@ export class GeminiProvider implements LlmProvider {
     }
 
     if (!response.ok) {
-      const failure = httpFailure("Gemini", response.status, await readError(response, secrets));
+      let details: string;
+      try {
+        details = await readError(response, "Gemini", secrets, request.signal);
+      } catch (error) {
+        attachAttemptMetadata(error, baseMetadata);
+        throw error;
+      }
+      const failure = httpFailure("Gemini", response.status, details);
       attachAttemptMetadata(failure, baseMetadata);
       throw failure;
     }
-    const body = (await response.json()) as {
-      candidates?: Array<{
-        finishReason?: string;
-        content?: { parts?: Array<{ text?: string; thought?: boolean }> };
-      }>;
-      usageMetadata?: {
-        promptTokenCount?: number;
-        candidatesTokenCount?: number;
-        thoughtsTokenCount?: number;
-        totalTokenCount?: number;
-      };
-    };
-    const candidate = body.candidates?.[0];
+    let body: Record<string, unknown>;
+    try {
+      body = await readResponseObject(response, "Gemini", request.signal);
+    } catch (error) {
+      attachAttemptMetadata(error, baseMetadata);
+      throw error;
+    }
+    const candidates = Array.isArray(body.candidates) ? body.candidates : [];
+    const candidate = isRecord(candidates[0]) ? candidates[0] : undefined;
+    const candidateFinishReason =
+      typeof candidate?.finishReason === "string" ? candidate.finishReason : undefined;
+    const promptFeedback = isRecord(body.promptFeedback) ? body.promptFeedback : undefined;
+    const promptBlockReason =
+      typeof promptFeedback?.blockReason === "string" ? promptFeedback.blockReason : undefined;
+    const finishReason = candidateFinishReason ?? promptBlockReason;
     const responseMetadata = responseAttemptMetadata(
       baseMetadata,
-      candidate?.finishReason,
-      candidate?.finishReason === "MAX_TOKENS",
+      finishReason,
+      finishReason === "MAX_TOKENS",
     );
-    const content = candidate?.content?.parts
-      ?.filter((part) => part.thought !== true)
-      .map((part) => part.text ?? "")
+    const contentRecord = isRecord(candidate?.content) ? candidate.content : undefined;
+    const parts = Array.isArray(contentRecord?.parts) ? contentRecord.parts : [];
+    const content = parts
+      .filter((part): part is Record<string, unknown> => isRecord(part) && part.thought !== true)
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
       .join("");
-    const usageMetadata = body.usageMetadata;
+    const usageMetadata = isRecord(body.usageMetadata) ? body.usageMetadata : undefined;
+    const promptTokenCount = finiteNonnegativeInteger(usageMetadata?.promptTokenCount);
+    const candidatesTokenCount = finiteNonnegativeInteger(usageMetadata?.candidatesTokenCount);
+    const thoughtsTokenCount = finiteNonnegativeInteger(usageMetadata?.thoughtsTokenCount);
+    const totalTokenCount = finiteNonnegativeInteger(usageMetadata?.totalTokenCount);
     const billedOutputTokens =
-      usageMetadata?.candidatesTokenCount === undefined &&
-      usageMetadata?.thoughtsTokenCount === undefined
+      candidatesTokenCount === undefined && thoughtsTokenCount === undefined
         ? undefined
-        : (usageMetadata?.candidatesTokenCount ?? 0) + (usageMetadata?.thoughtsTokenCount ?? 0);
+        : (candidatesTokenCount ?? 0) + (thoughtsTokenCount ?? 0);
     const usage = usageMetadata
       ? {
-          ...(usageMetadata.promptTokenCount === undefined
-            ? {}
-            : { inputTokens: usageMetadata.promptTokenCount }),
+          ...(promptTokenCount === undefined ? {} : { inputTokens: promptTokenCount }),
           ...(billedOutputTokens === undefined ? {} : { outputTokens: billedOutputTokens }),
-          ...(usageMetadata.totalTokenCount === undefined
-            ? {}
-            : { totalTokens: usageMetadata.totalTokenCount }),
+          ...(totalTokenCount === undefined ? {} : { totalTokens: totalTokenCount }),
         }
       : undefined;
+    const promptWasBlocked =
+      promptBlockReason !== undefined &&
+      promptBlockReason.toUpperCase() !== "BLOCK_REASON_UNSPECIFIED";
+    if (geminiContentBlockReason(candidateFinishReason) || promptWasBlocked) {
+      throw structuredContentBlock(
+        "Gemini",
+        finishReason ?? "prompt blocked",
+        "",
+        usage,
+        responseMetadata,
+      );
+    }
     if (!content) {
-      const blocked = candidate?.finishReason && /SAFETY|BLOCK/i.test(candidate.finishReason);
-      if (candidate?.finishReason === "MAX_TOKENS") {
+      if (finishReason === "MAX_TOKENS") {
         throw malformedStructuredResponse(
           "",
           new Error("Gemini exhausted maxOutputTokens before returning JSON"),
@@ -530,8 +619,8 @@ export class GeminiProvider implements LlmProvider {
         );
       }
       const failure = new GenerationFailure(
-        blocked ? "content_block" : "provider",
-        `Gemini returned no message content (${candidate?.finishReason ?? "unknown reason"})`,
+        "provider",
+        `Gemini returned no message content (${finishReason ?? "unknown reason"})`,
         false,
       );
       attachAttemptMetadata(failure, responseMetadata);
@@ -545,7 +634,7 @@ export class GeminiProvider implements LlmProvider {
         content,
         error,
         usage,
-        candidate?.finishReason === "MAX_TOKENS",
+        finishReason === "MAX_TOKENS",
         "exact_schema",
         responseMetadata,
       );

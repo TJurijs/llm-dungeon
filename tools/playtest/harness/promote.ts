@@ -214,12 +214,10 @@ export async function promoteModelEvidence(
   const outputTokenFieldOverride = differs(profile.outputTokenField, baseline.outputTokenField)
     ? profile.outputTokenField
     : undefined;
-  const outputBudgetsOverride =
-    differs(profile.outputBudgets, baseline.outputBudgets)
-      ? profile.outputBudgets
-      : undefined;
-  const timeoutOverride =
-    differs(profile.timeout, baseline.timeout) ? profile.timeout : undefined;
+  const outputBudgetsOverride = differs(profile.outputBudgets, baseline.outputBudgets)
+    ? profile.outputBudgets
+    : undefined;
+  const timeoutOverride = differs(profile.timeout, baseline.timeout) ? profile.timeout : undefined;
 
   const profileEntry: ShippedProfileEvidence = {
     provider: target.provider,

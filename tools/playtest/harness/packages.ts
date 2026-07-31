@@ -137,9 +137,9 @@ Lantern Market and the Old Sluice are linked by a failing floodgate, a missing c
     {
       id: "item:customs-ledger",
       kind: "item",
-      name: "Missing customs ledger",
+      name: "Customs ledger",
       status: "hidden behind the Old Sluice inspection panel",
-      tags: ["evidence", "hidden"],
+      tags: ["evidence", "document"],
       description: "A water-resistant customs ledger bound in dark oilcloth.",
       secrets: ["Altered toll entries are written in Serik Vale's distinctive violet ink."],
     },
@@ -290,9 +290,9 @@ const CERTIFICATION_SETUP_RU: SetupResult = SetupResultSchema.parse({
     {
       id: "item:customs-ledger",
       kind: "item",
-      name: "Пропавшая таможенная книга",
+      name: "Таможенная книга",
       status: "спрятана за смотровой панелью Старого шлюза",
-      tags: ["evidence", "hidden"],
+      tags: ["evidence", "document"],
       description: "Водостойкая таможенная книга в тёмной промасленной обложке.",
       secrets: [
         "Изменённые записи о пошлинах сделаны характерными фиолетовыми чернилами Серика Вейла.",
@@ -373,10 +373,11 @@ function certificationContinuationSetup(language: LanguageCode): SetupResult {
       if (entity.id === "npc:mara-venn") {
         return {
           ...structuredClone(entity),
-          inventory: [
-            { entityId: "item:moonleaf-tonic", quantity: 1 },
-            { entityId: "item:silver-marks", quantity: 3 },
-          ],
+          // This is a fresh isolated fixture rather than a replayable snapshot
+          // of the terminal campaign. Keep only the player-owned stacks needed
+          // by turns 8–10 instead of inventing a second owner for the same
+          // durable item records.
+          inventory: [],
         };
       }
       return structuredClone(entity);
@@ -989,20 +990,20 @@ function diagnosticPackage(
 
 export const CAMPAIGN_AUTOPLAY_PACKAGE = diagnosticPackage({
   id: "campaign-autoplay-v1",
-  version: 1,
+  version: 2,
   purpose: "autoplay",
   description: localized(
-    "Resumable 25–200 turn model-driven campaign autoplay.",
-    "Возобновляемая модельная автоигра кампании на 25–200 ходов.",
+    "Resumable 15–200 turn model-driven campaign autoplay.",
+    "Возобновляемая модельная автоигра кампании на 15–200 ходов.",
   ),
   startingState: GENERATED_START,
   turnDriver: { kind: "model" },
-  turns: { minimum: 25, maximum: 200, default: 25 },
+  turns: { minimum: 15, maximum: 200, default: 25 },
   playerProfiles: PLAYER_PROFILES.map((profile) => profile.id),
   rollPolicy: { kind: "seeded_random", seedNamespace: "campaign-autoplay-v1" },
-  checkpoints: [{ turn: 25, assessCoverage: true, judge: true }],
+  checkpoints: [{ turn: 25, assessCoverage: true, judge: false }],
   coverageRequirements: GENERIC_COVERAGE,
-  judgePolicy: { kind: "checkpoints_and_final", rubricVersion: 1, everyTurns: 25 },
+  judgePolicy: { kind: "none" },
 });
 
 export const PERSISTENCE_SOAK_PACKAGE = diagnosticPackage({

@@ -1,10 +1,14 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS,
+  freezeModelExecutionProfile,
+  outputBudgetForPhase,
   type ModelExecutionProfileDraft,
+  type ModelGenerationPhase,
 } from "../src/model-execution-profile.js";
 import {
   CalibrationEvidenceStore,
@@ -13,8 +17,10 @@ import {
   runCalibrationVariants,
   runModelCalibrationProbe,
   selectCalibrationProfile,
+  validateCalibrationTruncationEvidence,
 } from "../tools/playtest/harness/calibration.js";
 import { GenerationFailure } from "../src/llm/failures.js";
+import { createDiagnosticBundle } from "../tools/playtest/harness/replay.js";
 import type {
   LlmProvider,
   ProviderAttemptMetadata,
@@ -103,6 +109,67 @@ class ExactCalibrationProvider implements LlmProvider {
       attemptMetadata,
     };
   }
+}
+
+const EvidenceSchema = z.object({ answer: z.string() }).strict();
+
+function truncationEvidence(
+  baseline: ModelExecutionProfileDraft,
+  phase: ModelGenerationPhase,
+  reference = `diagnostics/${phase}.json`,
+) {
+  const profile = freezeModelExecutionProfile({
+    ...baseline,
+    calibratedAt: "2026-07-19T00:00:00.000Z",
+    evidenceRef: "calibration:baseline",
+  });
+  const repairOfPhase = phase === "repair" ? ("setup" as const) : undefined;
+  const budget = outputBudgetForPhase(profile, phase, repairOfPhase);
+  return {
+    reference,
+    bundle: createDiagnosticBundle({
+      expectedPhase: phase,
+      profile,
+      stateSnapshot: "safe diagnostic state",
+      request: {
+        schemaName: `${phase}_truncation`,
+        schema: EvidenceSchema,
+        system: "Return JSON.",
+        prompt: "Return the exact object.",
+        maxOutputTokens: budget,
+        generationPhase: phase,
+        ...(repairOfPhase ? { repairOfPhase } : {}),
+        attemptKind: "initial",
+      },
+      responseMetadata: {
+        attemptMetadata: {
+          provider: profile.key.provider,
+          model: profile.key.model,
+          route: profile.key.route,
+          generationPhase: phase,
+          attemptKind: "initial",
+          profileFingerprint: profile.fingerprint,
+          structuredMode: "exact_schema",
+          schemaProjection: profile.structuredOutput.projection,
+          outputTokenField: profile.outputTokenField,
+          outputTokenBudget: budget,
+          retryBackoffMs: 0,
+          finishReason: "MAX_TOKENS",
+          truncated: true,
+        },
+      },
+      attribution: {
+        owner: "adapter_configuration",
+        lane: "candidate",
+        failureKind: "malformed_json",
+        reason: "output_budget_truncation",
+        candidateStatusImpact: "inconclusive",
+      },
+      failureKind: "malformed_json",
+      failureMessage: "Provider response was truncated before the root JSON value completed",
+      now: new Date("2026-07-20T00:00:00.000Z"),
+    }),
+  };
 }
 
 describe("model calibration", () => {
@@ -227,6 +294,105 @@ describe("model calibration", () => {
     });
     expect(results[1]?.profile.outputBudgets.setup).toBe(16_000);
     expect(results[1]?.probe.passed).toBe(true);
+  });
+
+  it("validates exact-baseline truncation diagnostics and rejects mismatched evidence", () => {
+    const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
+    const valid = truncationEvidence(base, "setup");
+    expect(validateCalibrationTruncationEvidence(base, [valid])).toEqual([
+      {
+        reference: "diagnostics/setup.json",
+        phase: "setup",
+        baselineProfileFingerprint: valid.bundle.executionProfile.fingerprint,
+        observedOutputTokenBudget: 8_000,
+        requiredOutputTokenBudget: 16_000,
+      },
+    ]);
+
+    const wrongTarget = structuredClone(valid);
+    wrongTarget.bundle.model = "another-model";
+    expect(() => validateCalibrationTruncationEvidence(base, [wrongTarget])).toThrow(
+      "expected gemini/gemini-3.5-flash via direct",
+    );
+
+    const wrongBudget = structuredClone(valid);
+    (
+      wrongBudget.bundle.responseMetadata.attemptMetadata as Record<string, unknown>
+    ).outputTokenBudget = 4_000;
+    expect(() => validateCalibrationTruncationEvidence(base, [wrongBudget])).toThrow(
+      "expected the full baseline phase budget 8000",
+    );
+
+    const wrongReason = structuredClone(valid);
+    wrongReason.bundle.failure.attribution.reason = "lane_model_output_failure";
+    expect(() => validateCalibrationTruncationEvidence(base, [wrongReason])).toThrow(
+      "not attributed to output-budget truncation",
+    );
+  });
+
+  it("applies multiple same-baseline evidence minima one variable at a time", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-evidence-calibration-"));
+    const store = new CalibrationEvidenceStore(root);
+    const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
+    const refs = validateCalibrationTruncationEvidence(base, [
+      truncationEvidence(base, "setup"),
+      truncationEvidence(base, "decision"),
+    ]);
+    const results = await runCalibrationVariants(
+      [base],
+      (profile) => new ExactCalibrationProvider(profile.key.provider, profile.key.model),
+      {
+        evidenceId: "production-truncations",
+        evidenceStore: store,
+        now: () => new Date("2026-07-21T00:00:00.000Z"),
+        truncationEvidenceRefs: refs,
+      },
+    );
+
+    expect(results.map((result) => result.changedVariable)).toEqual([
+      undefined,
+      "outputBudgets.setup",
+      "outputBudgets.decision",
+    ]);
+    expect(results.map((result) => result.profile.outputBudgets)).toEqual([
+      expect.objectContaining({ setup: 8_000, decision: 4_000 }),
+      expect.objectContaining({ setup: 16_000, decision: 4_000 }),
+      expect.objectContaining({ setup: 16_000, decision: 8_000 }),
+    ]);
+    expect(
+      selectCalibrationProfile(results, { truncationEvidenceRefs: refs })?.profile.outputBudgets,
+    ).toMatchObject({ setup: 16_000, decision: 8_000 });
+    const attempts = await store.readAttempts("production-truncations");
+    expect(attempts).toHaveLength(3);
+    expect(attempts.every((attempt) => attempt.truncationEvidenceRefs?.length === 2)).toBe(true);
+    const selection = JSON.parse(
+      await readFile(path.join(root, "production-truncations", "selection.json"), "utf8"),
+    ) as { truncationEvidenceRefs?: unknown[] };
+    expect(selection.truncationEvidenceRefs).toHaveLength(2);
+  });
+
+  it("does not select an evidence-escalated profile unless its full suite passes", async () => {
+    const base = DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS[0]!;
+    const refs = validateCalibrationTruncationEvidence(base, [truncationEvidence(base, "setup")]);
+    const results = await runCalibrationVariants(
+      [base],
+      (profile) =>
+        profile.outputBudgets.setup === 8_000
+          ? new ExactCalibrationProvider(profile.key.provider, profile.key.model)
+          : {
+              id: profile.key.provider,
+              model: profile.key.model,
+              async generateStructured() {
+                throw new GenerationFailure("provider", "escalated probe failed", false);
+              },
+            },
+      { truncationEvidenceRefs: refs },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.probe.passed).toBe(true);
+    expect(results[1]?.probe.passed).toBe(false);
+    expect(selectCalibrationProfile(results, { truncationEvidenceRefs: refs })).toBeUndefined();
   });
 
   it("rejects unsafe evidence IDs and unbounded or multi-variable variants before any calls", async () => {

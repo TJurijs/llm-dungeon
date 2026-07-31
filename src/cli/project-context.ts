@@ -291,7 +291,15 @@ export class CliProjectContext {
   }
 }
 
-export function createCliProjectContext(root: string): CliProjectContext {
-  loadProjectEnv(root);
+export interface CreateCliProjectContextOptions {
+  /** Maintenance commands opt out so their secret-free boundary never reads `.env`. */
+  loadEnvironment?: boolean;
+}
+
+export function createCliProjectContext(
+  root: string,
+  options: CreateCliProjectContextOptions = {},
+): CliProjectContext {
+  if (options.loadEnvironment !== false) loadProjectEnv(root);
   return new CliProjectContext(projectPaths(root), process.env);
 }

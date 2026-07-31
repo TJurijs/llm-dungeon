@@ -23,6 +23,7 @@ export const CandidateTechnicalSnapshotSchema = z
     candidateOwnedFailedTurns: z.number().int().nonnegative(),
     externalFailedTurns: z.number().int().nonnegative(),
     schemaRepairs: z.number().int().nonnegative(),
+    contentRepairs: z.number().int().nonnegative().default(0),
     transientRetries: z.number().int().nonnegative(),
     domainRepairs: z.number().int().nonnegative(),
     invariantFailures: z.number().int().nonnegative(),
@@ -59,10 +60,11 @@ function excludedFailures(calls: readonly PlaytestCallRecord[]): Record<string, 
 
 function candidateOwnedRepairCounts(calls: readonly PlaytestCallRecord[]): {
   schema: number;
+  content: number;
   transient: number;
   domain: number;
 } {
-  const counts = { schema: 0, transient: 0, domain: 0 };
+  const counts = { schema: 0, content: 0, transient: 0, domain: 0 };
   const ordered = calls
     .filter((call) => call.actor === "candidate")
     .toSorted((left, right) => left.sequence - right.sequence);
@@ -97,6 +99,7 @@ export function buildCandidateTechnicalSnapshot(
     (call) => !call.success && call.failureOwner === "candidate_model",
   ).length;
   const schemaRepairs = candidateCalls.filter((call) => call.repairKind === "schema").length;
+  const contentRepairs = candidateCalls.filter((call) => call.repairKind === "content").length;
   const transientRetries = candidateCalls.filter((call) => call.repairKind === "transient").length;
   const domainRepairs = candidateCalls.filter((call) => call.repairKind === "domain").length;
   const completedTurns = input.turns.filter((turn) => turn.status === "completed").length;
@@ -111,11 +114,12 @@ export function buildCandidateTechnicalSnapshot(
   ).length;
   const turnsRequired = input.playtestPackage.technicalRequirements.requireAllTurns
     ? input.playtestPackage.turns.default
-    : Math.min(input.playtestPackage.turns.default, input.turns.length);
+    : Math.min(input.playtestPackage.turns.default, Math.max(1, input.turns.length));
   const reasons: string[] = [];
   let status: TechnicalGameplayStatus;
   const candidateRepairs = candidateOwnedRepairCounts(candidateCalls);
-  const totalCandidateRecoveries = candidateRepairs.schema + candidateRepairs.domain;
+  const totalCandidateRecoveries =
+    candidateRepairs.schema + candidateRepairs.content + candidateRepairs.domain;
 
   if (input.adapterStatus === "no_compatible_profile") {
     status = "unsupported";
@@ -133,7 +137,7 @@ export function buildCandidateTechnicalSnapshot(
   } else {
     const requirements = input.playtestPackage.technicalRequirements;
     const incomplete =
-      requirements.requireAllTurns && completedTurns < turnsRequired && !input.legitimateTerminal;
+      completedTurns < turnsRequired && (!input.legitimateTerminal || completedTurns === 0);
     const invariantsFailed = requirements.requireInvariantPass && invariantFailures > 0;
     const exceededLimits = [
       candidateRepairs.schema > requirements.maxSchemaRepairs
@@ -187,6 +191,7 @@ export function buildCandidateTechnicalSnapshot(
     candidateOwnedFailedTurns,
     externalFailedTurns,
     schemaRepairs,
+    contentRepairs,
     transientRetries,
     domainRepairs,
     invariantFailures,

@@ -49,6 +49,7 @@ export interface CampaignExportCopy {
   readonly characterConcept: string;
   readonly worldStyle: string;
   readonly language: string;
+  readonly shortStory: string;
   readonly turnLog: string;
   readonly close: string;
   readonly status: string;

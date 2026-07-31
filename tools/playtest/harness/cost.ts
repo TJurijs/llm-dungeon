@@ -19,7 +19,7 @@ interface BudgetWaiter {
   reject: (error: PlaytestCostLimitError) => void;
 }
 
-/** One reservation-based cost authority shared by every candidate, player, and judge lane. */
+/** One reservation-based cost authority shared by every candidate, player, judge, and artifact lane. */
 export class PlaytestCostManager {
   private committed: number;
   private readonly reservations = new Map<symbol, number>();
@@ -37,6 +37,11 @@ export class PlaytestCostManager {
 
   get spentUsd(): number {
     return this.committed;
+  }
+
+  /** Conservative hard-cap exposure: settled spend plus every active reservation. */
+  get exposureUsd(): number {
+    return roundUsd(this.committed + this.reserved());
   }
 
   canCall(): boolean {

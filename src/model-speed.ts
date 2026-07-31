@@ -151,8 +151,7 @@ const MODEL_SPEED_ESTIMATES: Readonly<Record<string, ModelSpeedEstimate>> = {
     concurrency: 1,
     evidence: {
       source: "certification",
-      reference:
-        "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
+      reference: "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
       packageId: "certification-v1",
       packageVersion: "3",
       recordedAt: "2026-07-25T18:18:41.087Z",

@@ -18,11 +18,11 @@ describe("model assessment catalog", () => {
     await expect(
       catalog.effective({ provider: "gemini", model: "gemini-3.5-flash", route: "direct" }, "en"),
     ).resolves.toMatchObject({
-      adapterStatus: "calibrated",
-      technicalStatus: "clean",
+      adapterStatus: "uncalibrated",
+      technicalStatus: "inconclusive",
       recoveryCount: 0,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
     await expect(
       catalog.effective(
@@ -30,11 +30,11 @@ describe("model assessment catalog", () => {
         "ru",
       ),
     ).resolves.toMatchObject({
-      adapterStatus: "calibrated",
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 2,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      adapterStatus: "uncalibrated",
+      technicalStatus: "inconclusive",
+      recoveryCount: 0,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
   });
 
@@ -172,12 +172,13 @@ describe("model assessment catalog", () => {
     );
 
     await expect(catalog.effective(shippedTarget, "en")).resolves.toMatchObject({
-      adapterStatus: "calibrated",
+      // Shipped profiles were calibrated against the retired adapter revision.
+      adapterStatus: "uncalibrated",
       profileFingerprint: shipped!.adapter!.profileFingerprint,
-      technicalStatus: "clean",
+      technicalStatus: "inconclusive",
       recoveryCount: 0,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      qualityStatus: "unrated",
+      certificationCurrent: false,
     });
 
     await catalog.recordCalibration({
@@ -271,11 +272,14 @@ describe("model assessment catalog", () => {
       { provider: "gemini", model: "gemini-3.6-flash", route: "direct" },
       "ru",
     );
+    // The product-recommended default survives a lapsed certification; only
+    // the evidence-backed quality rating falls back until a fresh run.
     expect(effective.recommendation).toMatchObject({
       eligible: true,
       reasons: ["product_recommended_default"],
     });
-    expect(effective.qualityStatus).toBe("high");
+    expect(effective.qualityStatus).toBe("unrated");
+    expect(effective.certificationCurrent).toBe(false);
   });
 
   it("serializes concurrent in-process assessment writes without losing either route", async () => {

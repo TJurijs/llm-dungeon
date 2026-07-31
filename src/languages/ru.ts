@@ -36,6 +36,7 @@ export const RUSSIAN: LanguageDefinition = {
     characterConcept: "Концепция персонажа",
     worldStyle: "Мир и стиль мастера",
     language: "Язык",
+    shortStory: "История кампании",
     turnLog: "Журнал ходов",
     close: "Закрыть",
     status: "Статус",

@@ -2,17 +2,16 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BrowserChatHistory, chatEntryPresentation, generationTooltip } from "../web/chat-ui.js";
-import {
-  campaignRevision,
-  CampaignStateCache,
-  scheduleIdleTask,
-} from "../web/campaign-state.js";
+import { campaignRevision, CampaignStateCache, scheduleIdleTask } from "../web/campaign-state.js";
 import { traitParts } from "../web/inspection-ui.js";
 import { UI_COPY, localeCopy } from "../web/ui-copy.js";
 import {
+  budgetUsdText,
+  campaignBudgetText,
   campaignCostText,
   confirmationTitleValue,
   hasConfiguredProviderKey,
+  isAbortError,
   llmModelEntries,
   modelChoice,
   modelValue,
@@ -20,15 +19,19 @@ import {
 } from "../web/ui-utils.js";
 
 describe("web UI copy", () => {
+  it("recognizes browser aborts without treating ordinary failures as cancellation", () => {
+    expect(isAbortError({ name: "AbortError" })).toBe(true);
+    expect(isAbortError(new Error("network failed"))).toBe(false);
+    expect(isAbortError(null)).toBe(false);
+  });
+
   it("splits both durable and generated capability traits into a heading and description", () => {
     expect(traitParts("Signal Sense — Perceives hidden electronic signal patterns.")).toEqual({
       title: "Signal Sense",
       description: "Perceives hidden electronic signal patterns.",
     });
     expect(
-      traitParts(
-        "Капитан фронтира: Метод — личное руководство. Эффект — координация экипажа.",
-      ),
+      traitParts("Капитан фронтира: Метод — личное руководство. Эффект — координация экипажа."),
     ).toEqual({
       title: "Капитан фронтира",
       description: "Метод — личное руководство. Эффект — координация экипажа.",
@@ -109,6 +112,12 @@ describe("web UI copy", () => {
     expect(Object.keys(UI_COPY.ru).sort()).toEqual(Object.keys(UI_COPY.en).sort());
     expect(UI_COPY.en.traits).toBe("Traits & abilities");
     expect(UI_COPY.ru.traits).toBe("Черты и способности");
+    expect(UI_COPY.en.storyCostWarning).toContain("provider costs");
+    expect(UI_COPY.ru.storyCostWarning).toContain("расходы");
+    expect(UI_COPY.en.budgetLimitHint).toContain("provider billing limits");
+    expect(UI_COPY.ru.budgetPendingPausedHint.toLocaleLowerCase("ru")).toContain(
+      "незавершённый ход",
+    );
     expect(submitShortcut({ platform: "MacIntel" })).toBe("⌘ + Enter");
     expect(submitShortcut({ platform: "Win32" })).toBe("Ctrl + Enter");
     expect(UI_COPY.ru.submitHint).not.toContain("Ctrl/⌘");
@@ -123,6 +132,10 @@ describe("web UI copy", () => {
     expect(app).toContain('exportCampaign("markdown")');
     expect(app).toContain('exportCampaign("html")');
     expect(app).toContain("renderReadableMarkdown");
+    expect(app).toContain('api("campaignStory"');
+    expect(app).toContain('api("generateCampaignStory"');
+    expect(app).toContain('campaign.archived || campaign.status !== "active"');
+    expect(app).toContain("stopCompletedStoryRequest");
     expect(app.indexOf('campaignSetupSection(t("worldStyle")')).toBeLessThan(
       app.indexOf('campaignSetupSection(t("language")'),
     );
@@ -167,6 +180,16 @@ describe("web UI copy", () => {
     expect(html.slice(0, composerStart)).not.toContain('id="campaign-model"');
     expect(html).toContain('id="open-campaign-setup"');
     expect(html).toContain('id="campaign-setup-dialog"');
+    expect(html).toContain('id="open-campaign-budget"');
+    expect(html).toContain('id="campaign-budget-dialog"');
+    expect(html).toContain('id="campaign-budget-form"');
+    expect(html).toContain('id="campaign-budget-limit" type="number"');
+    expect(html).toContain('id="logical-turn-budget-limit" type="number"');
+    expect(html).toContain('id="campaign-budget-progress"');
+    expect(html).toContain('id="open-completed-story"');
+    expect(html).toContain('id="completed-story-dialog"');
+    expect(html).toContain('id="completed-story-cost-warning"');
+    expect(html).toContain('id="generate-completed-story"');
     expect(html).toContain('id="archive-campaign-dialog"');
     expect(html).toContain('<textarea id="delete-campaign-confirmation"');
     expect(html).toContain('data-i18n="globalDefaults"');
@@ -195,6 +218,22 @@ describe("web UI copy", () => {
     expect(html).toContain('data-view="character"');
     expect(html).toContain('data-view="location"');
     expect(html).toContain('data-view="threads"');
+  });
+
+  it("shows campaign spending and keeps archived limits operational", async () => {
+    const [app, styles] = await Promise.all([
+      readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
+    ]);
+    expect(app).toContain('api("campaignBudget"');
+    expect(app).toContain('api("updateCampaignBudget"');
+    expect(app).toContain("campaign.budget?.paused");
+    expect(app).toContain('error?.code === "campaign_budget_exhausted"');
+    expect(app).toContain("actionDrafts.set(campaignId, action)");
+    expect(app).toContain('$("#save-campaign-budget").hidden = false');
+    expect(app).toContain("readOnlyNotice.hidden = !campaign.archived");
+    expect(styles).toContain(".budget-summary");
+    expect(styles).toContain(".campaign-budget-progress");
   });
 
   it("routes an unconfigured clean install to provider Settings while keeping the normal campaign action", async () => {
@@ -317,7 +356,7 @@ describe("web UI copy", () => {
     expect(setupSettings).toContain('import { createTraitElement } from "./inspection-ui.js"');
     expect(setupSettings).toContain("(trait) => createTraitElement(trait)");
     expect(setupSettings).not.toContain("trait-chip");
-    expect(inspection).toContain('appendFacts(card, inspection.facts, t, true)');
+    expect(inspection).toContain("appendFacts(card, inspection.facts, t, true)");
     expect(inspection).toContain('element("details", "inspection-known-details")');
     expect(styles).toContain(".campaign-preview .narrative-text");
     expect(styles).toContain(".campaign-preview .trait-list");
@@ -361,12 +400,15 @@ describe("web UI copy", () => {
     expect(chat).toContain('if (presentation.type === "question") return labels.answerNoTurn;');
     expect(app).toContain("body.playerName.trim()");
     expect(app).toContain("deleteButton.dataset.deleteCampaignId = campaign.campaignId");
-    expect(app).toContain('method: "DELETE"');
+    expect(app).toContain('api("deleteCampaign"');
+    expect(app).toContain("if (!campaign.deleteRequiresTitleConfirmation)");
+    expect(app).toContain("void deleteArchivedCampaign(campaignId)");
+    expect(app).toContain("body: confirmedTitle === undefined ? {} : { title: confirmedTitle }");
     expect(app).toContain("event.target.value !== confirmationTitleValue(campaign.title)");
     expect(app).not.toContain('confirm(formatTemplate("deleteCampaignConfirm"');
     expect(app).not.toContain('confirm(t("archiveConfirm"))');
-    expect(app).toContain('campaignApiPath(campaignId, "setup")');
-    expect(app).toContain('campaignApiPath(campaign.campaignId, "title")');
+    expect(app).toContain('api("campaignSetup"');
+    expect(app).toContain('api("renameCampaign"');
     expect(app).toContain("editingCampaignId = campaign.campaignId");
     expect(app).toContain("const campaign = campaignById(editingCampaignId)");
     expect(app).toContain("cancelCampaignTitleEdit({ restoreFocus: false })");
@@ -375,6 +417,8 @@ describe("web UI copy", () => {
     expect(app).toContain('$("#archive-campaign-dialog").showModal()');
     expect(styles).toContain(".delete-campaign-button svg");
     expect(styles).toContain(".edit-campaign-title svg");
+    expect(app).toContain('tag.className = "campaign-item-tag"');
+    expect(styles).toContain(".campaign-item-tag {");
     expect(compactStyles).toContain("#delete-campaign-warning { white-space: pre-wrap;");
   });
 
@@ -460,9 +504,10 @@ describe("web UI copy", () => {
   });
 
   it("uses global world and tested model defaults for streamlined campaign setup", async () => {
-    const [app, setup, styles] = await Promise.all([
+    const [app, setup, apiClient, styles] = await Promise.all([
       readFile(path.join(process.cwd(), "web", "app.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "setup-settings.js"), "utf8"),
+      readFile(path.join(process.cwd(), "web", "api-client.js"), "utf8"),
       readFile(path.join(process.cwd(), "web", "styles.css"), "utf8"),
     ]);
     const compactSetup = setup.replace(/\s+/g, " ");
@@ -472,10 +517,10 @@ describe("web UI copy", () => {
     expect(setup).toContain('$("#setup-model")');
     expect(setup).toContain("config,");
     expect(setup).toContain("status.llm?.defaultModel");
-    expect(setup).toContain('"/api/llm/models/test"');
-    expect(setup).toContain('"/api/llm/models"');
-    expect(setup).toContain('"DELETE"');
-    expect(setup).toContain('"/api/llm/default"');
+    expect(setup).toContain('api("testModel"');
+    expect(setup).toContain('api("addModel"');
+    expect(setup).toContain('api("removeModel"');
+    expect(setup).toContain('api("setDefaultModel"');
     expect(setup).toContain("customModelProvider");
     expect(setup).toContain("createRemoveIcon");
     expect(setup).toContain('t("addModel")');
@@ -486,7 +531,7 @@ describe("web UI copy", () => {
     expect(setup).toContain("result.ok === false");
     expect(setup).not.toContain("estimated50TurnsUsd");
     expect(setup).not.toContain("pricingEstimateHint");
-    expect(setup).toContain('"/api/llm/keys"');
+    expect(setup).toContain('api("setSessionKey"');
     expect(setup).toContain("dataset.providerKeyForm");
     expect(setup).toContain("modelQualityCopy");
     expect(setup).toContain("modelSpeedCopy");
@@ -562,7 +607,19 @@ describe("web UI copy", () => {
     expect(setup).toContain(
       'runSetupOperation($("#generate-campaign"), t("working"), initializeSetup)',
     );
-    expect(setup).toContain("if (requestId !== setupGenerationSequence) return;");
+    expect(setup).toContain("if (requestId !== setupGenerationSequence) {");
+    expect(setup).toContain('api("detachDraft"');
+    expect(setup).toContain("const draftRequestId = crypto.randomUUID();");
+    expect(setup).toContain("control.disabled = control !== stopButton");
+    expect(setup).toContain("const detach = detachSetupDraft(active.requestId)");
+    expect(setup).toContain("active.controller.abort()");
+    expect(setup.indexOf("const detach = detachSetupDraft(active.requestId)")).toBeLessThan(
+      setup.indexOf("active.controller.abort()"),
+    );
+    expect(setup).toContain("signal: controller.signal");
+    expect(apiClient).toContain('operation === "detachDraft" ? { keepalive: true } : {}');
+    expect(setup).toContain('generate($("#generate-campaign"))');
+    expect(setup).toContain('window.addEventListener("pagehide"');
     expect(setup).toContain("withIconButtonBusy");
     expect(setup).not.toContain('applyLocale($("#setup-language").value)');
     expect(app).toContain('applyLocale(status.language ?? "en")');
@@ -578,7 +635,7 @@ describe("web UI copy", () => {
     expect(app).toContain("hasConfiguredProviderKey(status.llm, status.keyStatus)");
     expect(app).toContain('setupSettings.selectSettingsSection("providers")');
     expect(app).toContain("recommendedCard.open = true");
-    expect(app).toContain("body: JSON.stringify(choice)");
+    expect(app).toContain("body: choice");
     expect(app).toContain('option.hidden ? t("legacyModel") : t("needsTest")');
     expect(app).not.toContain("campaignModelConfig");
   });
@@ -591,6 +648,13 @@ describe("web UI copy", () => {
     expect(app).toContain("if (ensureFresh) statusRefreshQueued = true;");
     expect(app).toContain("} while (statusRefreshQueued);");
     expect(app).toContain('$(".main-pane").inert = mobile && (open || inspectionOpen);');
+    expect(app).not.toContain("setInterval(() => refreshStatus");
+    expect(app).toContain('window.addEventListener("focus"');
+    expect(app).toContain("const activeCampaignRequests = new Map();");
+    expect(app).toContain("const detachedCampaigns = new Set();");
+    expect(app).toContain("controller.abort()");
+    expect(UI_COPY.en.backgroundCallContinues).toContain("paid call");
+    expect(UI_COPY.ru.stopWaiting).toBe("Стоп");
   });
 
   it("isolates locally cached chat history by campaign and presents turn kinds safely", () => {
@@ -649,6 +713,28 @@ describe("web UI copy", () => {
         "Cost",
       ),
     ).toBe("Cost ≈$0.1250");
+
+    expect(budgetUsdText(10)).toBe("$10.00");
+    expect(budgetUsdText(0.004321, true)).toBe("≈$0.0043");
+    expect(
+      campaignBudgetText(
+        {
+          limits: { campaignUsd: 10, logicalTurnUsd: 0.5 },
+          spentUsd: 7.5,
+          reservedUsd: 0,
+          remainingUsd: 2.5,
+          basis: "mixed",
+          projectedNextTurnUsd: 0.1,
+          projected100TurnsUsd: 10,
+          warningThreshold: 0.75,
+          paused: false,
+          pauseReason: null,
+          settledAttempts: 12,
+          unsettledAttempts: 0,
+        },
+        "Spent",
+      ),
+    ).toBe("Spent ≈$7.50");
   });
 
   it("keeps every visible line of a persisted title typeable for deletion confirmation", () => {

@@ -20,6 +20,7 @@ export const PlaytestCallLaneSchema = z.enum([
   "candidate",
   "player_driver",
   "judge",
+  "artifact",
 ]);
 export type PlaytestCallLane = z.infer<typeof PlaytestCallLaneSchema>;
 

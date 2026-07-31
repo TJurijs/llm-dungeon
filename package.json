@@ -16,14 +16,16 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "start": "node dist/cli.js",
     "start:web": "node dist/cli.js web",
-    "typecheck": "npm run typecheck:app && npm run typecheck:playtest && npm run typecheck:web",
+    "typecheck": "npm run typecheck:app && npm run typecheck:playtest && npm run typecheck:web && npm run typecheck:browser-tests",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
     "typecheck:playtest": "tsc -p tools/playtest --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json",
+    "typecheck:browser-tests": "tsc -p browser-tests/tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:browser": "playwright test",
     "test:watch": "vitest"
   },
   "engines": {
@@ -36,6 +38,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/node": "^24.0.0",
     "eslint": "^10.7.0",
     "prettier": "^3.9.5",

@@ -1,3 +1,4 @@
+import { GAMEPLAY_PROTOCOL_VERSION } from "../src/llm/gameplay-protocol.js";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -111,54 +112,88 @@ describe("LLM provider definitions", () => {
 });
 
 describe("LLM model catalog persistence", () => {
-  it("keeps structurally compatible models current while the recommended Gemini flash remains default", async () => {
+  it("clears staleness once the recorded test matches the current conditions again", async () => {
     const root = await temporaryProject();
     const registry = catalog(root, {
       fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
-      protocolVersion: 1,
+      protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+    });
+    const selection = { provider: "gemini", model: "gemini-3.6-flash" } as const;
+    await registry.recordTestSuccess(selection, { testedLanguages: ["en"] });
+
+    // Force the persisted latch a real run can leave behind.
+    const file = path.join(root, "config", "llm-models.json");
+    const persisted = JSON.parse(await readFile(file, "utf8"));
+    const stored = persisted.models.find(
+      (entry: { model: string }) => entry.model === selection.model,
+    );
+    stored.state = "stale";
+    stored.enabled = false;
+    await writeFile(file, JSON.stringify(persisted), "utf8");
+
+    // Staleness describes the recorded test, so a current record recovers
+    // without another paid probe.
+    expect(model(await registry.snapshot(), selection)).toMatchObject({
+      state: "compatible",
+      enabled: true,
+    });
+    await expect(registry.assertAvailable(selection, "en")).resolves.toBeDefined();
+  });
+
+  it("retires shipped compatibility evidence when the gameplay protocol changes", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root, {
+      fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+      protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+    });
+
+    const snapshot = await registry.snapshot();
+
+    // Shipped evidence records the protocol it was probed against. A contract
+    // change makes it stale, and inventing a replacement result is forbidden,
+    // so every curated model awaits a fresh probe.
+    expect(model(snapshot, RECOMMENDED_MODEL_SELECTION)).toMatchObject({
+      candidate: true,
+      state: "untested",
+    });
+    expect(snapshot.defaultModel).toEqual(RECOMMENDED_MODEL_SELECTION);
+  });
+
+  it("keeps the curated lineup and default while every model awaits a fresh protocol probe", async () => {
+    const root = await temporaryProject();
+    const registry = catalog(root, {
+      fingerprint: PROVIDER_COMPATIBILITY_FINGERPRINT,
+      protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
     });
 
     const snapshot = await registry.snapshot();
     expect(snapshot.defaultModel).toEqual(RECOMMENDED_MODEL_SELECTION);
-    expect(model(snapshot, RECOMMENDED_MODEL_SELECTION)).toMatchObject({
-      candidate: true,
-      state: "compatible",
-      enabled: true,
-    });
-    await expect(
-      registry.assertAvailable(RECOMMENDED_MODEL_SELECTION, "en"),
-    ).resolves.toBeDefined();
-    const anthropicProvider = snapshot.providers.find((provider) => provider.id === "anthropic");
-    expect(anthropicProvider).toMatchObject({ public: true, recommended: false });
-    expect(
-      anthropicProvider?.models.find((candidate) => candidate.model === "claude-sonnet-5"),
-    ).toMatchObject({
-      candidate: true,
-      state: "compatible",
-      enabled: true,
-    });
-    const grok45 = { provider: "xai", model: "grok-4.5" } as const;
-    expect(model(snapshot, grok45)).toMatchObject({
-      candidate: true,
-      state: "compatible",
-      enabled: true,
-    });
-    await expect(registry.assertAvailable(grok45, "en")).resolves.toBeDefined();
-    const kimiK3 = { provider: "openrouter", model: "moonshotai/kimi-k3" } as const;
-    expect(model(snapshot, kimiK3)).toMatchObject({
-      candidate: true,
-      state: "compatible",
-      enabled: true,
-    });
-    await expect(registry.assertAvailable(kimiK3, "ru")).resolves.toBeDefined();
-    expect(model(snapshot, { provider: "xai", model: "grok-4.3" })).toBeUndefined();
-    for (const modelId of ["deepseek-v4-flash", "deepseek-v4-pro"]) {
-      expect(model(snapshot, { provider: "deepseek", model: modelId })).toMatchObject({
+
+    const curated = [
+      RECOMMENDED_MODEL_SELECTION,
+      { provider: "anthropic", model: "claude-sonnet-5" },
+      { provider: "xai", model: "grok-4.5" },
+      { provider: "openrouter", model: "moonshotai/kimi-k3" },
+      { provider: "deepseek", model: "deepseek-v4-flash" },
+      { provider: "deepseek", model: "deepseek-v4-pro" },
+    ] as const;
+    for (const selection of curated) {
+      expect(model(snapshot, selection), `${selection.model} stays curated`).toMatchObject({
         candidate: true,
-        state: "compatible",
-        enabled: true,
+        state: "untested",
       });
+      // An untested model is not usable: the app never claims a model works
+      // with a schema it was never probed against.
+      await expect(registry.assertAvailable(selection, "en")).rejects.toBeInstanceOf(
+        ModelUnavailableError,
+      );
     }
+
+    expect(snapshot.providers.find((provider) => provider.id === "anthropic")).toMatchObject({
+      public: true,
+      recommended: false,
+    });
+    expect(model(snapshot, { provider: "xai", model: "grok-4.3" })).toBeUndefined();
   });
 
   it("bootstraps the fixed versioned file and merges a legacy selection as untested", async () => {

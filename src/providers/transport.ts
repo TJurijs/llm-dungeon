@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { GenerationFailure } from "../llm/failures.js";
+import { cancelledGenerationFailure, GenerationFailure } from "../llm/failures.js";
 import { attachRequestDiagnostics } from "../llm/request-diagnostics.js";
 import { attachAttemptMetadata, attachStructuredFailure } from "../llm/structured-error.js";
 import {
@@ -15,6 +15,7 @@ import {
 import type {
   ProviderAttemptMetadata,
   ProviderRequestDiagnostics,
+  StructuredOutputBudgetRequest,
   StructuredRequest,
   StructuredResult,
 } from "../types.js";
@@ -125,8 +126,241 @@ export function redactSecrets(value: string, secrets: string[]): string {
   );
 }
 
-export async function readError(response: Response, secrets: string[] = []): Promise<string> {
-  const text = await response.text();
+type TransportAbortCause = "cancelled" | "timeout";
+
+interface ResponseDeadline {
+  provider: string;
+  timeoutMs: number | undefined;
+  requestSignal: AbortSignal | undefined;
+  timeoutController: AbortController | undefined;
+  signal: AbortSignal | undefined;
+  abortCause: TransportAbortCause | undefined;
+  timeout: ReturnType<typeof setTimeout> | undefined;
+  markCancelled: (() => void) | undefined;
+  sourcesReleased: boolean;
+}
+
+const responseDeadlines = new WeakMap<Response, ResponseDeadline>();
+
+function releaseDeadlineSources(deadline: ResponseDeadline): void {
+  if (deadline.sourcesReleased) return;
+  deadline.sourcesReleased = true;
+  if (deadline.timeout !== undefined) {
+    clearTimeout(deadline.timeout);
+    deadline.timeout = undefined;
+  }
+  if (deadline.markCancelled !== undefined) {
+    deadline.requestSignal?.removeEventListener("abort", deadline.markCancelled);
+    deadline.markCancelled = undefined;
+  }
+}
+
+function deadlineFailure(
+  deadline: ResponseDeadline,
+  provider = deadline.provider,
+): GenerationFailure | undefined {
+  if (
+    deadline.abortCause === "cancelled" ||
+    (deadline.requestSignal?.aborted && deadline.abortCause !== "timeout")
+  ) {
+    return cancelledGenerationFailure(provider);
+  }
+  if (deadline.abortCause === "timeout" || deadline.timeoutController?.signal.aborted) {
+    return new GenerationFailure(
+      "network",
+      `${provider} request timed out after ${deadline.timeoutMs}ms`,
+      true,
+    );
+  }
+  return undefined;
+}
+
+function createResponseDeadline(
+  provider: string,
+  requestSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): ResponseDeadline {
+  const timeoutController = timeoutMs === undefined ? undefined : new AbortController();
+  const deadline: ResponseDeadline = {
+    provider,
+    timeoutMs,
+    requestSignal,
+    timeoutController,
+    signal: undefined,
+    abortCause: undefined,
+    timeout: undefined,
+    markCancelled: undefined,
+    sourcesReleased: false,
+  };
+  if (requestSignal !== undefined) {
+    deadline.markCancelled = () => {
+      deadline.abortCause ??= "cancelled";
+      if (deadline.abortCause === "cancelled") releaseDeadlineSources(deadline);
+    };
+    requestSignal.addEventListener("abort", deadline.markCancelled, { once: true });
+  }
+  if (timeoutController !== undefined) {
+    deadline.timeout = setTimeout(() => {
+      deadline.timeout = undefined;
+      deadline.abortCause ??= "timeout";
+      if (deadline.abortCause !== "timeout") return;
+      releaseDeadlineSources(deadline);
+      timeoutController.abort();
+    }, timeoutMs);
+  }
+  deadline.signal =
+    timeoutController === undefined
+      ? requestSignal
+      : requestSignal === undefined
+        ? timeoutController.signal
+        : AbortSignal.any([requestSignal, timeoutController.signal]);
+  return deadline;
+}
+
+function cancelLateResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation !== undefined) void cancellation.catch(() => undefined);
+  } catch {
+    // A late response is already detached from its caller. Cleanup is best-effort.
+  }
+}
+
+async function waitForFetchResponse(
+  pending: Promise<Response>,
+  deadline: ResponseDeadline,
+): Promise<Response> {
+  const signal = deadline.signal;
+  if (signal === undefined) return pending;
+
+  const beforeWait = deadlineFailure(deadline);
+  if (beforeWait !== undefined) throw beforeWait;
+
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const finish = (operation: () => void): boolean => {
+      if (settled) return false;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      operation();
+      return true;
+    };
+    const abort = (): void => {
+      finish(() =>
+        reject(
+          deadlineFailure(deadline) ??
+            new GenerationFailure("network", `${deadline.provider} request was aborted`, true),
+        ),
+      );
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+    void pending
+      .then(
+        (response) => {
+          if (!finish(() => resolve(response))) cancelLateResponseBody(response);
+        },
+        (error: unknown) => {
+          finish(() => reject(error));
+        },
+      )
+      .catch(() => undefined);
+    if (signal.aborted) abort();
+  });
+}
+
+function bodySignal(
+  deadline: ResponseDeadline | undefined,
+  callerSignal: AbortSignal | undefined,
+): AbortSignal | undefined {
+  const transportSignal = deadline?.signal;
+  if (transportSignal === undefined) return callerSignal;
+  if (
+    callerSignal === undefined ||
+    transportSignal === callerSignal ||
+    callerSignal === deadline?.requestSignal
+  ) {
+    return transportSignal;
+  }
+  return AbortSignal.any([transportSignal, callerSignal]);
+}
+
+function bodyAbortFailure(
+  deadline: ResponseDeadline | undefined,
+  provider: string,
+  callerSignal: AbortSignal | undefined,
+): GenerationFailure | undefined {
+  const transportFailure = deadline === undefined ? undefined : deadlineFailure(deadline, provider);
+  if (transportFailure !== undefined) return transportFailure;
+  return callerSignal?.aborted ? cancelledGenerationFailure(provider) : undefined;
+}
+
+async function waitForResponseBody<T>(
+  response: Response,
+  provider: string,
+  callerSignal: AbortSignal | undefined,
+  read: () => Promise<T>,
+): Promise<T> {
+  const deadline = responseDeadlines.get(response);
+  try {
+    const beforeRead = bodyAbortFailure(deadline, provider, callerSignal);
+    if (beforeRead !== undefined) throw beforeRead;
+    const pending = read();
+    const signal = bodySignal(deadline, callerSignal);
+    const value =
+      signal === undefined
+        ? await pending
+        : await new Promise<T>((resolve, reject) => {
+            let settled = false;
+            const finish = (operation: () => void): void => {
+              if (settled) return;
+              settled = true;
+              signal.removeEventListener("abort", abort);
+              operation();
+            };
+            const abort = (): void => {
+              finish(() =>
+                reject(
+                  bodyAbortFailure(deadline, provider, callerSignal) ??
+                    new GenerationFailure("network", `${provider} response body was aborted`, true),
+                ),
+              );
+            };
+            signal.addEventListener("abort", abort, { once: true });
+            pending.then(
+              (body) => finish(() => resolve(body)),
+              (error: unknown) => finish(() => reject(error)),
+            );
+            if (signal.aborted) abort();
+          });
+    const afterRead = bodyAbortFailure(deadline, provider, callerSignal);
+    if (afterRead !== undefined) throw afterRead;
+    return value;
+  } catch (error) {
+    const abortFailure = bodyAbortFailure(deadline, provider, callerSignal);
+    if (abortFailure !== undefined) throw abortFailure;
+    throw error;
+  } finally {
+    responseDeadlines.delete(response);
+    if (deadline !== undefined) releaseDeadlineSources(deadline);
+  }
+}
+
+export async function readError(
+  response: Response,
+  provider: string,
+  secrets: string[] = [],
+  signal?: AbortSignal,
+): Promise<string> {
+  let text: string;
+  try {
+    text = await waitForResponseBody(response, provider, signal, () => response.text());
+  } catch (error) {
+    if (error instanceof GenerationFailure) throw error;
+    if (signal?.aborted) throw cancelledGenerationFailure(provider);
+    throw error;
+  }
+  if (signal?.aborted) throw cancelledGenerationFailure(provider);
   return (redactSecrets(text, secrets) || response.statusText).slice(0, 1000);
 }
 
@@ -138,26 +372,34 @@ export async function safeFetch(
   secrets: string[],
   timeoutMs?: number,
 ): Promise<Response> {
-  const controller = timeoutMs === undefined ? undefined : new AbortController();
-  const timeout =
-    controller === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs);
+  const requestSignal = init.signal ?? undefined;
+  if (requestSignal?.aborted) throw cancelledGenerationFailure(provider);
+
+  const deadline = createResponseDeadline(provider, requestSignal, timeoutMs);
+  let responseReturned = false;
   try {
-    return await fetchImpl(url, {
-      ...init,
-      ...(controller === undefined ? {} : { signal: controller.signal }),
-    });
+    const response = await waitForFetchResponse(
+      fetchImpl(url, {
+        ...init,
+        ...(deadline.signal === undefined ? {} : { signal: deadline.signal }),
+      }),
+      deadline,
+    );
+    const failure = deadlineFailure(deadline);
+    if (failure !== undefined) {
+      cancelLateResponseBody(response);
+      throw failure;
+    }
+    responseDeadlines.set(response, deadline);
+    responseReturned = true;
+    return response;
   } catch (error) {
     const detail = redactSecrets(error instanceof Error ? error.message : String(error), secrets);
-    if (controller?.signal.aborted) {
-      throw new GenerationFailure(
-        "network",
-        `${provider} request timed out after ${timeoutMs}ms`,
-        true,
-      );
-    }
+    const failure = deadlineFailure(deadline);
+    if (failure !== undefined) throw failure;
     throw new GenerationFailure("network", `${provider} network request failed: ${detail}`, true);
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    if (!responseReturned) releaseDeadlineSources(deadline);
   }
 }
 
@@ -304,7 +546,7 @@ export function assertProfileTarget(
 }
 
 export function requestedPhase(
-  request: StructuredRequest<unknown>,
+  request: StructuredOutputBudgetRequest,
   profile?: FrozenModelExecutionProfile,
 ): ModelGenerationPhase | undefined {
   if (request.generationPhase !== undefined) return request.generationPhase;
@@ -336,7 +578,7 @@ export function profileReasoningBody(
 }
 
 export function configuredOutputBudget(
-  request: StructuredRequest<unknown>,
+  request: StructuredOutputBudgetRequest,
   defaults: Pick<ProviderConfig, "maxOutputTokens">,
   profile?: FrozenModelExecutionProfile,
 ): number {
@@ -452,11 +694,14 @@ export function xaiChatUsage(value: unknown): StructuredResult<unknown>["usage"]
 export async function readResponseObject(
   response: Response,
   provider: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
-    value = await response.json();
-  } catch {
+    value = await waitForResponseBody(response, provider, signal, () => response.json());
+  } catch (error) {
+    if (error instanceof GenerationFailure) throw error;
+    if (signal?.aborted) throw cancelledGenerationFailure(provider);
     throw new GenerationFailure(
       "provider",
       `${provider} returned a non-JSON response envelope`,
@@ -464,6 +709,7 @@ export async function readResponseObject(
       response.status,
     );
   }
+  if (signal?.aborted) throw cancelledGenerationFailure(provider);
   if (!isRecord(value)) {
     throw new GenerationFailure(
       "provider",
@@ -480,6 +726,7 @@ export function structuredContentBlock(
   detail: string,
   rawText: string,
   usage: StructuredResult<unknown>["usage"],
+  attemptMetadata?: ProviderAttemptMetadata,
 ): GenerationFailure {
   const failure = new GenerationFailure(
     "content_block",
@@ -491,6 +738,7 @@ export function structuredContentBlock(
     parsedResponse: null,
     structuredMode: "exact_schema",
     ...(usage ? { usage } : {}),
+    ...(attemptMetadata ? { attemptMetadata } : {}),
   });
   return failure;
 }
@@ -618,6 +866,7 @@ export async function generateChatCompletions<T>(
           ...(clientRequestId === undefined ? {} : { "X-Client-Request-Id": clientRequestId }),
         },
         body: JSON.stringify(body),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
       },
       secrets,
       timeoutMs,
@@ -635,8 +884,12 @@ export async function generateChatCompletions<T>(
 
     try {
       if (!response.ok)
-        throw httpFailure(options.label, response.status, await readError(response, secrets));
-      const envelope = await readResponseObject(response, options.label);
+        throw httpFailure(
+          options.label,
+          response.status,
+          await readError(response, options.label, secrets, request.signal),
+        );
+      const envelope = await readResponseObject(response, options.label, request.signal);
       const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
       const choice = isRecord(choices[0]) ? choices[0] : undefined;
       const message = isRecord(choice?.message) ? choice.message : undefined;

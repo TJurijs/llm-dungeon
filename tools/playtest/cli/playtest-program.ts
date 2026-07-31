@@ -67,7 +67,10 @@ function addPlaytestRunOptions(command: Command, matrix = false): Command {
       "--scenario-seed <id>",
       "shipped scenario-seed id to start a generated package from (defaults/scenario-seeds/<id>)",
     )
-    .option("--player <target>", "fixed player-driver provider:model[@route]")
+    .option(
+      "--player <target>",
+      "fixed player-driver provider:model[@route]; defaults to Gemini 3.6 Flash direct",
+    )
     .option("--player-profile <profile>", "fixed simulated-player profile")
     .option(
       "--judge <target>",
@@ -126,28 +129,38 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
       collectValue,
       [],
     )
-    .option("--evidence-id <id>", "stable safe ID for retained calibration evidence")
     .option(
-      "--scenario-seed <id>",
-      "production setup seed used to reproduce setup-size truncation",
+      "--truncation-evidence <diagnostic-bundle>",
+      "production output-truncation diagnostic; repeat by phase",
+      collectValue,
+      [],
     )
+    .option("--evidence-id <id>", "stable safe ID for retained calibration evidence")
+    .option("--scenario-seed <id>", "production setup seed used to reproduce setup-size truncation")
     .option("--language <code>", "scenario-seed language", (value) =>
       LanguageCodeSchema.parse(value.toLowerCase()),
     )
     .option("--input-cost <usd>", "custom input USD per million tokens", positiveNumber)
     .option("--output-cost <usd>", "custom output USD per million tokens", positiveNumber)
     .requiredOption("--max-cost <usd>", "hard calibration cost ceiling", positiveNumber)
-    .action((options: CalibrationOptions & { variant?: string[] }) =>
-      playtest.calibrate({
-        target: options.target,
-        variants: options.variant,
-        evidenceId: options.evidenceId,
-        scenarioSeed: options.scenarioSeed,
-        language: options.language,
-        maxCost: options.maxCost,
-        inputCost: options.inputCost,
-        outputCost: options.outputCost,
-      }),
+    .action(
+      (
+        options: CalibrationOptions & {
+          variant?: string[];
+          truncationEvidence?: string[];
+        },
+      ) =>
+        playtest.calibrate({
+          target: options.target,
+          variants: options.variant,
+          truncationEvidence: options.truncationEvidence,
+          evidenceId: options.evidenceId,
+          scenarioSeed: options.scenarioSeed,
+          language: options.language,
+          maxCost: options.maxCost,
+          inputCost: options.inputCost,
+          outputCost: options.outputCost,
+        }),
     );
   playtests
     .command("probe")
@@ -209,8 +222,14 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .requiredOption("--max-cost <usd>", "hard estimated cost ceiling", positiveNumber)
     .option("--player-profiles <profiles>", "one fixed player profile", profilePool)
     .option("--judge <target>", "separate judge provider:model[@route]")
-    .option("--player-provider <provider>", "override simulated-player provider")
-    .option("--player-model <model>", "override simulated-player model")
+    .option(
+      "--player-provider <provider>",
+      "override the deprecated alias's default Gemini player provider",
+    )
+    .option(
+      "--player-model <model>",
+      "override the deprecated alias's default Gemini 3.6 Flash player model",
+    )
     .action((options: EvaluateOptions) => evaluation.run(options));
   program.command("evaluate:resume <runId>").action((runId: string) => evaluation.resume(runId));
   program

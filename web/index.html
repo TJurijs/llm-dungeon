@@ -122,6 +122,15 @@
             </div>
             <div class="chat-header-actions">
               <button
+                id="open-completed-story"
+                class="compact-button completed-story-button"
+                type="button"
+                data-i18n="shortStory"
+                hidden
+              >
+                Short story
+              </button>
+              <button
                 id="open-campaign-setup"
                 class="icon-button subtle-icon-button"
                 type="button"
@@ -153,6 +162,14 @@
               <details id="campaign-menu" class="campaign-menu">
                 <summary class="icon-button" aria-label="Campaign actions">•••</summary>
                 <div class="menu-popover">
+                  <button
+                    id="open-campaign-budget"
+                    type="button"
+                    disabled
+                    data-i18n="campaignBudget"
+                  >
+                    Spending limits
+                  </button>
                   <span class="menu-label" data-i18n="exportCampaign">Export campaign log</span>
                   <button
                     id="export-campaign-markdown"
@@ -162,12 +179,7 @@
                   >
                     Markdown (.md)
                   </button>
-                  <button
-                    id="export-campaign-html"
-                    type="button"
-                    disabled
-                    data-i18n="exportHtml"
-                  >
+                  <button id="export-campaign-html" type="button" disabled data-i18n="exportHtml">
                     Readable HTML (.html)
                   </button>
                   <button
@@ -626,6 +638,96 @@
     </div>
 
     <dialog
+      id="campaign-budget-dialog"
+      class="confirmation-dialog campaign-budget-dialog"
+      aria-labelledby="campaign-budget-dialog-title"
+    >
+      <form id="campaign-budget-form" method="dialog">
+        <header class="dialog-header">
+          <div>
+            <span class="eyebrow" data-i18n="campaign">Campaign</span>
+            <h2 id="campaign-budget-dialog-title" data-i18n="campaignBudgetDialog">
+              Campaign spending
+            </h2>
+          </div>
+          <button
+            id="close-campaign-budget-x"
+            class="icon-button"
+            type="button"
+            aria-label="Close campaign spending"
+          >
+            ×
+          </button>
+        </header>
+        <div class="confirmation-body campaign-budget-body">
+          <div id="campaign-budget-state" class="budget-state" role="status" hidden></div>
+          <dl class="budget-summary">
+            <div>
+              <dt data-i18n="budgetSpent">Spent</dt>
+              <dd id="budget-spent">—</dd>
+            </div>
+            <div>
+              <dt data-i18n="budgetRemaining">Remaining</dt>
+              <dd id="budget-remaining">—</dd>
+            </div>
+            <div>
+              <dt data-i18n="budgetNextTurn">Projected next turn</dt>
+              <dd id="budget-next-turn">—</dd>
+            </div>
+            <div>
+              <dt data-i18n="budgetHundredTurns">Projected 100 turns</dt>
+              <dd id="budget-hundred-turns">—</dd>
+            </div>
+          </dl>
+          <progress
+            id="campaign-budget-progress"
+            class="campaign-budget-progress"
+            max="1"
+            value="0"
+            hidden
+          ></progress>
+          <p id="campaign-budget-warning" class="inline-notice warning" hidden></p>
+          <p id="campaign-budget-basis" class="field-hint"></p>
+          <div class="budget-limit-fields">
+            <label for="campaign-budget-limit" data-i18n="budgetCampaignLimit">
+              Campaign limit (USD)
+            </label>
+            <input
+              id="campaign-budget-limit"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              inputmode="decimal"
+              autocomplete="off"
+            />
+            <label for="logical-turn-budget-limit" data-i18n="budgetTurnLimit">
+              Per-turn limit (USD)
+            </label>
+            <input
+              id="logical-turn-budget-limit"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              inputmode="decimal"
+              autocomplete="off"
+            />
+          </div>
+          <p class="field-hint" data-i18n="budgetLimitHint">
+            Leave a limit blank to disable that application limit; provider billing limits are
+            separate.
+          </p>
+          <p id="campaign-budget-read-only" class="inline-notice" hidden></p>
+        </div>
+        <div class="confirmation-actions">
+          <button id="close-campaign-budget" type="button" data-i18n="cancel">Cancel</button>
+          <button id="save-campaign-budget" class="primary" type="submit" data-i18n="budgetSave">
+            Save limits
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
       id="campaign-setup-dialog"
       class="confirmation-dialog campaign-setup-dialog"
       aria-labelledby="campaign-setup-dialog-title"
@@ -649,6 +751,34 @@
         class="confirmation-body campaign-setup-content"
         aria-live="polite"
       ></div>
+    </dialog>
+
+    <dialog
+      id="completed-story-dialog"
+      class="confirmation-dialog completed-story-dialog"
+      aria-labelledby="completed-story-dialog-title"
+    >
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow" data-i18n="finishedCampaign">Finished campaign</span>
+          <h2 id="completed-story-dialog-title" data-i18n="shortStory">Short story</h2>
+        </div>
+        <button
+          id="close-completed-story"
+          class="icon-button"
+          type="button"
+          aria-label="Close short story"
+        >
+          ×
+        </button>
+      </header>
+      <div class="confirmation-body completed-story-body">
+        <div id="completed-story-output" aria-live="polite"></div>
+        <p id="completed-story-cost-warning" class="completed-story-cost-warning" hidden></p>
+        <div class="completed-story-actions">
+          <button id="generate-completed-story" type="button" hidden>Generate story</button>
+        </div>
+      </div>
     </dialog>
 
     <dialog

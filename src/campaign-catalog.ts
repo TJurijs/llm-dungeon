@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -11,15 +11,21 @@ import {
   CampaignCreationIntentSchema,
   CatalogNewGameInputSchema,
   CampaignMetadataSchema,
+  CampaignProvenanceSchema,
+  CampaignSourceSchema,
   CampaignMigrationIntentSchema,
   campaignDirectoryName,
   campaignMetadataPath,
   campaignScopePath,
   readCampaignMetadata,
+  readCampaignProvenance,
   recoverCampaignCatalogMigration,
   writeCampaignMetadata,
+  writeCampaignProvenance,
   type CampaignCreationIntent,
   type CampaignMetadata,
+  type CampaignProvenance,
+  type CampaignSource,
   type CampaignMigrationIntent,
   type LegacyCampaignSource,
 } from "./persistence/campaign-catalog.js";
@@ -34,6 +40,10 @@ import {
   type ProviderConfig,
 } from "./schemas.js";
 import { StateStore, loadCampaignDirectory, validateInitialSetup } from "./store.js";
+import {
+  CampaignSpendingTransferPayloadSchema,
+  type CampaignSpendingTransferPayload,
+} from "./spending.js";
 import type { NewGameInput } from "./types.js";
 
 export interface CampaignCatalogOptions {
@@ -45,6 +55,10 @@ export interface CampaignCreationOptions {
   providerConfig?: ProviderConfig;
   /** Stable caller token that makes an accepted setup safe to retry. */
   requestId?: string;
+  /** Matching browser draft whose settled setup attempts become campaign spend. */
+  setupSpendingRequestId?: string;
+  /** Self-contained settled setup-attempt evidence for durable recovery. */
+  setupSpending?: CampaignSpendingTransferPayload;
 }
 
 export interface CampaignCatalogSummary {
@@ -58,6 +72,14 @@ export interface CampaignCatalogSummary {
   updatedAt: string;
   archived: boolean;
   archivedAt?: string;
+  tags: string[];
+  deleteRequiresTitleConfirmation: boolean;
+  providerConfig?: ProviderConfig;
+}
+
+export interface ArchivedCampaignPublicationOptions {
+  source: CampaignSource;
+  tags: string[];
   providerConfig?: ProviderConfig;
 }
 
@@ -71,7 +93,18 @@ interface CatalogEntry {
   scopeRoot: string;
   metadata: CampaignMetadata;
   manifest: GameState;
+  provenance?: CampaignProvenance;
 }
+
+const ArchivedPublicationIntentSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    campaignId: SafeIdSchema,
+    source: CampaignSourceSchema,
+    /** Optional only so an interrupted pre-transfer publication remains readable. */
+    spending: CampaignSpendingTransferPayloadSchema.optional(),
+  })
+  .strict();
 
 function optionalProviderConfig(config: ProviderConfig | undefined): {
   providerConfig?: ProviderConfig;
@@ -90,6 +123,8 @@ function summaryOf(entry: CatalogEntry): CampaignCatalogSummary {
     createdAt: entry.manifest.createdAt,
     updatedAt: entry.manifest.updatedAt,
     archived: entry.metadata.archived,
+    tags: [...(entry.provenance?.tags ?? [])],
+    deleteRequiresTitleConfirmation: entry.provenance?.source.kind !== "autoplay",
     ...optionalProviderConfig(entry.metadata.providerConfig),
   };
   return entry.metadata.archived
@@ -97,7 +132,10 @@ function summaryOf(entry: CatalogEntry): CampaignCatalogSummary {
     : { ...common, archived: false };
 }
 
-function validatedNewGameInput(input: unknown): NewGameInput {
+function validatedNewGameInput(
+  input: unknown,
+  options: { allowLegacyAdmissionPolicies?: boolean } = {},
+): NewGameInput {
   const parsed = CatalogNewGameInputSchema.parse(input);
   const openingGeneration =
     parsed.openingGeneration === undefined
@@ -110,7 +148,7 @@ function validatedNewGameInput(input: unknown): NewGameInput {
             : { usage: parsed.openingGeneration.usage }),
         };
   return {
-    setup: validateInitialSetup(parsed.setup),
+    setup: validateInitialSetup(parsed.setup, options),
     worldRules: parsed.worldRules,
     ...(parsed.language === undefined ? {} : { language: parsed.language }),
     ...(parsed.setupInput === undefined ? {} : { setupInput: parsed.setupInput }),
@@ -246,9 +284,23 @@ export class CampaignCatalog {
         );
       }
       await this.removeCreationStagingUnlocked(scopeRoot, intent.metadata.campaignId);
-      state = await store.createGame(validatedNewGameInput(intent.input));
+      state = await store.createGame(
+        validatedNewGameInput(intent.input, { allowLegacyAdmissionPolicies: true }),
+        { allowLegacyAdmissionPolicies: true },
+      );
     });
     if (state === undefined) throw new Error("Campaign creation recovery produced no state");
+    if (intent.setupSpending !== undefined) {
+      await store.withCampaignLock(() =>
+        store.spendingController().importTransferPayload(intent.setupSpending),
+      );
+    }
+    if (intent.setupSpendingRequestId !== undefined) {
+      await rm(path.join(this.dataRoot, ".drafts", `draft:${intent.setupSpendingRequestId}`), {
+        recursive: true,
+        force: true,
+      });
+    }
     await unlinkIfExists(this.creationIntentPath);
     return { campaignId: intent.metadata.campaignId, state, store };
   }
@@ -392,7 +444,13 @@ export class CampaignCatalog {
       );
     }
     const manifest = await this.storeFor(scopeRoot, metadata, metadata.archived).readManifest();
-    return { scopeRoot, metadata, manifest };
+    const provenance = await readCampaignProvenance(scopeRoot);
+    if (provenance !== undefined && provenance.campaignId !== validatedId) {
+      throw new Error(
+        `Campaign provenance belongs to ${provenance.campaignId}, not ${validatedId}`,
+      );
+    }
+    return { scopeRoot, metadata, manifest, ...(provenance ? { provenance } : {}) };
   }
 
   private async entriesUnlocked(): Promise<CatalogEntry[]> {
@@ -417,7 +475,18 @@ export class CampaignCatalog {
         throw new Error(`Duplicate catalog campaign ${metadata.campaignId}`);
       seen.add(metadata.campaignId);
       const manifest = await this.storeFor(scopeRoot, metadata, metadata.archived).readManifest();
-      entries.push({ scopeRoot, metadata, manifest });
+      const provenance = await readCampaignProvenance(scopeRoot);
+      if (provenance !== undefined && provenance.campaignId !== metadata.campaignId) {
+        throw new Error(
+          `Campaign ${metadata.campaignId} has provenance for ${provenance.campaignId}`,
+        );
+      }
+      entries.push({
+        scopeRoot,
+        metadata,
+        manifest,
+        ...(provenance ? { provenance } : {}),
+      });
     }
     return entries;
   }
@@ -489,6 +558,20 @@ export class CampaignCatalog {
       await this.ensureReadyUnlocked();
       const requestId =
         options.requestId === undefined ? undefined : z.string().uuid().parse(options.requestId);
+      const setupSpendingRequestId =
+        options.setupSpendingRequestId === undefined
+          ? undefined
+          : z.string().uuid().parse(options.setupSpendingRequestId);
+      if (setupSpendingRequestId !== undefined && setupSpendingRequestId !== requestId) {
+        throw new Error("Setup spending request must match the campaign creation request");
+      }
+      const setupSpending =
+        options.setupSpending === undefined
+          ? undefined
+          : CampaignSpendingTransferPayloadSchema.parse(options.setupSpending);
+      if (setupSpending !== undefined && setupSpendingRequestId === undefined) {
+        throw new Error("Setup spending evidence requires its matching browser draft request");
+      }
       const providerConfig = options.providerConfig ?? this.defaultProviderConfig;
       const normalizedProviderConfig =
         providerConfig === undefined ? undefined : ProviderConfigSchema.parse(providerConfig);
@@ -528,12 +611,179 @@ export class CampaignCatalog {
         schemaVersion: 1,
         metadata,
         input: validatedInput,
+        ...(setupSpendingRequestId === undefined ? {} : { setupSpendingRequestId }),
+        ...(setupSpending === undefined ? {} : { setupSpending }),
       });
       await atomicWriteJson(this.creationIntentPath, intent);
       const created = await this.recoverCreationUnlocked();
       if (created === undefined)
         throw new Error("Campaign creation intent disappeared before completion");
       return created;
+    });
+  }
+
+  /**
+   * Publish a read-only snapshot of a standard StateStore into the player
+   * catalog. The source remains isolated and authoritative for playtest
+   * telemetry; the catalog receives only a normal, inspectable campaign copy.
+   */
+  async publishArchivedCampaign(
+    sourceRoot: string,
+    rawOptions: ArchivedCampaignPublicationOptions,
+  ): Promise<CampaignCatalogSummary> {
+    return this.withCatalogLock(async () => {
+      await this.ensureReadyUnlocked();
+      const source = CampaignSourceSchema.parse(rawOptions.source);
+      const tags = z.array(z.string().trim().min(1).max(80)).max(8).parse(rawOptions.tags);
+      const providerConfig =
+        rawOptions.providerConfig === undefined
+          ? undefined
+          : ProviderConfigSchema.parse(rawOptions.providerConfig);
+
+      const existingBySource = (await this.entriesUnlocked()).find(
+        (entry) => JSON.stringify(entry.provenance?.source) === JSON.stringify(source),
+      );
+      if (existingBySource !== undefined) {
+        const completedStory = await new StateStore(sourceRoot).completedStory();
+        if (completedStory !== undefined) {
+          // A first publication may legitimately precede a failed optional
+          // story call. A later autoplay resume may attach only that immutable,
+          // revision-bound artifact to the already published read-only copy.
+          await this.storeFor(
+            existingBySource.scopeRoot,
+            existingBySource.metadata,
+            true,
+          ).saveCompletedStory(completedStory);
+        }
+        return summaryOf(existingBySource);
+      }
+
+      const sourceStore = new StateStore(sourceRoot);
+      return sourceStore.withCampaignLock(async () => {
+        await sourceStore.recoverCommit();
+        const sourceManifest = await sourceStore.readManifest();
+        const sourceSpending = await sourceStore.spendingController().exportTransferPayload();
+        const campaignId = SafeIdSchema.parse(sourceManifest.campaignId);
+        const scopeRoot = campaignScopePath(this.dataRoot, campaignId);
+        const targetCurrent = path.join(scopeRoot, "current");
+        const staging = path.join(scopeRoot, ".autoplay-publication");
+        const intentPath = path.join(scopeRoot, ".autoplay-publication.json");
+        const intended = {
+          schemaVersion: 1 as const,
+          campaignId,
+          source,
+          spending: sourceSpending,
+        };
+        const metadata = CampaignMetadataSchema.parse({
+          schemaVersion: 1,
+          campaignId,
+          registeredAt: new Date().toISOString(),
+          archived: true,
+          archivedAt: new Date().toISOString(),
+          ...optionalProviderConfig(providerConfig),
+        });
+        const provenance = CampaignProvenanceSchema.parse({
+          schemaVersion: 1,
+          campaignId,
+          tags,
+          source,
+        });
+
+        if (await pathExists(campaignMetadataPath(scopeRoot))) {
+          const existing = await readCampaignMetadata(scopeRoot);
+          if (existing.campaignId !== campaignId) {
+            throw new Error(`Autoplay publication conflicts with campaign ${campaignId}`);
+          }
+          const existingProvenance = await readCampaignProvenance(scopeRoot);
+          if (existingProvenance === undefined && (await pathExists(intentPath))) {
+            let existingIntent = ArchivedPublicationIntentSchema.parse(
+              JSON.parse(await readFile(intentPath, "utf8")),
+            );
+            const sameOwnership =
+              existingIntent.campaignId === intended.campaignId &&
+              JSON.stringify(existingIntent.source) === JSON.stringify(intended.source);
+            if (sameOwnership && existingIntent.spending === undefined) {
+              existingIntent = ArchivedPublicationIntentSchema.parse(intended);
+              await atomicWriteJson(intentPath, existingIntent);
+            }
+            if (JSON.stringify(existingIntent) === JSON.stringify(intended)) {
+              const targetStore = this.storeFor(scopeRoot, existing, true);
+              await targetStore.withCampaignLock(() =>
+                targetStore.spendingController().importTransferPayload(sourceSpending),
+              );
+              await writeCampaignProvenance(scopeRoot, provenance);
+              await unlinkIfExists(intentPath);
+              return summaryOf({
+                scopeRoot,
+                metadata: existing,
+                provenance,
+                manifest: await this.storeFor(scopeRoot, existing, true).readManifest(),
+              });
+            }
+          }
+          if (
+            existingProvenance === undefined ||
+            JSON.stringify(existingProvenance.source) !== JSON.stringify(source)
+          ) {
+            throw new Error(
+              `Autoplay publication provenance conflicts with campaign ${campaignId}`,
+            );
+          }
+          return summaryOf({
+            scopeRoot,
+            metadata: existing,
+            provenance: existingProvenance,
+            manifest: await this.storeFor(scopeRoot, existing, true).readManifest(),
+          });
+        }
+
+        await mkdir(scopeRoot, { recursive: true });
+        if (await pathExists(intentPath)) {
+          let existingIntent = ArchivedPublicationIntentSchema.parse(
+            JSON.parse(await readFile(intentPath, "utf8")),
+          );
+          const sameOwnership =
+            existingIntent.campaignId === intended.campaignId &&
+            JSON.stringify(existingIntent.source) === JSON.stringify(intended.source);
+          if (!sameOwnership) {
+            throw new Error(`Autoplay publication intent conflicts with campaign ${campaignId}`);
+          }
+          if (existingIntent.spending === undefined) {
+            existingIntent = ArchivedPublicationIntentSchema.parse(intended);
+            await atomicWriteJson(intentPath, existingIntent);
+          } else if (JSON.stringify(existingIntent.spending) !== JSON.stringify(sourceSpending)) {
+            throw new Error(`Autoplay publication spending conflicts with campaign ${campaignId}`);
+          }
+        } else {
+          if (await pathExists(targetCurrent)) {
+            throw new Error(
+              `Campaign ${campaignId} has data without autoplay publication ownership`,
+            );
+          }
+          await atomicWriteJson(intentPath, ArchivedPublicationIntentSchema.parse(intended));
+        }
+        if (await pathExists(targetCurrent)) {
+          const targetId = await campaignIdAt(targetCurrent);
+          if (targetId !== campaignId) {
+            throw new Error(`Autoplay publication target belongs to another campaign: ${targetId}`);
+          }
+          await loadCampaignDirectory(targetCurrent, campaignId);
+        } else {
+          await rm(staging, { recursive: true, force: true });
+          await cp(sourceStore.currentDir, staging, { recursive: true, errorOnExist: true });
+          await unlinkIfExists(path.join(staging, "pending-turn.json"));
+          await loadCampaignDirectory(staging, campaignId);
+          await rename(staging, targetCurrent);
+        }
+        const targetStore = this.storeFor(scopeRoot, metadata, true);
+        await targetStore.withCampaignLock(() =>
+          targetStore.spendingController().importTransferPayload(sourceSpending),
+        );
+        await writeCampaignMetadata(scopeRoot, metadata);
+        await writeCampaignProvenance(scopeRoot, provenance);
+        await unlinkIfExists(intentPath);
+        return summaryOf({ scopeRoot, metadata, provenance, manifest: sourceManifest });
+      });
     });
   }
 
@@ -606,7 +856,7 @@ export class CampaignCatalog {
     });
   }
 
-  async deleteArchivedCampaign(campaignId: string): Promise<void> {
+  async deleteArchivedCampaign(campaignId: string, confirmedTitle?: string): Promise<void> {
     await this.withCatalogLock(async () => {
       await this.ensureReadyUnlocked();
       const entry = await this.entryUnlocked(campaignId);
@@ -626,6 +876,11 @@ export class CampaignCatalog {
           throw new Error(
             `Campaign ${campaignId} manifest identity does not match its catalog entry`,
           );
+        }
+        const provenance = await readCampaignProvenance(entry.scopeRoot);
+        const isAutoplay = provenance?.source.kind === "autoplay";
+        if (!isAutoplay && confirmedTitle !== manifest.title) {
+          throw new Error("Campaign title confirmation does not match");
         }
         await rm(entry.scopeRoot, { recursive: true });
       });
@@ -663,6 +918,7 @@ export class CampaignCatalog {
             providerConfig,
           }),
         );
+        await store.spendingController().acknowledgePricingChange();
       });
       return providerConfig;
     });

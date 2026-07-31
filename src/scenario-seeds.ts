@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_LANGUAGE } from "./language.js";
+import { SetupRequirementsSchema, type SetupRequirements } from "./setup-requirements.js";
 
 /**
  * A shipped, read-only campaign seed. Each seed is a folder with one subfolder
@@ -119,6 +120,23 @@ export async function loadScenarioSeed(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       throw new Error(`Scenario seed was not found: ${id}`);
+    throw error;
+  }
+}
+
+/** Loads optional DM-only structural admission rules for a shipped seed. */
+export async function loadScenarioSeedSetupRequirements(
+  root: string,
+  id: string,
+): Promise<SetupRequirements | undefined> {
+  if (!SEED_ID_PATTERN.test(id)) throw new Error(`Invalid scenario seed id: ${id}`);
+  const requirementsPath = path.join(scenarioSeedsRoot(root), id, "requirements.json");
+  try {
+    return SetupRequirementsSchema.parse(
+      JSON.parse(await readFile(requirementsPath, "utf8")) as unknown,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
 }

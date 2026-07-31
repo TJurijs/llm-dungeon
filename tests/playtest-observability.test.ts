@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GenerationFailure } from "../src/llm/failures.js";
+import { createDomainRepairCause } from "../src/llm/domain-repair-cause.js";
+import { DomainValidationError } from "../src/domain/validation-error.js";
 import { attachStructuredFailure } from "../src/llm/structured-error.js";
 import {
   DEFAULT_MODEL_EXECUTION_PROFILE_DRAFTS,
@@ -19,10 +21,12 @@ import type {
 import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
 import {
   PlaytestCallRecordSchema,
+  PlaytestDomainRepairDiagnosticSchema,
   PlaytestManifestSchema,
   PlaytestRunConfigSchema,
   PlaytestTurnRecordSchema,
   type PlaytestCallRecord,
+  type PlaytestDomainRepairCause,
 } from "../tools/playtest/harness/contracts.js";
 import { PlaytestCostManager } from "../tools/playtest/harness/cost.js";
 import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../tools/playtest/harness/files.js";
@@ -30,6 +34,7 @@ import { TUNING_PACKAGE } from "../tools/playtest/harness/packages.js";
 import {
   collectPlaytestReport,
   comparePlaytestRuns,
+  rankDomainRepairCauses,
   renderPlaytestReport,
 } from "../tools/playtest/harness/report.js";
 import { readDiagnosticBundle } from "../tools/playtest/harness/replay.js";
@@ -143,6 +148,39 @@ function request(): StructuredRequest<{ answer: string }> {
 }
 
 describe("playtest call observability", () => {
+  it("exposes the frozen phase output budget through the telemetry wrapper", () => {
+    const profile = executionProfile();
+    const provider = new PlaytestTelemetryProvider({
+      actor: "candidate",
+      lane: "candidate",
+      jobId: "job-budget-delegation",
+      route: "direct",
+      profile,
+      base: {
+        id: profile.key.provider,
+        model: profile.key.model,
+        async generateStructured<T>(_request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+          throw new Error("not called");
+        },
+      },
+      price: { inputPerMillion: 2.5, outputPerMillion: 15 },
+      costManager: new PlaytestCostManager(5),
+      scheduler: new PlaytestProviderScheduler(1, { openai: 1 }),
+      callsPath: "/tmp/unused-playtest-budget-delegation.jsonl",
+      diagnosticsDir: "/tmp/unused-playtest-budget-delegation-diagnostics",
+    });
+
+    expect(provider.effectiveOutputTokenBudget({ generationPhase: "decision" })).toBe(
+      profile.outputBudgets.decision,
+    );
+    expect(
+      provider.effectiveOutputTokenBudget({
+        generationPhase: "decision",
+        outputTokenCeiling: 321,
+      }),
+    ).toBe(321);
+  });
+
   it("refuses a paid call when its calibrated timeout cannot fit the remaining active duration", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-telemetry-deadline-"));
     const profile = executionProfile();
@@ -235,6 +273,165 @@ describe("playtest call observability", () => {
     expect(costManager.spentUsd).toBe(0.012345);
   });
 
+  it("records content repair independently from schema and transient repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-telemetry-content-repair-"));
+    const profile = executionProfile();
+    const callsPath = path.join(root, "calls", "candidate.jsonl");
+    const provider = new PlaytestTelemetryProvider({
+      actor: "candidate",
+      lane: "candidate",
+      jobId: "job-content-repair",
+      route: "direct",
+      profile,
+      base: new SuccessfulProvider(profile),
+      price: { inputPerMillion: 2.5, outputPerMillion: 15 },
+      costManager: new PlaytestCostManager(5),
+      scheduler: new PlaytestProviderScheduler(1, { openai: 1 }),
+      callsPath,
+      diagnosticsDir: path.join(root, "diagnostics"),
+    });
+
+    await provider.generateStructured({
+      ...request(),
+      schemaName: "content_repair_observability_answer",
+      attemptKind: "content_repair",
+    });
+
+    const calls = PlaytestCallRecordSchema.array().parse(await readPlaytestJsonLines(callsPath));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      schemaName: "content_repair_observability_answer",
+      repairKind: "content",
+      success: true,
+    });
+  });
+
+  it("records a bounded local cause and prior call for a successful domain repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-telemetry-domain-repair-"));
+    const profile = executionProfile();
+    const campaignSecret = "thread:hidden-campaign-revelation";
+    const freeformCampaignSecret = "the quiet violet password";
+    const credential = "fixture-domain-repair-secret";
+    const provider = new PlaytestTelemetryProvider({
+      actor: "candidate",
+      lane: "candidate",
+      jobId: "job-domain-repair",
+      route: "direct",
+      profile,
+      base: new SuccessfulProvider(profile),
+      price: { inputPerMillion: 2.5, outputPerMillion: 15 },
+      costManager: new PlaytestCostManager(5),
+      scheduler: new PlaytestProviderScheduler(1, { openai: 1 }),
+      callsPath: path.join(root, "calls", "candidate.jsonl"),
+      diagnosticsDir: path.join(root, "diagnostics"),
+      secrets: [credential],
+    });
+
+    await provider.generateStructured(request());
+    await provider.generateStructured({
+      ...request(),
+      schemaName: "domain_repair_observability_answer",
+      generationPhase: "repair",
+      repairOfPhase: "decision",
+      attemptKind: "domain_repair",
+      // The real path carries declared rule codes, so redaction never depends
+      // on pattern-matching a message that embeds campaign text.
+      domainRepairCause: createDomainRepairCause(
+        new DomainValidationError(
+          `Unknown thread reference ${campaignSecret} near ${credential}\nplayer:hero does not have condition ${freeformCampaignSecret}`,
+          {
+            violations: [
+              {
+                code: "unknown_thread_reference",
+                message: `Unknown thread reference ${campaignSecret}`,
+              },
+              {
+                code: "durable_text_limit",
+                message: `Fact on player:hero mentions ${freeformCampaignSecret}`,
+              },
+            ],
+          },
+        ),
+        {
+          logicalOperationId: "11111111-1111-4111-8111-111111111111",
+          validationStage: "turn_commit",
+        },
+      ),
+    });
+
+    const callsPath = path.join(root, "calls", "candidate.jsonl");
+    const callsText = await readFile(callsPath, "utf8");
+    expect(callsText).not.toContain(campaignSecret);
+    expect(callsText).not.toContain(freeformCampaignSecret);
+    expect(callsText).not.toContain(credential);
+    const calls = PlaytestCallRecordSchema.array().parse(await readPlaytestJsonLines(callsPath));
+    expect(calls[1]).toMatchObject({
+      id: "job-domain-repair-candidate-00002",
+      phase: "repair",
+      repairKind: "domain",
+      success: true,
+      domainRepairCause: {
+        logicalOperationId: "11111111-1111-4111-8111-111111111111",
+        priorCallId: "job-domain-repair-candidate-00001",
+        sourcePhase: "decision",
+        validationStage: "turn_commit",
+        errorName: "Error",
+        errorMessage:
+          "Transaction validation failed:\n- [unknown_thread_reference] An effect referenced a thread that does not exist\n- [durable_text_limit] A generated durable record exceeded its new-write character limit",
+      },
+    });
+    expect(calls[1]?.domainRepairCause?.errorFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    // The same rules with different campaign text must group identically.
+    const sameRulesWithDifferentSecrets = createDomainRepairCause(
+      new DomainValidationError("a different rendering entirely", {
+        violations: [
+          { code: "unknown_thread_reference", message: "Unknown thread reference thread:other" },
+          { code: "durable_text_limit", message: "Fact on npc:other mentions another tiny secret" },
+        ],
+      }),
+      {
+        logicalOperationId: "11111111-1111-4111-8111-111111111111",
+        validationStage: "turn_commit",
+      },
+    );
+    expect(calls[1]?.domainRepairCause?.errorFingerprint).toBe(
+      sameRulesWithDifferentSecrets.errorFingerprint,
+    );
+
+    const diagnosticPath = path.join(
+      root,
+      "diagnostics",
+      "job-domain-repair-candidate-00002-domain-repair.json",
+    );
+    const diagnosticText = await readFile(diagnosticPath, "utf8");
+    expect(diagnosticText).not.toContain(campaignSecret);
+    expect(diagnosticText).not.toContain(freeformCampaignSecret);
+    expect(diagnosticText).not.toContain(credential);
+    const diagnostic = PlaytestDomainRepairDiagnosticSchema.parse(JSON.parse(diagnosticText));
+    expect(diagnostic).toMatchObject({
+      kind: "domain_repair",
+      callId: "job-domain-repair-candidate-00002",
+      schemaName: "domain_repair_observability_answer",
+      cause: calls[1]!.domainRepairCause,
+    });
+    expect(Object.keys(diagnostic).sort()).toEqual(
+      [
+        "actor",
+        "callId",
+        "cause",
+        "createdAt",
+        "executionProfileFingerprint",
+        "jobId",
+        "kind",
+        "model",
+        "provider",
+        "route",
+        "schemaName",
+        "schemaVersion",
+      ].sort(),
+    );
+  });
+
   it("attributes a failed judge call outside candidate evidence and writes a redacted replay bundle", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-telemetry-failure-"));
     const profile = executionProfile();
@@ -308,7 +505,7 @@ describe("playtest call observability", () => {
 
 function callRecord(input: {
   id: string;
-  actor: "candidate" | "player_driver" | "judge";
+  actor: "candidate" | "player_driver" | "judge" | "artifact";
   success: boolean;
   failureOwner?: "player_driver" | "judge";
   cost: number;
@@ -319,7 +516,8 @@ function callRecord(input: {
   providerDurationMs: number;
   retryBackoffMs: number;
   costBasis?: "reported_usage" | "reserved_estimate";
-  repairKind?: "schema" | "transient" | "domain";
+  repairKind?: "schema" | "content" | "transient" | "domain";
+  domainRepairCause?: PlaytestDomainRepairCause;
 }): PlaytestCallRecord {
   return PlaytestCallRecordSchema.parse({
     id: input.id,
@@ -331,7 +529,9 @@ function callRecord(input: {
         ? "decision"
         : input.actor === "player_driver"
           ? "player_action"
-          : "final_judge",
+          : input.actor === "judge"
+            ? "final_judge"
+            : "completed_story",
     sequence: 1,
     schemaName: `${input.actor}_schema`,
     provider: "openai",
@@ -351,6 +551,7 @@ function callRecord(input: {
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
     ...(input.repairKind ? { repairKind: input.repairKind } : {}),
+    ...(input.domainRepairCause ? { domainRepairCause: input.domainRepairCause } : {}),
     ...(input.failureOwner
       ? {
           failureKind: "malformed_json",
@@ -363,7 +564,7 @@ function callRecord(input: {
 }
 
 describe("playtest reporting", () => {
-  it("reports candidate, player-driver, and judge costs, failures, and latency separately", async () => {
+  it("reports candidate, player-driver, judge, and artifact costs separately", async () => {
     const runDir = await mkdtemp(path.join(tmpdir(), "llm-dungeon-report-"));
     const jobDir = path.join(runDir, "jobs", "job-001");
     await mkdir(jobDir, { recursive: true });
@@ -381,6 +582,7 @@ describe("playtest reporting", () => {
       package: { id: TUNING_PACKAGE.id, version: TUNING_PACKAGE.version },
       candidates: [candidate],
       languages: ["en"],
+      turns: 50,
       repetitions: 1,
       globalWorkerLimit: 1,
       latencyMode: "canonical",
@@ -405,7 +607,7 @@ describe("playtest reporting", () => {
       config,
       packageSnapshot: TUNING_PACKAGE,
       packageHash: "package-hash",
-      totalEstimatedCostUsd: 1.375,
+      totalEstimatedCostUsd: 1.625,
       jobs: [
         {
           id: "job-001",
@@ -420,6 +622,7 @@ describe("playtest reporting", () => {
           technicalStatus: "clean",
           qualityStatus: "unrated",
           stopReason: "turn_limit",
+          completedStory: { status: "completed", attempts: 1 },
         },
       ],
     });
@@ -438,6 +641,16 @@ describe("playtest reporting", () => {
         queueWaitMs: 5,
         providerDurationMs: 100,
         retryBackoffMs: 7,
+        repairKind: "domain",
+        domainRepairCause: {
+          logicalOperationId: "11111111-1111-4111-8111-111111111111",
+          priorCallId: "candidate-original",
+          sourcePhase: "decision",
+          validationStage: "turn_commit",
+          errorName: "TransactionValidationError",
+          errorMessage: "Unknown item reference [redacted]",
+          errorFingerprint: "d".repeat(64),
+        },
       }),
     );
     await appendPlaytestJsonLine(
@@ -472,6 +685,21 @@ describe("playtest reporting", () => {
         queueWaitMs: 700,
         providerDurationMs: 1_900,
         retryBackoffMs: 2_000,
+        repairKind: "content",
+      }),
+    );
+    await appendPlaytestJsonLine(
+      path.join(jobDir, "calls", "artifact.jsonl"),
+      callRecord({
+        id: "artifact-1",
+        actor: "artifact",
+        success: true,
+        cost: 0.25,
+        inputTokens: 70,
+        outputTokens: 80,
+        queueWaitMs: 9,
+        providerDurationMs: 400,
+        retryBackoffMs: 0,
       }),
     );
     await appendPlaytestJsonLine(
@@ -549,6 +777,8 @@ describe("playtest reporting", () => {
     expect(report.jobs[0]).toMatchObject({
       candidateLabel: "openai/gpt-5.6-terra via direct",
       technicalStatus: "unstable",
+      turnsRequested: 50,
+      turnsRequired: 1,
       turnsCompleted: 1,
       checks: 0,
       checkRate: 0,
@@ -570,6 +800,17 @@ describe("playtest reporting", () => {
         averageQueueWaitMs: 5,
         averageProviderDurationMs: 100,
         retryBackoffMs: 7,
+        repairs: { schema: 0, content: 0, transient: 0, domain: 1 },
+        domainRepairsWithoutCause: 0,
+        domainRepairCauses: [
+          {
+            callId: "candidate-1",
+            cause: {
+              priorCallId: "candidate-original",
+              errorMessage: "Unknown item reference [redacted]",
+            },
+          },
+        ],
       },
       playerDriver: {
         calls: 1,
@@ -577,7 +818,7 @@ describe("playtest reporting", () => {
         costUsd: 0.5,
         failedCallCostUsd: 0.5,
         failureOwners: { player_driver: 1 },
-        repairs: { schema: 0, transient: 1, domain: 0 },
+        repairs: { schema: 0, content: 0, transient: 1, domain: 0 },
         costBasisCounts: { reportedUsage: 0, reservedEstimate: 1 },
         averageCostWaitMs: 50,
         averageProviderDurationMs: 900,
@@ -588,8 +829,19 @@ describe("playtest reporting", () => {
         costUsd: 0.75,
         failedCallCostUsd: 0.75,
         failureOwners: { judge: 1 },
+        repairs: { schema: 0, content: 1, transient: 0, domain: 0 },
         averageCostWaitMs: 70,
         averageProviderDurationMs: 1_900,
+      },
+      completedStory: { status: "completed", attempts: 1 },
+      artifact: {
+        calls: 1,
+        failures: 0,
+        costUsd: 0.25,
+        inputTokens: 70,
+        outputTokens: 80,
+        averageQueueWaitMs: 9,
+        averageProviderDurationMs: 400,
       },
     });
     expect(report.jobs[0]!.candidate.costUsd).not.toBe(1.375);
@@ -599,12 +851,60 @@ describe("playtest reporting", () => {
       "Judge and player-driver behavior is excluded from candidate technical status.",
     );
     expect(markdown).toContain("openai/gpt-5.6-terra via direct");
+    expect(markdown).toContain("Turns: 1/50 requested; technical requirement: 1");
+    expect(markdown).not.toContain("Turns: 1/1;");
     expect(markdown).toContain("Candidate: 1 calls, 0 failures, $0.125000");
     expect(markdown).toContain("Player driver: 1 calls, 1 failures, $0.500000");
     expect(markdown).toContain("Independent judge: 1 calls, 1 failures, $0.750000");
+    expect(markdown).toContain("Completed-story artifact: **completed**");
+    expect(markdown).toContain("Post-completion artifact: 1 calls, 0 failures, $0.250000");
     expect(markdown).toContain("Failed coverage requirements: failed-fixture");
     expect(markdown).toContain("Player driver failure owners: player_driver=1");
+    expect(markdown).toContain(
+      "Independent judge repairs: schema=0, content=1, transient=0, domain=0",
+    );
+    expect(markdown).toContain(
+      "Candidate domain-repair causes: candidate-1 after candidate-original",
+    );
+    expect(markdown).toContain("TransactionValidationError: Unknown item reference [redacted]");
     expect(markdown).toContain(`${"f".repeat(64)} (1)`);
+
+    // Per-call listings show that recovery happened; the ranking shows which
+    // rule keeps forcing it, which is what makes repairs a fixable worklist.
+    expect(markdown).toContain("## Domain-repair causes (ranked)");
+    expect(markdown).toContain("| Rule | Repairs | Jobs | Example |");
+    expect(markdown).toContain("| `Unknown item reference [redacted]` | 1 | 1 |");
+  });
+
+  it("ranks a batched domain-repair cause by every rule it violated", () => {
+    const ranked = rankDomainRepairCauses([
+      {
+        jobId: "job-1",
+        candidate: {
+          domainRepairCauses: [
+            {
+              callId: "call-1",
+              cause: {
+                errorMessage:
+                  "Transaction validation failed:\n- [unknown_reference] Unknown entity reference [redacted]\n- [durable_text_limit] Generated durable record exceeds the 800-character durable-state limit",
+              },
+            },
+            {
+              callId: "call-2",
+              cause: { errorMessage: "Transaction validation failed:\n- [unknown_reference] x" },
+            },
+          ],
+        },
+        playerDriver: { domainRepairCauses: [] },
+        judge: { domainRepairCauses: [] },
+        artifact: { domainRepairCauses: [] },
+      },
+    ] as unknown as Parameters<typeof rankDomainRepairCauses>[0]);
+
+    expect(ranked.map((entry) => [entry.key, entry.count])).toEqual([
+      ["unknown_reference", 2],
+      ["durable_text_limit", 1],
+    ]);
   });
 
   it("compares aligned jobs only when persisted experiment controls match", async () => {

@@ -88,7 +88,6 @@ export function formatAutomaticOutcome(
 ): string {
   const outcome = AutomaticOutcomeSchema.parse(rawOutcome);
   const copy = languageDefinition(language).mechanics;
-  const label =
-    outcome.outcome === "success" ? copy.automaticSuccess : copy.automaticFailure;
+  const label = outcome.outcome === "success" ? copy.automaticSuccess : copy.automaticFailure;
   return `${label} — ${outcome.reason}`;
 }

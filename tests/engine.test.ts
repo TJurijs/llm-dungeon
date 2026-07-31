@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DungeonEngine } from "../src/engine.js";
+import { GenerationFailure } from "../src/llm/failures.js";
+import { NEW_CAMPAIGN_IMMUTABLE_CONTEXT_LIMITS } from "../src/store.js";
 import { playerTurnResponse } from "../src/web/presentation.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 import { createTestStore, setupFixture } from "./helpers.js";
@@ -16,6 +18,7 @@ class FakeProvider implements LlmProvider {
     this.calls += 1;
     this.requests.push(request as StructuredRequest<unknown>);
     const value = this.queue.shift();
+    if (value instanceof Error) throw value;
     return { data: request.schema.parse(value), provider: this.id, model: this.model };
   }
 }
@@ -52,6 +55,26 @@ describe("turn engine", () => {
       { phase: "setup", repairOf: undefined, kind: "initial" },
       { phase: "repair", repairOf: "setup", kind: "schema_repair" },
     ]);
+  });
+
+  it("repairs an empty optional setup location by requiring the key to be omitted", async () => {
+    const store = await createTestStore();
+    const invalid = structuredClone(setupFixture);
+    invalid.entities.find((entity) => entity.id === "location:crooked-crown")!.location = "";
+    const provider = new FakeProvider([invalid, setupFixture]);
+
+    await new DungeonEngine(store, provider).generateSetup({
+      worldRules: "Classic fantasy.",
+      premise: "A tavern opening.",
+      character: "A scout.",
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[1]?.schemaName).toBe("repair_campaign_setup");
+    expect(provider.requests[1]?.prompt).toContain("remove that entire optional key");
+    expect(provider.requests[1]?.prompt).toContain(
+      'Never use "" or null as an optional-reference placeholder',
+    );
   });
 
   it("instructs setup generation to produce Russian player-facing content", async () => {
@@ -100,6 +123,56 @@ describe("turn engine", () => {
     expect(provider.calls).toBe(2);
   });
 
+  it("schema-repairs an oversized setup produced by the one domain correction", async () => {
+    const store = await createTestStore();
+    const danglingInventory = structuredClone(setupFixture);
+    danglingInventory.player.inventory.push(
+      { entityId: "item:omitted-rope", quantity: 1 },
+      { entityId: "item:omitted-rations", quantity: 1 },
+    );
+    const oversizedCorrection = structuredClone(setupFixture);
+    oversizedCorrection.scenarioMarkdown = "s".repeat(
+      NEW_CAMPAIGN_IMMUTABLE_CONTEXT_LIMITS.scenario + 1,
+    );
+    const provider = new FakeProvider([danglingInventory, oversizedCorrection, setupFixture]);
+    const input = {
+      worldRules: "Classic fantasy.",
+      premise: "A tavern opening.",
+      character: "A scout.",
+    };
+    const engine = new DungeonEngine(store, provider);
+
+    const setup = await engine.generateSetup(input);
+
+    expect(provider.requests.map((request) => request.schemaName)).toEqual([
+      "campaign_setup",
+      "domain_repair_campaign_setup",
+      "repair_domain_repair_campaign_setup",
+    ]);
+    expect(provider.requests.map((request) => request.attemptKind)).toEqual([
+      "initial",
+      "domain_repair",
+      "schema_repair",
+    ]);
+    expect(provider.requests[1]?.prompt).toContain(
+      "Initial inventory item item:omitted-rope does not exist",
+    );
+    expect(provider.requests[2]?.prompt).toContain(
+      `Generated campaign scenario requires ${(
+        NEW_CAMPAIGN_IMMUTABLE_CONTEXT_LIMITS.scenario + 1
+      ).toLocaleString("en-US")} conservative context units`,
+    );
+    expect(setup.scenarioMarkdown).toBe(setupFixture.scenarioMarkdown);
+
+    await engine.replaceGame({
+      setup,
+      worldRules: input.worldRules,
+      language: "en",
+      setupInput: { premise: input.premise, character: input.character },
+    });
+    expect((await store.load()).manifest.title).toBe(setupFixture.campaignTitle);
+  });
+
   it("corrects an initial location that contains itself", async () => {
     const store = await createTestStore();
     const invalid = structuredClone(setupFixture);
@@ -118,10 +191,50 @@ describe("turn engine", () => {
       generationPhase: "repair",
       repairOfPhase: "setup",
       attemptKind: "domain_repair",
+      domainRepairCause: {
+        validationStage: "setup",
+        errorName: "Error",
+      },
     });
+    // Redaction comes from the rule declarations, so both violated rules stay
+    // identifiable without any pattern branch for either message.
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).toContain(
+      "[setup_self_containment] An initial entity was placed inside itself",
+    );
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).toContain(
+      "[setup_location_hierarchy_cycle] Initial location containment formed a cycle",
+    );
+    expect(provider.requests[1]?.domainRepairCause?.logicalOperationId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(provider.requests[1]?.domainRepairCause?.errorFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).not.toContain(
+      "location:crooked-crown",
+    );
     expect(provider.requests[1]?.prompt).toContain("cannot be located inside itself");
     const startingLocation = setup.entities.find((entity) => entity.id === setup.player.location);
     expect(startingLocation?.location).toBeUndefined();
+  });
+
+  it("repairs a setup that encodes mutable current state as an entity tag", async () => {
+    const store = await createTestStore();
+    const invalid = structuredClone(setupFixture);
+    invalid.entities.find((entity) => entity.id === "npc:mara-venn")!.tags = ["armed"];
+    const provider = new FakeProvider([invalid, setupFixture]);
+
+    await new DungeonEngine(store, provider).generateSetup({
+      worldRules: "Classic fantasy.",
+      premise: "A tavern opening.",
+      character: "A scout.",
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[1]?.prompt).toContain(
+      'Initial entity npc:mara-venn uses reserved mutable-state tag "armed"',
+    );
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).toContain(
+      "A new tag encoded mutable or epistemic state",
+    );
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).not.toContain("npc:mara-venn");
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).not.toContain("armed");
   });
 
   it("uses one call for a turn without a check", async () => {
@@ -135,38 +248,65 @@ describe("turn engine", () => {
     expect(provider.requests[0]?.generationPhase).toBe("decision");
   });
 
+  it("commits one turn after one bounded content-safe recovery", async () => {
+    const store = await createTestStore();
+    const provider = new FakeProvider([
+      new GenerationFailure("content_block", "blocked fictional output", false),
+      resolved,
+    ]);
+
+    const result = await new DungeonEngine(store, provider, () => 50).play(
+      "I bypass the fictional airlock relay.",
+    );
+
+    expect(result.turn).toBe(1);
+    expect(provider.calls).toBe(2);
+    expect(provider.requests.map((request) => request.attemptKind)).toEqual([
+      "initial",
+      "content_repair",
+    ]);
+    expect(provider.requests[1]?.prompt).toContain("I bypass the fictional airlock relay.");
+    expect(provider.requests[1]?.prompt).toContain("outcome-focused, non-procedural level");
+    expect(await store.getPending()).toBeUndefined();
+    expect((await store.load()).manifest.turn).toBe(1);
+  });
+
   it.each([
     ["automatic_success" as const, "success" as const, "The captive is already restrained."],
     ["automatic_failure" as const, "failure" as const, "The stone wall has no opening."],
-  ])("commits %s without rolling and preserves its player-visible reason", async (kind, outcome, reason) => {
-    const store = await createTestStore();
-    const provider = new FakeProvider([
-      {
-        kind,
-        reason,
-        narration: kind === "automatic_success" ? "You secure the captive." : "The wall does not yield.",
-        turnSummary: "The certain outcome was resolved.",
-        operations: [],
-      },
-    ]);
-    let rolls = 0;
-    const result = await new DungeonEngine(store, provider, () => {
-      rolls += 1;
-      return 50;
-    }).play("I attempt it.");
+  ])(
+    "commits %s without rolling and preserves its player-visible reason",
+    async (kind, outcome, reason) => {
+      const store = await createTestStore();
+      const provider = new FakeProvider([
+        {
+          kind,
+          reason,
+          narration:
+            kind === "automatic_success" ? "You secure the captive." : "The wall does not yield.",
+          turnSummary: "The certain outcome was resolved.",
+          operations: [],
+        },
+      ]);
+      let rolls = 0;
+      const result = await new DungeonEngine(store, provider, () => {
+        rolls += 1;
+        return 50;
+      }).play("I attempt it.");
 
-    expect(provider.calls).toBe(1);
-    expect(rolls).toBe(0);
-    expect(result.check).toBeUndefined();
-    expect(result.automaticOutcome).toEqual({ outcome, reason });
-    expect(playerTurnResponse(result)).toMatchObject({
-      checkText: `${outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE"} — ${reason}`,
-    });
-    expect((await store.recentTranscript()).at(-1)?.checkText).toContain(
-      outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE",
-    );
-    expect((await store.recentTranscript()).at(-1)?.checkText).toContain(reason);
-  });
+      expect(provider.calls).toBe(1);
+      expect(rolls).toBe(0);
+      expect(result.check).toBeUndefined();
+      expect(result.automaticOutcome).toEqual({ outcome, reason });
+      expect(playerTurnResponse(result)).toMatchObject({
+        checkText: `${outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE"} — ${reason}`,
+      });
+      expect((await store.recentTranscript()).at(-1)?.checkText).toContain(
+        outcome === "success" ? "AUTOMATIC SUCCESS" : "AUTOMATIC FAILURE",
+      );
+      expect((await store.recentTranscript()).at(-1)?.checkText).toContain(reason);
+    },
+  );
 
   it("answers an explicit question without rolling, persisting, or advancing a turn", async () => {
     const store = await createTestStore();
@@ -226,12 +366,99 @@ describe("turn engine", () => {
     expect((await store.load()).threads[0]?.summary).toBe("Mara supplied a fresh detail.");
   });
 
+  it("domain-repairs bracket display delimiters instead of silently accepting them as ID text", async () => {
+    const store = await createTestStore();
+    const thread = (await store.load()).threads[0]!;
+    const response = (threadId: string) => ({
+      kind: "resolved",
+      narration: "Mara adds a fresh detail about the northern road.",
+      turnSummary: "The northern-road lead advanced.",
+      operations: [
+        {
+          type: "update_thread",
+          threadId,
+          summary: "Mara supplied a fresh detail.",
+        },
+      ],
+    });
+    const provider = new FakeProvider([response(`[${thread.id}]`), response(thread.id)]);
+
+    const result = await new DungeonEngine(store, provider).play(
+      "Ask Mara about the northern road.",
+    );
+
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[1]).toMatchObject({
+      generationPhase: "repair",
+      attemptKind: "domain_repair",
+      domainRepairCause: {
+        validationStage: "turn_commit",
+        errorName: "TransactionValidationError",
+        // Redacted from the rule declaration, not from the rendered message.
+        errorMessage:
+          // The closed-vocabulary classification survives redaction, so a
+          // bracket slip stays distinguishable from an invented ID without ever
+          // persisting the rejected response.
+          "[unknown_thread_reference] An effect referenced a thread that does not exist (stem_shared)",
+      },
+    });
+    expect(provider.requests[1]?.domainRepairCause?.logicalOperationId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(provider.requests[1]?.domainRepairCause?.errorFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(provider.requests[1]?.domainRepairCause?.errorMessage).not.toContain(thread.id);
+    expect(provider.requests[1]?.prompt).toContain(`Unknown thread reference [${thread.id}]`);
+    expect(provider.requests[1]?.prompt).toContain(
+      "AUTHORITATIVE EXISTING THREAD IDS — CLOSED SET",
+    );
+    expect(provider.requests[1]?.prompt).toContain(`- ${thread.id}`);
+    expect(provider.requests[1]?.prompt).not.toContain("thread:the-empty-colony-turn-0");
+    expect(result.turn).toBe(1);
+    expect(result.operations[0]).toMatchObject({ type: "update_thread", threadId: thread.id });
+    expect((await store.load()).threads[0]?.summary).toBe("Mara supplied a fresh detail.");
+  });
+
+  it("domain-repairs a generated setup that misses application-owned seed structure", async () => {
+    const store = await createTestStore();
+    const corrected = structuredClone(setupFixture);
+    corrected.threads[0]!.relatedEntityIds = ["npc:mara-venn"];
+    const provider = new FakeProvider([setupFixture, corrected]);
+
+    const setup = await new DungeonEngine(store, provider).generateSetup({
+      worldRules: "Classic fantasy.",
+      premise: "A tavern opening.",
+      character: "A scout.",
+      setupRequirements: {
+        schemaVersion: 1,
+        entities: [
+          {
+            id: "npc:mara-venn",
+            kinds: ["person"],
+            purpose: "the named innkeeper",
+            minimumTraits: 0,
+            mustHaveCustody: false,
+            mustHaveLocation: true,
+            mustHavePlacement: false,
+          },
+        ],
+        locationParents: [],
+        inventory: [{ ownerId: "player:hero", itemId: "item:travel-sword" }],
+        threadLinks: [{ label: "Northern road", relatedEntityIds: ["npc:mara-venn"] }],
+      },
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(provider.requests[0]?.prompt).toContain("APPLICATION-ENFORCED SEED STRUCTURE");
+    expect(provider.requests[0]?.prompt).toContain("npc:mara-venn");
+    expect(provider.requests[1]?.schemaName).toBe("domain_repair_campaign_setup");
+    expect(provider.requests[1]?.prompt).toContain("Seed setup requirements failed");
+    expect(setup.threads[0]?.relatedEntityIds).toEqual(["npc:mara-venn"]);
+  });
+
   it("corrects one structurally invalid turn response before committing", async () => {
     const store = await createTestStore();
     const provider = new FakeProvider([[], resolved]);
     const result = await new DungeonEngine(store, provider).play("I greet Mara.");
     expect(provider.calls).toBe(2);
-    expect(provider.requests[1]?.schemaName).toBe("repair_turn_decision_v1");
+    expect(provider.requests[1]?.schemaName).toBe("repair_turn_decision_v2");
     expect(result.turn).toBe(1);
   });
 
@@ -385,7 +612,7 @@ describe("turn engine", () => {
     expect(request.prompt).toContain("CURRENT STATE RECONCILIATION");
     expect(request.prompt).toContain("Do not infer expiration");
     expect(request.prompt).toContain("Do not repeat an already-applied operation");
-    expect(request.protocolVersion).toBe(1);
+    expect(request.protocolVersion).toBe(2);
     expect(request.wireSchema).toBeDefined();
     expect(request.jsonSchema).toBeDefined();
     expect(request.decodeResponse).toBeDefined();
@@ -442,6 +669,76 @@ describe("turn engine", () => {
     ).toBe(true);
   });
 
+  it("represents a locked consequence on a newly introduced item and its exact owner", async () => {
+    const store = await createTestStore();
+    const provider = new FakeProvider([
+      {
+        kind: "check_required",
+        check: {
+          name: "Disable the trapped relay",
+          difficulty: 50,
+          modifiers: [],
+          successStakes: "Mara disables the relay safely.",
+          failureStakes: "The relay shorts and the tavern lights fail.",
+          severeFailureStakes:
+            "The relay charge melts Mara's previously unrecorded precision multi-tool and kills the tavern lights.",
+        },
+      },
+      {
+        narration:
+          "The relay charge flashes through Mara's precision multi-tool, melting it into an unusable lump in her hand as the tavern lights fail.",
+        turnSummary: "The relay charge melted Mara's multi-tool and killed the lights.",
+        operations: [
+          {
+            type: "create_entity",
+            entity: {
+              id: "item:mara-precision-multitool",
+              kind: "item",
+              name: "Mara's Precision Multi-tool",
+              status: "melted and unusable",
+              tags: ["tool", "destroyed"],
+              description: "A compact precision tool ruined by the relay charge.",
+              establishedFacts: [],
+              secrets: [],
+              playerKnowledge: [],
+            },
+          },
+          {
+            type: "change_inventory",
+            ownerId: "npc:mara-venn",
+            itemId: "item:mara-precision-multitool",
+            quantityDelta: 1,
+          },
+          {
+            type: "set_entity_state",
+            targetId: "location:crooked-crown",
+            status: "dark after the relay short",
+          },
+        ],
+      },
+    ]);
+
+    const result = await new DungeonEngine(store, provider, () => 1).play(
+      "I ask Mara to disable the trapped relay.",
+    );
+    const loaded = await store.load();
+    const tool = [...loaded.entities.values()].find(
+      (entity) => entity.name === "Mara's Precision Multi-tool",
+    )!;
+
+    expect(result.check?.outcome).toBe("severe_failure");
+    expect(provider.requests[0]?.prompt).toContain("STAKE REPRESENTABILITY AUDIT");
+    expect(provider.requests[1]?.prompt).toContain("LOCKED-CONSEQUENCE ENTITY AUDIT");
+    expect(tool).toMatchObject({ kind: "item", status: "melted and unusable" });
+    expect(loaded.entities.get("npc:mara-venn")?.inventory).toContainEqual({
+      entityId: tool.id,
+      quantity: 1,
+    });
+    expect(loaded.entities.get("location:crooked-crown")?.status).toBe(
+      "dark after the relay short",
+    );
+  });
+
   it("repairs a checked resolution whose summary completes events missing from narration", async () => {
     const store = await createTestStore();
     const provider = new FakeProvider([
@@ -476,7 +773,7 @@ describe("turn engine", () => {
 
     expect(provider.calls).toBe(3);
     expect(provider.requests[2]).toMatchObject({
-      schemaName: "domain_repair_turn_resolution_v1",
+      schemaName: "domain_repair_turn_resolution_v2",
       generationPhase: "repair",
       repairOfPhase: "locked_resolution",
       attemptKind: "domain_repair",
@@ -519,7 +816,7 @@ describe("turn engine", () => {
     );
 
     expect(provider.calls).toBe(3);
-    expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v1");
+    expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v2");
     expect(provider.requests[2]).toMatchObject({
       generationPhase: "repair",
       repairOfPhase: "locked_resolution",

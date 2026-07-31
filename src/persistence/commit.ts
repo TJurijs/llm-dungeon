@@ -7,7 +7,9 @@ import { assertDeterministicConsistency } from "../domain/operation-consistency.
 import {
   assertCampaignStateConsistency,
   inventoryCycleEdges,
+  inventoryOwnershipSnapshot,
   normalizeLegacyLooseItemOwnership,
+  type CampaignStateConsistencyOptions,
 } from "../domain/state-consistency.js";
 import { applyOperations } from "../domain/transaction-application.js";
 import {
@@ -86,7 +88,7 @@ async function validateProjectedSnapshot(
   currentDir: string,
   writes: Record<string, string>,
   targetManifest: GameState,
-  allowedInventoryCycleEdges?: ReadonlySet<string>,
+  consistencyOptions?: CampaignStateConsistencyOptions,
 ): Promise<DurableSnapshot> {
   const entityDir = path.join(currentDir, "entities");
   const existingEntityDocuments = new Map<string, string>();
@@ -189,6 +191,18 @@ async function validateProjectedSnapshot(
       if (planned.title !== existing.title) {
         throw new Error(`Planned threads document changes immutable title for ${existing.id}`);
       }
+      if (planned.objective !== existing.objective) {
+        throw new Error(`Planned threads document changes immutable objective for ${existing.id}`);
+      }
+      if (existing.createdTurn !== undefined && planned.createdTurn !== existing.createdTurn) {
+        throw new Error(`Planned threads document changes creation turn for ${existing.id}`);
+      }
+      if (
+        existing.updatedTurn !== undefined &&
+        (planned.updatedTurn === undefined || planned.updatedTurn < existing.updatedTurn)
+      ) {
+        throw new Error(`Planned threads document rewinds update turn for ${existing.id}`);
+      }
       if (existing.status !== "active" && JSON.stringify(planned) !== JSON.stringify(existing)) {
         throw new Error(`Planned threads document rewrites terminal thread ${existing.id}`);
       }
@@ -217,7 +231,10 @@ async function validateProjectedSnapshot(
 
   normalizeLegacyLooseItemOwnership(entities);
   assertCampaignStateConsistency(targetManifest, entities, threads, chronicle, {
-    allowedInventoryCycleEdges: allowedInventoryCycleEdges ?? inventoryCycleEdges(entities),
+    allowedInventoryCycleEdges:
+      consistencyOptions?.allowedInventoryCycleEdges ?? inventoryCycleEdges(entities),
+    baselineInventoryOwnership:
+      consistencyOptions?.baselineInventoryOwnership ?? inventoryOwnershipSnapshot(entities),
   });
   return { manifest: targetManifest, entities, threads, chronicle };
 }
@@ -295,6 +312,7 @@ async function loadPreimageSnapshot(
   normalizeLegacyLooseItemOwnership(entities);
   assertCampaignStateConsistency(manifest, entities, threads, chronicle, {
     allowedInventoryCycleEdges: inventoryCycleEdges(entities),
+    baselineInventoryOwnership: inventoryOwnershipSnapshot(entities),
   });
   return { manifest, entities, threads, chronicle };
 }
@@ -305,10 +323,42 @@ function snapshotEntities(entities: Map<string, Entity>): Array<[string, Entity]
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
+function alignLegacyFactLifecycle(
+  expectedEntities: Map<string, Entity>,
+  actualEntities: Map<string, Entity>,
+): Map<string, Entity> {
+  const aligned = new Map(
+    [...actualEntities.entries()].map(([id, entity]) => [id, structuredClone(entity)]),
+  );
+  for (const [entityId, expected] of expectedEntities) {
+    const actual = aligned.get(entityId);
+    if (!actual) continue;
+    const expectedFacts = new Map(expected.facts.map((fact) => [fact.id, fact]));
+    for (const fact of actual.facts) {
+      const expectedFact = expectedFacts.get(fact.id);
+      if (!expectedFact) continue;
+      // V2 pending commits produced before fact lifecycle metadata was added
+      // remain replayable. Newly prepared writes contain both fields and are
+      // therefore still compared exactly.
+      if (expectedFact.createdTurn === undefined) delete fact.createdTurn;
+      if (expectedFact.supersededTurn === undefined) delete fact.supersededTurn;
+    }
+  }
+  return aligned;
+}
+
 function assertSnapshotsEqual(expected: DurableSnapshot, actual: DurableSnapshot): void {
+  const lifecycleAlignedActualEntities = alignLegacyFactLifecycle(
+    expected.entities,
+    actual.entities,
+  );
   const comparisons: Array<[string, unknown, unknown]> = [
     ["manifest", expected.manifest, actual.manifest],
-    ["entities", snapshotEntities(expected.entities), snapshotEntities(actual.entities)],
+    [
+      "entities",
+      snapshotEntities(expected.entities),
+      snapshotEntities(lifecycleAlignedActualEntities),
+    ],
     ["threads", expected.threads, actual.threads],
     ["chronicle", expected.chronicle, actual.chronicle],
   ];
@@ -347,7 +397,10 @@ function validateOperationBinding(
     replayed.entities,
     replayed.threads,
     replayed.chronicle,
-    { allowedInventoryCycleEdges: inventoryCycleEdges(base.entities) },
+    {
+      allowedInventoryCycleEdges: inventoryCycleEdges(base.entities),
+      baselineInventoryOwnership: inventoryOwnershipSnapshot(base.entities),
+    },
   );
   // updatedAt is commit metadata rather than a state operation.
   replayed.manifest.updatedAt = projected.manifest.updatedAt;
@@ -473,7 +526,12 @@ async function validateCommitPlan(
     currentDir,
     commit.writes,
     targetManifest,
-    base ? inventoryCycleEdges(base.entities) : undefined,
+    base
+      ? {
+          allowedInventoryCycleEdges: inventoryCycleEdges(base.entities),
+          baselineInventoryOwnership: inventoryOwnershipSnapshot(base.entities),
+        }
+      : undefined,
   );
   validateOperationBinding(commit, targetTurnLedger, projected, base);
 

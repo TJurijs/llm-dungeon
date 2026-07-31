@@ -1,5 +1,13 @@
-import { formatTemplate, llmModelEntries } from "./ui-utils.js";
+import { formatTemplate, isAbortError, llmModelEntries } from "./ui-utils.js";
 import { createTraitElement } from "./inspection-ui.js";
+
+/** @typedef {import("../src/web/contracts.js").BrowserSetupDraftResponse} BrowserSetupDraftResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserApiClient} BrowserApiClient */
+/** @typedef {import("../src/web/contracts.js").BrowserCampaignCreatedResponse} BrowserCampaignCreatedResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserModelMutationResponse} BrowserModelMutationResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserModelSelection} BrowserModelSelection */
+/** @typedef {import("../src/web/contracts.js").BrowserModelTestResponse} BrowserModelTestResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserStatusResponse} BrowserStatusResponse */
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -91,6 +99,19 @@ function createModelSignalIcon(kind) {
   return svg;
 }
 
+/**
+ * @param {{
+ *   api: BrowserApiClient,
+ *   applyLocale: (language: string) => unknown,
+ *   getStatus: () => BrowserStatusResponse,
+ *   onCampaignCreated: (body: BrowserCampaignCreatedResponse) => Promise<void>,
+ *   refreshStatus: (options?: {ensureFresh?: boolean}) => Promise<unknown>,
+ *   setDefaults: (values: Partial<BrowserStatusResponse>) => void,
+ *   showToast: (message: string, mode?: string) => void,
+ *   t: (key: string) => string,
+ *   withButtonBusy: (button: HTMLElement, busyCopy: string, operation: () => Promise<unknown>) => Promise<unknown>,
+ * }} dependencies
+ */
 export function createSetupSettingsController(dependencies) {
   const {
     api,
@@ -103,10 +124,14 @@ export function createSetupSettingsController(dependencies) {
     t,
     withButtonBusy,
   } = dependencies;
-  let currentDraft = null;
+  let currentDraft = /** @type {BrowserSetupDraftResponse | null} */ (null);
   let setupWorldSequence = 0;
   let setupGenerationSequence = 0;
   let setupBusy = false;
+  /** @type {{ button: HTMLButtonElement, requestId: string, controller: AbortController } | null} */
+  let activeSetupGeneration = null;
+  /** @type {Map<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement, boolean>} */
+  const setupControlDisabledStates = new Map();
   let llmRenderSignature = "";
   const testingModels = new Set();
   let scenarioSeeds = [];
@@ -117,21 +142,90 @@ export function createSetupSettingsController(dependencies) {
     return `${provider}\u0000${model}\u0000${language || ""}`;
   }
 
-  function invalidateDraft() {
+  function abandonCurrentDraft() {
+    const draftId = currentDraft?.draftId;
+    if (draftId) void detachSetupDraft(draftId);
     currentDraft = null;
+  }
+
+  function invalidateDraft() {
+    abandonCurrentDraft();
     setupGenerationSequence += 1;
   }
 
-  function setSetupBusy(busy) {
+  /**
+   * @param {boolean} busy
+   * @param {{ stopButton?: HTMLButtonElement | null }} [options]
+   */
+  function setSetupBusy(busy, { stopButton = null } = {}) {
+    const controls =
+      /** @type {NodeListOf<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>} */ (
+        document.querySelectorAll(
+          "#campaign-setup-form button, #campaign-setup-form input, #campaign-setup-form textarea, #campaign-setup-form select, #campaign-preview button",
+        )
+      );
+    if (busy && setupControlDisabledStates.size === 0) {
+      for (const control of controls) setupControlDisabledStates.set(control, control.disabled);
+    }
+    for (const control of controls) {
+      if (busy) control.disabled = control !== stopButton;
+      else control.disabled = setupControlDisabledStates.get(control) ?? control.disabled;
+    }
+    if (!busy) setupControlDisabledStates.clear();
     for (const element of [$("#campaign-setup-form"), $("#campaign-preview")]) {
-      element.inert = busy;
+      element.inert = busy && stopButton === null;
       if (busy) element.setAttribute("aria-busy", "true");
       else element.removeAttribute("aria-busy");
     }
   }
 
+  function syncGenerationButton() {
+    const active = activeSetupGeneration;
+    if (!active) return;
+    const label = document.createElement("span");
+    label.textContent = t("stopWaiting");
+    const icon = document.createElement("span");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "■";
+    active.button.replaceChildren(label, icon);
+    active.button.classList.add("is-stop");
+    active.button.dataset.mode = "stop";
+    active.button.disabled = false;
+    active.button.setAttribute("aria-busy", "true");
+    active.button.setAttribute("aria-label", t("stopWaitingForCall"));
+    active.button.title = t("backgroundCallContinues");
+  }
+
+  function resetGenerationButton(button) {
+    button.textContent = t(button.id === "regenerate-campaign" ? "regenerate" : "generatePreview");
+    button.classList.remove("is-stop");
+    delete button.dataset.mode;
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("aria-label");
+    button.removeAttribute("title");
+  }
+
+  function stopSetupGeneration({ notify = true } = {}) {
+    const active = activeSetupGeneration;
+    if (!active) return false;
+    const detach = detachSetupDraft(active.requestId);
+    active.controller.abort();
+    activeSetupGeneration = null;
+    setupBusy = false;
+    setupGenerationSequence += 1;
+    setSetupBusy(false);
+    resetGenerationButton(active.button);
+    void detach;
+    if (notify) showToast(t("backgroundCallContinues"));
+    return true;
+  }
+
+  async function detachSetupDraft(requestId) {
+    await api("detachDraft", { body: { requestId } }).catch(() => {});
+  }
+
   async function runSetupOperation(button, busyCopy, operation) {
-    if (setupBusy) return;
+    if (setupBusy) return undefined;
     setupBusy = true;
     setSetupBusy(true);
     try {
@@ -255,7 +349,7 @@ export function createSetupSettingsController(dependencies) {
 
   async function loadSetupWorld(language) {
     const requestId = ++setupWorldSequence;
-    const body = await api(`/api/config/world?language=${encodeURIComponent(language)}`);
+    const body = await api("readWorldProfile", { query: { language } });
     if (requestId === setupWorldSequence && $("#setup-language").value === language) {
       $("#setup-world").placeholder = body.markdown;
     }
@@ -279,7 +373,7 @@ export function createSetupSettingsController(dependencies) {
   async function loadScenarioSeeds() {
     selectedScenarioSeedId = null;
     try {
-      const body = await api("/api/scenario-seeds");
+      const body = await api("listScenarioSeeds", {});
       scenarioSeeds = Array.isArray(body.seeds) ? body.seeds : [];
     } catch {
       scenarioSeeds = [];
@@ -290,9 +384,10 @@ export function createSetupSettingsController(dependencies) {
   async function applyScenarioSeed(id) {
     const language = $("#setup-language").value;
     const requestId = ++scenarioSeedSequence;
-    const seed = await api(
-      `/api/scenario-seeds/${encodeURIComponent(id)}?language=${encodeURIComponent(language)}`,
-    ).then((body) => body.seed);
+    const seed = await api("readScenarioSeed", {
+      params: { seedId: id },
+      query: { language },
+    }).then((body) => body.seed);
     if (requestId !== scenarioSeedSequence || $("#setup-language").value !== language) return;
     $("#premise").value = seed.premise;
     $("#character").value = seed.character;
@@ -313,6 +408,7 @@ export function createSetupSettingsController(dependencies) {
   }
 
   function begin() {
+    if (setupBusy) return;
     scenarioSeedSequence += 1;
     invalidateDraft();
     $("#campaign-setup-form").hidden = false;
@@ -322,7 +418,6 @@ export function createSetupSettingsController(dependencies) {
     $("#setup-world").value = "";
     $("#setup-model-settings").open = false;
     applyLocale(getStatus().language || "en");
-    if (setupBusy) return;
     runSetupOperation($("#generate-campaign"), t("working"), initializeSetup).catch((error) =>
       showToast(error.message, "error"),
     );
@@ -344,40 +439,56 @@ export function createSetupSettingsController(dependencies) {
   }
 
   async function generate(button = $("#generate-campaign")) {
+    if (stopSetupGeneration()) return;
+    if (setupBusy) return;
+    abandonCurrentDraft();
     const config = setupModelChoice();
     if (!config) {
       showToast(t("noAvailableModels"), "error");
       return;
     }
     const requestId = ++setupGenerationSequence;
-    currentDraft = null;
-    await runSetupOperation(button, t("generating"), async () => {
+    const draftRequestId = crypto.randomUUID();
+    const controller = new AbortController();
+    setupBusy = true;
+    activeSetupGeneration = { button, requestId: draftRequestId, controller };
+    setSetupBusy(true, { stopButton: button });
+    syncGenerationButton();
+    try {
       const worldRules = $("#setup-world").value;
       const payload = {
         premise: $("#premise").value,
         character: $("#character").value,
         language: $("#setup-language").value,
         config,
+        requestId: draftRequestId,
         ...(worldRules.trim() ? { worldRules } : {}),
       };
-      const draft = await api("/api/campaigns/draft", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      if (requestId !== setupGenerationSequence) return;
+      const draft = await api("createDraft", { body: payload, signal: controller.signal });
+      if (requestId !== setupGenerationSequence) {
+        void detachSetupDraft(draft.draftId);
+        return;
+      }
       currentDraft = draft;
       renderPreview(draft.setup);
-    }).catch((error) => showToast(error.message, "error"));
+    } catch (error) {
+      if (requestId === setupGenerationSequence && !isAbortError(error)) {
+        showToast(error.message, "error");
+      }
+    } finally {
+      if (activeSetupGeneration?.requestId !== draftRequestId) return;
+      activeSetupGeneration = null;
+      setupBusy = false;
+      setSetupBusy(false);
+      resetGenerationButton(button);
+    }
   }
 
   async function accept() {
     if (!currentDraft?.draftId) return;
     await runSetupOperation($("#accept-campaign"), t("creating"), async () => {
       const draftId = currentDraft.draftId;
-      const body = await api("/api/campaigns/confirm", {
-        method: "POST",
-        body: JSON.stringify({ draftId }),
-      });
+      const body = await api("confirmDraft", { body: { draftId } });
       currentDraft = null;
       await onCampaignCreated(body);
     }).catch((error) => showToast(error.message, "error"));
@@ -736,7 +847,7 @@ export function createSetupSettingsController(dependencies) {
   }
 
   function renderLlmConfiguration(force = false) {
-    const llm = getStatus().llm ?? { defaultModel: null, providers: [] };
+    const llm = getStatus().llm;
     const signature = JSON.stringify(llm);
     if (!force && signature === llmRenderSignature) return false;
     llmRenderSignature = signature;
@@ -869,25 +980,24 @@ export function createSetupSettingsController(dependencies) {
     return true;
   }
 
+  /**
+   * @param {HTMLButtonElement} button
+   * @param {() => Promise<BrowserModelTestResponse | BrowserModelMutationResponse>} request
+   * @param {BrowserModelSelection & {language?: import("../src/web/contracts.js").BrowserLanguageCode, enabled?: boolean}} payload
+   * @param {string} successCopy
+   * @param {{inspectOk?: boolean, focusAction?: string}} [options]
+   */
   async function mutateLlm(
     button,
-    endpoint,
-    method,
+    request,
     payload,
     successCopy,
-    { inspectOk = false } = {},
+    { inspectOk = false, focusAction = "default" } = {},
   ) {
     let succeeded = false;
-    const testKey =
-      endpoint === "/api/llm/models/test"
-        ? modelTestKey(payload.provider, payload.model, payload.language)
-        : null;
-    const focusAction =
-      endpoint === "/api/llm/models/test"
-        ? "test"
-        : endpoint === "/api/llm/models"
-          ? "toggle"
-          : "default";
+    const testKey = inspectOk
+      ? modelTestKey(payload.provider, payload.model, payload.language)
+      : null;
     if (testKey) {
       testingModels.add(testKey);
       renderLlmConfiguration(true);
@@ -906,16 +1016,16 @@ export function createSetupSettingsController(dependencies) {
       focusTarget?.focus({ preventScroll: true });
     };
     await withButtonBusy(button, t("working"), async () => {
-      const result = await api(endpoint, { method, body: JSON.stringify(payload) });
+      const result = await request();
       await refreshStatus({ ensureFresh: true });
       renderLlmConfiguration();
       if (!testKey) restoreActionFocus();
-      if (inspectOk && result.ok === false) {
+      if (inspectOk && "ok" in result && result.ok === false) {
         const error = result.error || t("modelTestFailed");
         showToast(error, "error");
         return;
       }
-      if (inspectOk && Array.isArray(result.failures) && result.failures.length) {
+      if (inspectOk && "failures" in result && result.failures.length) {
         showToast(
           formatTemplate(t("modelTestPartial"), {
             passed:
@@ -951,21 +1061,30 @@ export function createSetupSettingsController(dependencies) {
       ...(button.dataset.language ? { language: button.dataset.language } : {}),
     };
     if (button.dataset.llmAction === "test") {
-      mutateLlm(button, "/api/llm/models/test", "POST", payload, "modelTestPassed", {
+      mutateLlm(button, () => api("testModel", { body: payload }), payload, "modelTestPassed", {
         inspectOk: true,
+        focusAction: "test",
       });
     } else if (button.dataset.llmAction === "toggle") {
+      const enabledPayload = { ...payload, enabled: button.dataset.enabled === "true" };
       mutateLlm(
         button,
-        "/api/llm/models",
-        "PUT",
-        { ...payload, enabled: button.dataset.enabled === "true" },
+        () => api("setModelEnabled", { body: enabledPayload }),
+        enabledPayload,
         "modelAvailabilitySaved",
+        { focusAction: "toggle" },
       );
     } else if (button.dataset.llmAction === "default") {
-      mutateLlm(button, "/api/llm/default", "PUT", payload, "defaultModelSaved");
+      mutateLlm(
+        button,
+        () => api("setDefaultModel", { body: payload }),
+        payload,
+        "defaultModelSaved",
+      );
     } else if (button.dataset.llmAction === "remove") {
-      mutateLlm(button, "/api/llm/models", "DELETE", payload, "modelRemoved");
+      mutateLlm(button, () => api("removeModel", { body: payload }), payload, "modelRemoved", {
+        focusAction: "toggle",
+      });
     }
   }
 
@@ -983,8 +1102,13 @@ export function createSetupSettingsController(dependencies) {
     const button = form.querySelector("button[type=submit]");
     const added = await mutateLlm(
       button,
-      "/api/llm/models",
-      "POST",
+      () =>
+        api("addModel", {
+          body: {
+            provider: form.dataset.customModelProvider,
+            model,
+          },
+        }),
       {
         provider: form.dataset.customModelProvider,
         model,
@@ -997,9 +1121,8 @@ export function createSetupSettingsController(dependencies) {
   async function saveSessionKey(form, key) {
     const button = form.querySelector("button[type=submit]");
     await withButtonBusy(button, t("working"), async () => {
-      await api("/api/llm/keys", {
-        method: "PUT",
-        body: JSON.stringify({ provider: form.dataset.providerKeyForm, key }),
+      await api("setSessionKey", {
+        body: { provider: form.dataset.providerKeyForm, key },
       });
       form.elements.key.value = "";
       await refreshStatus({ ensureFresh: true });
@@ -1033,10 +1156,7 @@ export function createSetupSettingsController(dependencies) {
     if (!button || button.disabled) return;
     const provider = button.dataset.connectionCheck;
     await withIconButtonBusy(button, async () => {
-      const result = await api("/api/llm/connections/test", {
-        method: "POST",
-        body: JSON.stringify({ provider }),
-      });
+      const result = await api("testProviderConnection", { body: { provider } });
       await refreshStatus({ ensureFresh: true });
       renderLlmConfiguration();
       const entry = Array.isArray(result.results)
@@ -1055,7 +1175,7 @@ export function createSetupSettingsController(dependencies) {
   async function handleReloadEnvironment() {
     const button = $("#reload-env");
     await withIconButtonBusy(button, async () => {
-      await api("/api/llm/environment/reload", { method: "POST", body: "{}" });
+      await api("reloadEnvironment", {});
       await refreshStatus({ ensureFresh: true });
       renderLlmConfiguration(true);
       showToast(t("environmentReloaded"), "success");
@@ -1074,7 +1194,7 @@ export function createSetupSettingsController(dependencies) {
   }
 
   async function loadSettingsWorld(language) {
-    const body = await api(`/api/config/world?language=${encodeURIComponent(language)}`);
+    const body = await api("readWorldProfile", { query: { language } });
     if ($("#settings-language").value !== language) return;
     $("#settings-world").value = body.markdown;
     const sourceCopy = {
@@ -1110,11 +1230,10 @@ export function createSetupSettingsController(dependencies) {
   async function saveWorld() {
     await withButtonBusy($("#save-world"), t("working"), async () => {
       const language = $("#settings-language").value;
-      await api("/api/config/world", {
-        method: "PUT",
-        body: JSON.stringify({ language, markdown: $("#settings-world").value }),
+      await api("saveWorldProfile", {
+        body: { language, markdown: $("#settings-world").value },
       });
-      await api("/api/config/language", { method: "PUT", body: JSON.stringify({ language }) });
+      await api("saveLanguage", { body: { language } });
       setDefaults({ language });
       applyLocale(language);
       await loadSettingsWorld(language);
@@ -1162,7 +1281,7 @@ export function createSetupSettingsController(dependencies) {
     $("#regenerate-campaign").addEventListener("click", () => {
       $("#campaign-setup-form").hidden = false;
       $("#campaign-preview").hidden = true;
-      generate($("#regenerate-campaign"));
+      generate($("#generate-campaign"));
     });
     $("#edit-campaign").addEventListener("click", () => {
       invalidateDraft();
@@ -1186,6 +1305,14 @@ export function createSetupSettingsController(dependencies) {
       ),
     );
     $("#save-world").addEventListener("click", saveWorld);
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", () => {
+        stopSetupGeneration({ notify: false });
+        invalidateDraft();
+        $("#campaign-preview").hidden = true;
+        $("#campaign-setup-form").hidden = false;
+      });
+    }
   }
 
   function syncLlm(force = false) {
@@ -1201,5 +1328,6 @@ export function createSetupSettingsController(dependencies) {
     selectSettingsSection,
     syncLanguages,
     syncLlm,
+    syncGenerationButton,
   };
 }

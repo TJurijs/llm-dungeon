@@ -12,24 +12,29 @@ import {
   createThinkingEntry,
 } from "./chat-ui.js";
 import { renderInspectionView, inspectionMessage } from "./inspection-ui.js";
-import {
-  campaignRevision,
-  CampaignStateCache,
-  scheduleIdleTask,
-} from "./campaign-state.js";
+import { campaignRevision, CampaignStateCache, scheduleIdleTask } from "./campaign-state.js";
+import { browserApi as api } from "./api-client.js";
 import { createSetupSettingsController } from "./setup-settings.js";
 import { UI_COPY } from "./ui-copy.js";
 import {
+  budgetUsdText,
+  campaignBudgetText,
   campaignCostText,
   confirmationTitleValue,
   formatTemplate as fillTemplate,
   hasConfiguredProviderKey,
+  isAbortError,
   llmModelEntries,
   modelChoice,
   modelValue,
-  requestJson as api,
   submitShortcut,
 } from "./ui-utils.js";
+
+/** @typedef {import("../src/web/contracts.js").BrowserCommittedTurnResponse} BrowserCommittedTurnResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserCampaignPresentation} BrowserCampaignPresentation */
+/** @typedef {import("../src/web/contracts.js").BrowserCampaignBudgetSnapshot} BrowserCampaignBudgetSnapshot */
+/** @typedef {import("../src/web/contracts.js").BrowserCompletedStoryResponse} BrowserCompletedStoryResponse */
+/** @typedef {import("../src/web/contracts.js").BrowserStatusResponse} BrowserStatusResponse */
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -39,13 +44,27 @@ const SIDEBAR_WIDTH_KEY = "llm-dungeon:sidebar-width";
 const SIDEBAR_COLLAPSED_KEY = "llm-dungeon:sidebar-collapsed";
 const INSPECTION_WIDTH_KEY = "llm-dungeon:inspection-width";
 let locale = "";
-let status = {
+let status = /** @type {BrowserStatusResponse} */ ({
   language: "en",
   languages: [],
   config: null,
-  llm: { defaultModel: null, providers: [] },
+  defaults: { language: "en", config: null },
+  keyStatus: {},
+  llm: {
+    defaultModel: null,
+    pricingBasis: {
+      turns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      source: "",
+      sourceUrl: "",
+      checkedAt: "",
+    },
+    providers: [],
+  },
   campaigns: [],
-};
+});
+/** @type {BrowserCampaignPresentation[]} */
 let campaigns = [];
 let selectedCampaignId = null;
 let currentView = "chat";
@@ -58,11 +77,22 @@ let pendingArchiveCampaignId = null;
 let pendingDeleteCampaignId = null;
 let inspectionSequence = 0;
 let campaignSetupSequence = 0;
+let completedStorySequence = 0;
+let campaignBudgetSequence = 0;
+/** @type {AbortController | null} */
+let completedStoryLoadController = null;
+/** @type {{campaignId: string, controller: AbortController} | null} */
+let activeCompletedStoryRequest = null;
 let toastTimer;
 let cancelInspectionPrefetch = null;
 const chatHistory = new BrowserChatHistory();
 const campaignStateCache = new CampaignStateCache();
 const inFlightCampaigns = new Set();
+/** @type {Map<string, AbortController>} */
+const activeCampaignRequests = new Map();
+const detachedCampaigns = new Set();
+/** @type {Map<string, Promise<void>>} */
+const detachedCampaignPolls = new Map();
 const savingCampaignConfigs = new Set();
 const reconciledCampaignStates = new Map();
 const actionDrafts = new Map();
@@ -116,7 +146,7 @@ function applyLocale(language) {
   });
   $("#action").placeholder = t("actionPlaceholder");
   $("#action").setAttribute("aria-label", t("whatDo"));
-  $("#send-action").setAttribute("aria-label", t("sendAction"));
+  syncSendButton(selectedCampaign());
   $("#composer-hint").textContent = formatTemplate("submitHint", { shortcut: submitShortcut() });
   $("#campaign-sidebar").setAttribute("aria-label", t("campaigns"));
   $(".campaign-navigation").setAttribute("aria-label", t("campaigns"));
@@ -130,9 +160,13 @@ function applyLocale(language) {
   $("#campaign-model").setAttribute("aria-label", t("model"));
   $("#open-campaign-setup").setAttribute("aria-label", t("campaignSetup"));
   $("#open-campaign-setup").title = t("campaignSetup");
+  $("#open-campaign-budget").setAttribute("aria-label", t("campaignBudget"));
+  $("#close-campaign-budget-x").setAttribute("aria-label", t("closeCampaignBudget"));
+  $("#campaign-budget-progress").setAttribute("aria-label", t("budgetProgress"));
   $("#edit-campaign-title").setAttribute("aria-label", t("editCampaignName"));
   $("#edit-campaign-title").title = t("editCampaignName");
   $("#close-campaign-setup").setAttribute("aria-label", t("closeCampaignSetup"));
+  $("#close-completed-story").setAttribute("aria-label", t("closeShortStory"));
   $("#cancel-archive-campaign-x").setAttribute("aria-label", t("cancelArchiving"));
   $("#open-inspection").setAttribute("aria-label", t("campaignState"));
   $("#open-inspection").title = t("campaignState");
@@ -149,8 +183,24 @@ function applyLocale(language) {
   syncProviderOnboarding();
   setupSettings?.refreshSetupPlaceholders();
   setupSettings?.syncLlm(true);
+  setupSettings?.syncGenerationButton();
   renderSidebar();
   return true;
+}
+
+function syncSendButton(campaign) {
+  const stopping = Boolean(campaign && activeCampaignRequests.has(campaign.campaignId));
+  const button = $("#send-action");
+  const label = document.createElement("span");
+  label.textContent = t(stopping ? "stopWaiting" : "send");
+  const icon = document.createElement("span");
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = stopping ? "■" : "↑";
+  button.replaceChildren(label, icon);
+  button.classList.toggle("is-stop", stopping);
+  button.dataset.mode = stopping ? "stop" : "send";
+  button.setAttribute("aria-label", t(stopping ? "stopWaitingForCall" : "sendAction"));
+  button.title = stopping ? t("backgroundCallContinues") : "";
 }
 
 function syncProviderOnboarding() {
@@ -208,6 +258,11 @@ function appendHistory(campaignId, value, { render = true } = {}) {
     renderChat({ scroll: true });
 }
 
+/**
+ * @param {string} campaignId
+ * @param {BrowserCommittedTurnResponse} result
+ * @param {{render?: boolean}} [options]
+ */
 function appendCommittedResponse(campaignId, result, { render = true } = {}) {
   const campaignT = interfaceTranslator();
   if (result.checkText)
@@ -228,7 +283,6 @@ function appendCommittedResponse(campaignId, result, { render = true } = {}) {
         mode: "success",
         kind: "appeal",
         turn: result.turn,
-        ...(result.generation ? { generation: result.generation } : {}),
         ...(result.appealTargetTurn === undefined
           ? {}
           : { appealTargetTurn: result.appealTargetTurn }),
@@ -244,7 +298,6 @@ function appendCommittedResponse(campaignId, result, { render = true } = {}) {
         mode: "success",
         kind: "gameplay",
         turn: result.turn,
-        ...(result.generation ? { generation: result.generation } : {}),
       },
       { render: false },
     );
@@ -315,7 +368,11 @@ function renderChat({ scroll = false } = {}) {
 }
 
 function campaignBusy(campaign) {
-  return Boolean(campaign?.busy || inFlightCampaigns.has(campaign?.campaignId));
+  return Boolean(
+    campaign?.busy ||
+    inFlightCampaigns.has(campaign?.campaignId) ||
+    detachedCampaigns.has(campaign?.campaignId),
+  );
 }
 
 function campaignCanPlay(campaign) {
@@ -324,6 +381,7 @@ function campaignCanPlay(campaign) {
     !campaign.archived &&
     campaign.status === "active" &&
     !campaign.pending &&
+    !campaign.budget?.paused &&
     !campaignBusy(campaign),
   );
 }
@@ -334,27 +392,62 @@ function campaignCanRecover(campaign) {
     !campaign.archived &&
     campaign.status === "active" &&
     campaign.pending &&
+    !campaign.budget?.paused &&
     !campaignBusy(campaign),
   );
+}
+
+function budgetPauseReasonText(reason) {
+  if (reason === "logical_turn_limit") return t("budgetPausedTurn");
+  if (reason === "pricing_unavailable") return t("budgetPausedPricing");
+  return t("budgetPausedCampaign");
+}
+
+function budgetPausedText(campaign, pending = false) {
+  return [
+    t("budgetPaused"),
+    budgetPauseReasonText(campaign?.budget?.pauseReason),
+    t(pending ? "budgetPendingPausedHint" : "budgetPausedHint"),
+  ].join(" ");
 }
 
 function updateComposer(campaign) {
   const canPlay = campaignCanPlay(campaign);
   const canRecover = campaignCanRecover(campaign);
+  const budgetPaused = Boolean(campaign?.budget?.paused);
+  const canEditPausedDraft = Boolean(
+    campaign &&
+    budgetPaused &&
+    !campaign.archived &&
+    campaign.status === "active" &&
+    !campaign.pending &&
+    !campaignBusy(campaign),
+  );
   const action = $("#action");
-  action.disabled = !canPlay && !canRecover;
-  $("#send-action").disabled = !canPlay && !canRecover;
+  action.disabled = !canPlay && !canRecover && !canEditPausedDraft;
+  const canStop = Boolean(campaign && activeCampaignRequests.has(campaign.campaignId));
+  $("#send-action").disabled = canStop ? false : budgetPaused || (!canPlay && !canRecover);
+  syncSendButton(campaign);
   $("#ask-generic").disabled = !canPlay;
   $("#appeal-generic").disabled = !canPlay;
   const banner = $("#pending-banner");
-  if (campaignBusy(campaign)) {
+  if (campaign && detachedCampaigns.has(campaign.campaignId)) {
+    banner.textContent = t("backgroundCallHint");
+    banner.hidden = false;
+  } else if (campaignBusy(campaign)) {
     banner.textContent = t("workingHint");
+    banner.hidden = false;
+  } else if (campaign.pending && budgetPaused) {
+    banner.textContent = budgetPausedText(campaign, true);
     banner.hidden = false;
   } else if (campaign.pending) {
     banner.textContent = t("pendingHint");
     banner.hidden = false;
   } else if (campaign.archived || campaign.status !== "active") {
     banner.textContent = t("campaignFinished");
+    banner.hidden = false;
+  } else if (budgetPaused) {
+    banner.textContent = budgetPausedText(campaign);
     banner.hidden = false;
   } else {
     banner.hidden = true;
@@ -382,9 +475,21 @@ function renderCampaignItem(campaign) {
   const meta = document.createElement("span");
   meta.className = "campaign-item-meta";
   meta.textContent = `${t("turn")} ${campaign.turn} · ${campaignBusy(campaign) ? t("working") : statusLabel(campaign)}`;
+  const tags = document.createElement("span");
+  tags.className = "campaign-item-tags";
+  for (const label of campaign.tags ?? []) {
+    const tag = document.createElement("span");
+    tag.className = "campaign-item-tag";
+    tag.textContent = label;
+    tags.append(tag);
+  }
   copy.append(title, meta);
+  if (tags.childElementCount > 0) copy.append(tags);
   button.append(dot, copy);
-  button.setAttribute("aria-label", `${campaign.title}, ${meta.textContent}`);
+  button.setAttribute(
+    "aria-label",
+    [campaign.title, meta.textContent, ...(campaign.tags ?? [])].join(", "),
+  );
   if (!campaign.archived) return button;
   const row = document.createElement("div");
   row.className = "campaign-item-row";
@@ -449,11 +554,29 @@ function syncCampaignModel(campaign) {
       known ?? {
         provider: config.provider,
         providerLabel: config.provider,
+        envKey: "",
+        keySource: "missing",
         model: config.model,
         label: config.model,
+        status: "untested",
+        compatibilityStatus: "untested",
+        adapterStatus: "uncalibrated",
+        technicalStatus: {},
+        technicalRecoveries: {},
         available: false,
         enabled: false,
         keyPresent: false,
+        known: false,
+        testedLanguages: [],
+        failedLanguages: [],
+        quality: {},
+        recommended: false,
+        recommendationEligibility: { eligible: false, reasons: ["legacy_model"] },
+        evidence: {
+          compatibility: null,
+          assessment: [],
+          certificationCurrent: {},
+        },
         hidden: true,
       },
     );
@@ -508,19 +631,27 @@ function renderCampaignChrome() {
         `${t("turn")} ${campaign.turn}`,
         campaign.timeLabel,
         statusLabel(campaign),
-        campaignCostText(campaign.campaignCost, t("campaignCost")),
+        campaignBudgetText(campaign.budget, t("budgetSpent")) ||
+          campaignCostText(campaign.campaignCost, t("campaignCost")),
       ]
         .filter(Boolean)
         .join(" · ")
     : "";
   syncCampaignModel(campaign);
   const unavailable = !campaign || campaignBusy(campaign);
+  const completedStoryButton = $("#open-completed-story");
+  const completedStoryEligible = Boolean(
+    campaign && (campaign.archived || campaign.status !== "active"),
+  );
+  completedStoryButton.hidden = !completedStoryEligible;
+  completedStoryButton.disabled = !completedStoryEligible || unavailable;
   $("#open-campaign-setup").disabled = unavailable;
   $("#open-inspection").disabled = unavailable;
   $("#export-campaign-markdown").disabled = unavailable;
   $("#export-campaign-html").disabled = unavailable;
   $("#archive-campaign").disabled = unavailable || campaign.archived;
   $("#edit-campaign-title").disabled = unavailable || campaign.archived;
+  $("#open-campaign-budget").disabled = !campaign;
   if (campaign) updateComposer(campaign);
 }
 
@@ -550,9 +681,9 @@ async function saveCampaignTitle() {
   const title = $("#campaign-title-input").value.trim();
   if (!campaign || campaign.archived || campaignBusy(campaign) || !title) return;
   try {
-    const body = await api(campaignApiPath(campaign.campaignId, "title"), {
-      method: "PUT",
-      body: JSON.stringify({ title }),
+    const body = await api("renameCampaign", {
+      params: { campaignId: campaign.campaignId },
+      body: { title },
     });
     updateCampaignFromState(body.campaign);
     cancelCampaignTitleEdit();
@@ -823,7 +954,7 @@ async function reconcileTranscript(campaignId) {
   const campaignT = interfaceTranslator();
   if (selectedCampaignId === campaignId) $("#chat-log").setAttribute("aria-busy", "true");
   try {
-    const body = await api(campaignApiPath(campaignId, "transcript"));
+    const body = await api("campaignTranscript", { params: { campaignId } });
     if (typeof body.playerName === "string" && body.playerName.trim())
       characterNames.set(campaignId, body.playerName.trim());
     const turns = Array.isArray(body.turns) ? body.turns : [];
@@ -906,7 +1037,7 @@ async function reconcileTranscript(campaignId) {
 
 async function performStatusRefresh() {
   const previousCampaigns = JSON.stringify(campaigns);
-  const next = await api("/api/status");
+  const next = await api("bootstrap", {});
   status = { ...status, ...next };
   syncProviderOnboarding();
   const nextCampaigns = sortCampaigns(next.campaigns);
@@ -943,6 +1074,54 @@ async function performStatusRefresh() {
     }
   }
   scheduleInspectionPrefetch();
+}
+
+/** @returns {Promise<BrowserCampaignPresentation | null>} */
+async function refreshCampaignStatus(campaignId) {
+  const body = await api("campaignStatus", { params: { campaignId } });
+  const previous = campaignById(campaignId);
+  const campaign = body.campaign;
+  const revisionChanged = previous?.stateRevision !== campaign.stateRevision;
+  if (revisionChanged) campaignStateCache.invalidate(campaignId);
+  campaigns = sortCampaigns([
+    campaign,
+    ...campaigns.filter((candidate) => candidate.campaignId !== campaignId),
+  ]);
+  status = { ...status, campaigns };
+  renderSidebar();
+  renderCampaignChrome();
+  if (selectedCampaignId === campaignId && currentView === "chat") renderChat();
+  scheduleInspectionPrefetch();
+  return campaign;
+}
+
+function waitForCampaignPoll() {
+  return new Promise((resolve) => window.setTimeout(resolve, 1_500));
+}
+
+function followDetachedCampaign(campaignId) {
+  const existing = detachedCampaignPolls.get(campaignId);
+  if (existing) return existing;
+  const polling = (async () => {
+    while (detachedCampaigns.has(campaignId)) {
+      await waitForCampaignPoll();
+      if (document.visibilityState === "hidden") continue;
+      try {
+        const campaign = await refreshCampaignStatus(campaignId);
+        if (campaign?.busy) continue;
+        detachedCampaigns.delete(campaignId);
+        renderSidebar();
+        renderCampaignChrome();
+        if (selectedCampaignId === campaignId) await reconcileTranscript(campaignId);
+      } catch {
+        // A transient status failure must not turn a detached paid call into a UI error.
+      }
+    }
+  })().finally(() => {
+    detachedCampaignPolls.delete(campaignId);
+  });
+  detachedCampaignPolls.set(campaignId, polling);
+  return polling;
 }
 
 function refreshStatus({ ensureFresh = false } = {}) {
@@ -999,21 +1178,30 @@ async function submitAction() {
   actionDrafts.delete(campaignId);
   resizeComposer();
   inFlightCampaigns.add(campaignId);
+  const controller = new AbortController();
+  activeCampaignRequests.set(campaignId, controller);
   renderSidebar();
   renderCampaignChrome();
   if (action !== ":retry" && action !== ":discard") {
     appendHistory(campaignId, { title: campaignT("you"), text: action, mode: "normal" });
   }
+  let budgetRejected = false;
   try {
     if (action === ":discard") {
-      await api(campaignApiPath(campaignId, "discard"), { method: "POST", body: "{}" });
+      await api("discard", {
+        params: { campaignId },
+        signal: controller.signal,
+      });
       if (selectedCampaignId === campaignId) showToast(campaignT("discarded"), "success");
     } else {
-      const endpoint = action === ":retry" ? "retry" : "play";
-      const result = await api(campaignApiPath(campaignId, endpoint), {
-        method: "POST",
-        body: action === ":retry" ? "{}" : JSON.stringify({ action }),
-      });
+      const result =
+        action === ":retry"
+          ? await api("retry", { params: { campaignId }, signal: controller.signal })
+          : await api("play", {
+              params: { campaignId },
+              body: { action },
+              signal: controller.signal,
+            });
       if (result.kind === "question") {
         appendHistory(campaignId, {
           title: campaignT("answerNoTurn"),
@@ -1026,14 +1214,44 @@ async function submitAction() {
       }
     }
   } catch (error) {
-    appendHistory(campaignId, { title: campaignT("error"), text: error.message, mode: "error" });
+    if (!isAbortError(error)) {
+      budgetRejected = error?.code === "campaign_budget_exhausted";
+      if (budgetRejected && action !== ":retry" && action !== ":discard") {
+        actionDrafts.set(campaignId, action);
+      }
+      appendHistory(campaignId, { title: campaignT("error"), text: error.message, mode: "error" });
+    }
   } finally {
+    if (activeCampaignRequests.get(campaignId) !== controller) return;
+    activeCampaignRequests.delete(campaignId);
     inFlightCampaigns.delete(campaignId);
     await refreshStatus({ ensureFresh: true }).catch(() => {});
+    if (budgetRejected && !campaignById(campaignId)?.pending && selectedCampaignId === campaignId) {
+      restoreActionDraft(campaignId);
+    }
     if (selectedCampaignId === campaignId) renderChat({ scroll: true });
     renderSidebar();
     renderCampaignChrome();
   }
+}
+
+function stopSelectedCampaignRequest() {
+  const campaignId = selectedCampaignId;
+  const controller = campaignId ? activeCampaignRequests.get(campaignId) : undefined;
+  if (!campaignId || !controller) return false;
+  activeCampaignRequests.delete(campaignId);
+  inFlightCampaigns.delete(campaignId);
+  detachedCampaigns.add(campaignId);
+  controller.abort();
+  showToast(t("backgroundCallContinues"));
+  renderSidebar();
+  renderCampaignChrome();
+  void followDetachedCampaign(campaignId);
+  return true;
+}
+
+function handlePrimaryAction() {
+  if (!stopSelectedCampaignRequest()) void submitAction();
 }
 
 async function changeCampaignModel() {
@@ -1056,11 +1274,11 @@ async function changeCampaignModel() {
   savingCampaignConfigs.add(campaignId);
   renderCampaignChrome();
   try {
-    const body = await api(campaignApiPath(campaignId, "config"), {
-      method: "PUT",
-      body: JSON.stringify(choice),
+    const body = await api("setCampaignModel", {
+      params: { campaignId },
+      body: choice,
     });
-    const saved = body.config ?? body;
+    const saved = body.config;
     const target = campaignById(campaignId);
     if (target) target.config = saved;
     if (selectedCampaignId === campaignId) showToast(t("modelSaved"), "success");
@@ -1091,7 +1309,7 @@ async function refreshCampaignState(campaignId) {
   const campaign = campaignById(campaignId);
   if (!campaign || campaignBusy(campaign)) return campaignStateCache.get(campaignId);
   return campaignStateCache.refresh(campaignId, campaignRevision(campaign), () =>
-    api(campaignApiPath(campaignId, "inspect")),
+    api("campaignInspection", { params: { campaignId } }),
   );
 }
 
@@ -1178,6 +1396,167 @@ function closeInspection({ restoreFocus = false } = {}) {
   if (restoreFocus) $("#open-inspection").focus({ preventScroll: true });
 }
 
+function budgetBasisText(basis) {
+  const key = {
+    exact: "budgetBasisExact",
+    estimated: "budgetBasisEstimated",
+    reserved: "budgetBasisReserved",
+    mixed: "budgetBasisMixed",
+    unpriced: "budgetBasisUnpriced",
+  }[basis];
+  return t(key ?? "budgetBasisUnpriced");
+}
+
+function budgetWarningText(threshold) {
+  if (Number(threshold) >= 0.9) return t("budgetWarning90");
+  if (Number(threshold) >= 0.75) return t("budgetWarning75");
+  if (Number(threshold) >= 0.5) return t("budgetWarning50");
+  return "";
+}
+
+function setBudgetLimitInput(selector, value) {
+  $(selector).value = Number.isFinite(value) && Number(value) > 0 ? String(value) : "";
+}
+
+/**
+ * @param {BrowserCampaignBudgetSnapshot | null | undefined} budget
+ * @param {BrowserCampaignPresentation} campaign
+ */
+function renderCampaignBudget(budget, campaign) {
+  const unavailable = t("budgetUnavailable");
+  const approximate = budget?.basis !== "exact";
+  $("#budget-spent").textContent = budget
+    ? budgetUsdText(budget.spentUsd, approximate) || unavailable
+    : unavailable;
+  $("#budget-remaining").textContent = budget
+    ? budget.remainingUsd === null
+      ? t("budgetUnlimited")
+      : budgetUsdText(budget.remainingUsd, approximate) || unavailable
+    : unavailable;
+  $("#budget-next-turn").textContent = budget
+    ? budgetUsdText(budget.projectedNextTurnUsd, true) || unavailable
+    : unavailable;
+  $("#budget-hundred-turns").textContent = budget
+    ? budgetUsdText(budget.projected100TurnsUsd, true) || unavailable
+    : unavailable;
+  $("#campaign-budget-basis").textContent = budget ? budgetBasisText(budget.basis) : "";
+
+  const progress = $("#campaign-budget-progress");
+  const campaignLimit = budget?.limits.campaignUsd;
+  if (Number.isFinite(campaignLimit) && Number(campaignLimit) > 0) {
+    const used =
+      budget.remainingUsd === null
+        ? budget.spentUsd + budget.reservedUsd
+        : Number(campaignLimit) - budget.remainingUsd;
+    progress.max = Number(campaignLimit);
+    progress.value = Math.min(Number(campaignLimit), Math.max(0, used));
+    progress.hidden = false;
+  } else {
+    progress.hidden = true;
+  }
+
+  const warning = budgetWarningText(budget?.warningThreshold);
+  $("#campaign-budget-warning").textContent = warning;
+  $("#campaign-budget-warning").hidden = !warning;
+  const state = $("#campaign-budget-state");
+  state.textContent = budget?.paused ? budgetPausedText(campaign, Boolean(campaign.pending)) : "";
+  state.hidden = !budget?.paused;
+
+  setBudgetLimitInput("#campaign-budget-limit", budget?.limits.campaignUsd);
+  setBudgetLimitInput("#logical-turn-budget-limit", budget?.limits.logicalTurnUsd);
+  const busy = campaignBusy(campaign);
+  $("#campaign-budget-limit").disabled = busy;
+  $("#logical-turn-budget-limit").disabled = busy;
+  $("#save-campaign-budget").hidden = false;
+  $("#save-campaign-budget").disabled = busy;
+  const readOnlyNotice = $("#campaign-budget-read-only");
+  readOnlyNotice.textContent = campaign.archived ? t("budgetReadOnly") : "";
+  readOnlyNotice.hidden = !campaign.archived;
+}
+
+async function openCampaignBudget() {
+  const campaign = selectedCampaign();
+  if (!campaign) return;
+  const campaignId = campaign.campaignId;
+  const requestId = ++campaignBudgetSequence;
+  const dialog = $("#campaign-budget-dialog");
+  dialog.dataset.campaignId = campaignId;
+  renderCampaignBudget(campaign.budget, campaign);
+  $("#campaign-menu").open = false;
+  dialog.showModal();
+  $("#campaign-budget-limit").focus();
+  dialog.setAttribute("aria-busy", "true");
+  try {
+    const body = await api("campaignBudget", { params: { campaignId } });
+    if (
+      requestId !== campaignBudgetSequence ||
+      !dialog.open ||
+      dialog.dataset.campaignId !== campaignId
+    )
+      return;
+    const current = campaignById(campaignId);
+    if (!current) return;
+    current.budget = body.budget;
+    renderCampaignBudget(body.budget, current);
+    renderCampaignChrome();
+  } catch (error) {
+    if (!campaign.budget && dialog.open) showToast(error.message, "error");
+  } finally {
+    if (requestId === campaignBudgetSequence && dialog.open) {
+      dialog.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+function closeCampaignBudget() {
+  const dialog = $("#campaign-budget-dialog");
+  if (dialog.open) dialog.close();
+}
+
+function optionalBudgetLimit(selector) {
+  const raw = $(selector).value.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(t("budgetInvalid"));
+  return value;
+}
+
+async function saveCampaignBudget() {
+  const dialog = $("#campaign-budget-dialog");
+  const campaignId = dialog.dataset.campaignId;
+  const campaign = campaignById(campaignId);
+  if (!campaign || campaignBusy(campaign)) return;
+  let limits;
+  try {
+    limits = {
+      campaignUsd: optionalBudgetLimit("#campaign-budget-limit"),
+      logicalTurnUsd: optionalBudgetLimit("#logical-turn-budget-limit"),
+    };
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
+  const save = $("#save-campaign-budget");
+  save.disabled = true;
+  save.setAttribute("aria-busy", "true");
+  try {
+    const body = await api("updateCampaignBudget", {
+      params: { campaignId },
+      body: limits,
+    });
+    const current = campaignById(campaignId);
+    if (current) current.budget = body.budget;
+    closeCampaignBudget();
+    showToast(t("budgetSaved"), "success");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    save.removeAttribute("aria-busy");
+    await refreshStatus({ ensureFresh: true }).catch(() => {});
+    renderCampaignChrome();
+  }
+}
+
 function exportCampaign(format) {
   const campaignId = selectedCampaignId;
   if (!campaignId) return;
@@ -1198,7 +1577,7 @@ async function archiveCampaign() {
   renderSidebar();
   renderCampaignChrome();
   try {
-    await api(campaignApiPath(campaignId, "archive"), { method: "POST", body: "{}" });
+    await api("archiveCampaign", { params: { campaignId } });
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -1286,7 +1665,7 @@ async function openCampaignSetup() {
   content.replaceChildren(inspectionMessage(t("loadingState")));
   dialog.showModal();
   try {
-    const body = await api(campaignApiPath(campaignId, "setup"));
+    const body = await api("campaignSetup", { params: { campaignId } });
     if (requestId !== campaignSetupSequence || !dialog.open) return;
     if (!body.setup) {
       content.replaceChildren(inspectionMessage(t("setupUnavailable")));
@@ -1313,9 +1692,180 @@ function closeCampaignSetup() {
   if ($("#campaign-setup-dialog").open) $("#campaign-setup-dialog").close();
 }
 
+function completedStoryEligible(campaign) {
+  return Boolean(campaign && (campaign.archived || campaign.status !== "active"));
+}
+
+function syncCompletedStoryAction(mode) {
+  const button = $("#generate-completed-story");
+  if (mode === "ready" || mode === "loading") {
+    button.hidden = true;
+    button.classList.remove("is-stop");
+    button.removeAttribute("aria-label");
+    button.title = "";
+    return;
+  }
+  button.hidden = false;
+  button.classList.toggle("is-stop", mode === "generating");
+  if (mode === "generating") {
+    const label = document.createElement("span");
+    label.textContent = t("stopWaiting");
+    const icon = document.createElement("span");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "■";
+    button.replaceChildren(label, icon);
+    button.setAttribute("aria-label", t("stopWaitingForCall"));
+    button.title = t("backgroundCallContinues");
+    return;
+  }
+  button.textContent = t(mode === "failed" ? "storyRetry" : "storyGenerate");
+  button.removeAttribute("aria-label");
+  button.title = "";
+}
+
+function showCompletedStoryGenerationState(mode) {
+  const warning = $("#completed-story-cost-warning");
+  warning.textContent = t("storyCostWarning");
+  warning.hidden = mode === "ready" || mode === "loading";
+  syncCompletedStoryAction(mode);
+}
+
+function renderCompletedStoryText(story) {
+  const article = document.createElement("article");
+  article.className = "completed-story-text";
+  article.textContent = story;
+  $("#completed-story-output").replaceChildren(article);
+  showCompletedStoryGenerationState("ready");
+}
+
+function renderCompletedStoryMissing() {
+  $("#completed-story-output").replaceChildren(inspectionMessage(t("storyMissing")));
+  showCompletedStoryGenerationState("missing");
+}
+
+function renderCompletedStoryFailure(error) {
+  const detail = error instanceof Error && error.message ? ` ${error.message}` : "";
+  $("#completed-story-output").replaceChildren(
+    inspectionMessage(`${t("storyFailed")}${detail}`, "error"),
+  );
+  showCompletedStoryGenerationState("failed");
+}
+
+/** @param {BrowserCompletedStoryResponse} response */
+function renderCompletedStoryResponse(response) {
+  if (response.status === "ready") renderCompletedStoryText(response.story);
+  else renderCompletedStoryMissing();
+}
+
+function cancelCompletedStoryLoad() {
+  completedStorySequence += 1;
+  completedStoryLoadController?.abort();
+  completedStoryLoadController = null;
+}
+
+function stopCompletedStoryRequest({ closeDialog = true } = {}) {
+  const active = activeCompletedStoryRequest;
+  if (!active) return false;
+  activeCompletedStoryRequest = null;
+  completedStorySequence += 1;
+  inFlightCampaigns.delete(active.campaignId);
+  detachedCampaigns.add(active.campaignId);
+  active.controller.abort();
+  if (closeDialog && $("#completed-story-dialog").open) $("#completed-story-dialog").close();
+  showToast(t("backgroundCallContinues"));
+  renderSidebar();
+  renderCampaignChrome();
+  void followDetachedCampaign(active.campaignId);
+  return true;
+}
+
+async function openCompletedStory() {
+  const campaign = selectedCampaign();
+  if (!completedStoryEligible(campaign) || campaignBusy(campaign)) return;
+  cancelCompletedStoryLoad();
+  const requestId = ++completedStorySequence;
+  const controller = new AbortController();
+  completedStoryLoadController = controller;
+  const dialog = $("#completed-story-dialog");
+  dialog.dataset.campaignId = campaign.campaignId;
+  $("#completed-story-output").replaceChildren(inspectionMessage(t("storyLoading")));
+  showCompletedStoryGenerationState("loading");
+  dialog.showModal();
+  try {
+    const response = await api("campaignStory", {
+      params: { campaignId: campaign.campaignId },
+      signal: controller.signal,
+    });
+    if (requestId !== completedStorySequence || !dialog.open) return;
+    renderCompletedStoryResponse(response);
+  } catch (error) {
+    if (requestId === completedStorySequence && dialog.open && !isAbortError(error)) {
+      renderCompletedStoryFailure(error);
+    }
+  } finally {
+    if (completedStoryLoadController === controller) completedStoryLoadController = null;
+  }
+}
+
+async function generateCompletedStory() {
+  const dialog = $("#completed-story-dialog");
+  const campaignId = dialog.dataset.campaignId;
+  if (activeCompletedStoryRequest?.campaignId === campaignId) {
+    stopCompletedStoryRequest();
+    return;
+  }
+  const campaign = campaignById(campaignId);
+  if (!campaignId || !completedStoryEligible(campaign) || campaignBusy(campaign)) return;
+  const requestId = ++completedStorySequence;
+  const controller = new AbortController();
+  activeCompletedStoryRequest = { campaignId, controller };
+  inFlightCampaigns.add(campaignId);
+  showCompletedStoryGenerationState("generating");
+  renderSidebar();
+  renderCampaignChrome();
+  /** @type {BrowserCompletedStoryResponse | null} */
+  let result = null;
+  /** @type {unknown} */
+  let failure;
+  try {
+    result = await api("generateCampaignStory", {
+      params: { campaignId },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (!isAbortError(error)) failure = error;
+  } finally {
+    if (activeCompletedStoryRequest?.controller !== controller) return;
+    activeCompletedStoryRequest = null;
+    inFlightCampaigns.delete(campaignId);
+    await refreshStatus({ ensureFresh: true }).catch(() => {});
+    renderSidebar();
+    renderCampaignChrome();
+  }
+  if (
+    requestId !== completedStorySequence ||
+    !dialog.open ||
+    dialog.dataset.campaignId !== campaignId
+  )
+    return;
+  if (result) renderCompletedStoryResponse(result);
+  else if (failure) renderCompletedStoryFailure(failure);
+}
+
+function closeCompletedStory() {
+  cancelCompletedStoryLoad();
+  stopCompletedStoryRequest({ closeDialog: false });
+  const dialog = $("#completed-story-dialog");
+  if (dialog.open) dialog.close();
+}
+
 function requestDeleteArchivedCampaign(campaignId) {
   const campaign = campaignById(campaignId);
   if (!campaign?.archived) return;
+  if (!campaign.deleteRequiresTitleConfirmation) {
+    void deleteArchivedCampaign(campaignId);
+    return;
+  }
   pendingDeleteCampaignId = campaignId;
   $("#delete-campaign-warning").textContent = formatTemplate("deleteCampaignConfirm", {
     title: campaign.title,
@@ -1331,15 +1881,15 @@ function closeDeleteCampaignDialog() {
   pendingDeleteCampaignId = null;
 }
 
-async function deleteArchivedCampaign(campaignId) {
+async function deleteArchivedCampaign(campaignId, confirmedTitle) {
   const campaign = campaignById(campaignId);
   if (!campaign?.archived) return;
   inFlightCampaigns.add(campaignId);
   renderSidebar();
   try {
-    await api(campaignApiPath(campaignId, "delete"), {
-      method: "DELETE",
-      body: JSON.stringify({ title: campaign.title }),
+    await api("deleteCampaign", {
+      params: { campaignId },
+      body: confirmedTitle === undefined ? {} : { title: confirmedTitle },
     });
     chatHistory.remove(campaignId);
     campaignStateCache.remove(campaignId);
@@ -1429,10 +1979,10 @@ function bindEvents() {
   $("#action").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      submitAction();
+      handlePrimaryAction();
     }
   });
-  $("#send-action").addEventListener("click", submitAction);
+  $("#send-action").addEventListener("click", handlePrimaryAction);
   $("#campaign-model").addEventListener("change", changeCampaignModel);
   $("#open-inspection").addEventListener("click", openInspection);
   $("#close-inspection").addEventListener("click", () => closeInspection({ restoreFocus: true }));
@@ -1442,6 +1992,25 @@ function bindEvents() {
   });
   $("#export-campaign-markdown").addEventListener("click", () => exportCampaign("markdown"));
   $("#export-campaign-html").addEventListener("click", () => exportCampaign("html"));
+  $("#open-campaign-budget").addEventListener("click", openCampaignBudget);
+  $("#campaign-budget-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCampaignBudget();
+  });
+  $("#close-campaign-budget").addEventListener("click", closeCampaignBudget);
+  $("#close-campaign-budget-x").addEventListener("click", closeCampaignBudget);
+  $("#campaign-budget-dialog").addEventListener("close", () => {
+    campaignBudgetSequence += 1;
+    delete $("#campaign-budget-dialog").dataset.campaignId;
+  });
+  $("#open-completed-story").addEventListener("click", openCompletedStory);
+  $("#generate-completed-story").addEventListener("click", generateCompletedStory);
+  $("#close-completed-story").addEventListener("click", closeCompletedStory);
+  $("#completed-story-dialog").addEventListener("close", () => {
+    cancelCompletedStoryLoad();
+    stopCompletedStoryRequest({ closeDialog: false });
+    delete $("#completed-story-dialog").dataset.campaignId;
+  });
   $("#open-campaign-setup").addEventListener("click", openCampaignSetup);
   $("#edit-campaign-title").addEventListener("click", beginCampaignTitleEdit);
   $("#campaign-title-form").addEventListener("submit", (event) => {
@@ -1483,8 +2052,9 @@ function bindEvents() {
       $("#delete-campaign-confirmation").value !== confirmationTitleValue(campaign.title)
     )
       return;
+    const confirmedTitle = $("#delete-campaign-confirmation").value;
     closeDeleteCampaignDialog();
-    deleteArchivedCampaign(campaignId);
+    deleteArchivedCampaign(campaignId, confirmedTitle);
   });
   $("#cancel-delete-campaign").addEventListener("click", closeDeleteCampaignDialog);
   $("#cancel-delete-campaign-x").addEventListener("click", closeDeleteCampaignDialog);
@@ -1516,4 +2086,9 @@ bindEvents();
 syncSidebarAccessibility();
 applyLocale("en");
 refreshStatus().catch((error) => showToast(error.message, "error"));
-setInterval(() => refreshStatus().catch(() => {}), 2000);
+window.addEventListener("focus", () => refreshStatus().catch(() => {}));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  refreshStatus().catch(() => {});
+  for (const campaignId of detachedCampaigns) void followDetachedCampaign(campaignId);
+});

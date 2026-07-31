@@ -35,6 +35,7 @@ export const ENGLISH: LanguageDefinition = {
     characterConcept: "Character concept",
     worldStyle: "World and DM style",
     language: "Language",
+    shortStory: "Campaign story",
     turnLog: "Turn log",
     close: "Close",
     status: "Status",

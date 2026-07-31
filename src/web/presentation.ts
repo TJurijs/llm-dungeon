@@ -1,10 +1,29 @@
 import { formatAutomaticOutcome, formatCheck } from "../mechanics.js";
 import type { PendingTurn } from "../persistence/pending.js";
-import type { SetupResult } from "../schemas.js";
+import type { CompletedStoryArtifact, SetupResult } from "../schemas.js";
 import type { QuestionResult, TurnResult } from "../types.js";
+import type {
+  BrowserPendingStatus,
+  BrowserCompletedStoryResponse,
+  BrowserPlayerTurnResponse,
+  BrowserSetupPreview,
+} from "./contracts.js";
+
+/** Omits provider, model, usage, and persistence metadata from browser responses. */
+export function completedStoryResponse(
+  artifact: CompletedStoryArtifact | undefined,
+): BrowserCompletedStoryResponse {
+  if (!artifact) return { status: "missing" };
+  return {
+    status: "ready",
+    story: artifact.story,
+    generatedAt: artifact.generatedAt,
+    sourceTurn: artifact.sourceTurn,
+  };
+}
 
 /** Deliberately omits prepared writes, action text, stakes, and raw operations. */
-export function pendingStatus(pending: PendingTurn | undefined): unknown {
+export function pendingStatus(pending: PendingTurn | undefined): BrowserPendingStatus {
   if (!pending) return null;
   if (pending.kind === "commit") return { kind: "commit" };
   if (pending.kind === "appeal") {
@@ -22,7 +41,7 @@ export function pendingStatus(pending: PendingTurn | undefined): unknown {
 }
 
 /** Campaign draft projection safe to return before the user accepts it. */
-export function setupPreview(setup: SetupResult): unknown {
+export function setupPreview(setup: SetupResult): BrowserSetupPreview {
   return {
     campaignTitle: setup.campaignTitle,
     scenarioMarkdown: setup.scenarioMarkdown,
@@ -36,7 +55,7 @@ export function setupPreview(setup: SetupResult): unknown {
 }
 
 /** Player-safe game response; alternate stakes and state operations stay server-side. */
-export function playerTurnResponse(result: TurnResult | QuestionResult): unknown {
+export function playerTurnResponse(result: TurnResult | QuestionResult): BrowserPlayerTurnResponse {
   if (result.kind === "question") {
     return {
       kind: result.kind,

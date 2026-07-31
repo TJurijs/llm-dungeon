@@ -26,6 +26,8 @@ import {
   calibrationFailureStatus,
   runCalibrationVariants,
   selectCalibrationProfile,
+  validateCalibrationTruncationEvidence,
+  type CalibrationTruncationEvidenceInput,
   type CalibrationVariantResult,
 } from "./harness/calibration.js";
 import {
@@ -192,6 +194,7 @@ export interface CalibrateModelOptions {
   cost?: PlaytestModelCost | undefined;
   scenarioSeed?: string | undefined;
   language?: LanguageCode | undefined;
+  truncationEvidence?: readonly CalibrationTruncationEvidenceInput[] | undefined;
 }
 
 export interface CalibrateModelResult {
@@ -271,6 +274,11 @@ export async function calibrateModel(
   }
   const route = options.route ?? defaultPlaytestRoute(config.provider);
   const baseline = defaultDraftFor(config, route);
+  if ((options.truncationEvidence?.length ?? 0) > 0 && (options.variants?.length ?? 0) > 0) {
+    throw new Error(
+      "Truncation evidence calibration cannot combine --truncation-evidence with explicit variants",
+    );
+  }
   const variants = options.variants?.length
     ? options.variants.map((variant) => ModelExecutionProfileDraftSchema.parse(variant))
     : [baseline];
@@ -295,6 +303,10 @@ export async function calibrateModel(
       );
     }
   }
+  const truncationEvidenceRefs = validateCalibrationTruncationEvidence(
+    variants[0]!,
+    options.truncationEvidence ?? [],
+  );
   const evidenceId = calibrationEvidenceId(options.evidenceId ?? safeCalibrationEvidenceId(now()));
   const evidenceStore = new CalibrationEvidenceStore(path.join(playtestsRoot, "calibration"));
   const cost = new PlaytestCostManager(options.maxCostUsd);
@@ -337,9 +349,10 @@ export async function calibrateModel(
             },
           }
         : {}),
+      ...(truncationEvidenceRefs.length > 0 ? { truncationEvidenceRefs } : {}),
     },
   );
-  const selectedAttempt = selectCalibrationProfile(attempts);
+  const selectedAttempt = selectCalibrationProfile(attempts, { truncationEvidenceRefs });
   const profiles = new ModelExecutionProfileStore(projectRoot);
   const assessments = new ModelAssessmentCatalog(projectRoot, now);
   const reference = `playtests/calibration/${evidenceId}`;

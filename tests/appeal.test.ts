@@ -104,8 +104,8 @@ describe("administrative appeal flow", () => {
     });
 
     expect(provider.requests).toHaveLength(1);
-    expect(provider.requests[0]?.schemaName).toBe("appeal_resolution_v1");
-    expect(provider.requests[0]?.protocolVersion).toBe(1);
+    expect(provider.requests[0]?.schemaName).toBe("appeal_resolution_v2");
+    expect(provider.requests[0]?.protocolVersion).toBe(2);
     expect(provider.requests[0]?.system).toBe(APPEAL_SYSTEM_PROMPT);
     expect(provider.requests[0]?.prompt).toContain("Mara places a small brass key in your palm.");
     expect(provider.requests[0]?.prompt).toContain("PLAYER APPEAL — UNTRUSTED CLAIM");
@@ -243,8 +243,8 @@ describe("administrative appeal flow", () => {
     const result = await engine.resumePendingTurn();
     expect(result.kind).toBe("appeal");
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
-      "appeal_resolution_v1",
-      "appeal_resolution_v1",
+      "appeal_resolution_v2",
+      "appeal_resolution_v2",
     ]);
   });
 
@@ -277,8 +277,8 @@ describe("administrative appeal flow", () => {
     });
 
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
-      "appeal_resolution_v1",
-      "domain_repair_appeal_resolution_v1",
+      "appeal_resolution_v2",
+      "domain_repair_appeal_resolution_v2",
     ]);
     expect(provider.requests[1]).toMatchObject({
       generationPhase: "repair",

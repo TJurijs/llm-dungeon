@@ -76,8 +76,7 @@ describe("model speed ratings", () => {
       evidence: {
         source: "certification",
         packageVersion: "3",
-        reference:
-          "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
+        reference: "playtests/runs/2026-07-25T18-18-41-083Z-42e97ddc-6e97-4c48-88a9-bbc77b19b784",
       },
     });
   });

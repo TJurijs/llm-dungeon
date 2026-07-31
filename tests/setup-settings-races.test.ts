@@ -48,9 +48,9 @@ describe("campaign setup request ordering", () => {
     const seedResponse = new Promise((resolve) => {
       resolveSeed = resolve;
     });
-    const api = vi.fn(async (url: string) => {
-      if (url.startsWith("/api/scenario-seeds/")) return seedResponse;
-      throw new Error(`Unexpected request: ${url}`);
+    const api = vi.fn(async (operation: string) => {
+      if (operation === "readScenarioSeed") return seedResponse;
+      throw new Error(`Unexpected request: ${operation}`);
     });
     const controller = createSetupSettingsController({
       api,
@@ -68,7 +68,10 @@ describe("campaign setup request ordering", () => {
     element("#scenario-seed-list").dispatch("click", {
       closest: () => ({ dataset: { seedId: "seed-one" } }),
     });
-    expect(api).toHaveBeenCalledWith("/api/scenario-seeds/seed-one?language=en");
+    expect(api).toHaveBeenCalledWith("readScenarioSeed", {
+      params: { seedId: "seed-one" },
+      query: { language: "en" },
+    });
 
     element("#premise").value = "My newer premise";
     element("#character").value = "My newer character";

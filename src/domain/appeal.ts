@@ -1,5 +1,6 @@
 import { canonicalEntityName } from "./ids.js";
 import type { Entity, StateOperation } from "../schemas.js";
+import type { DomainViolation, DomainViolationCode } from "./violations.js";
 
 const MAX_APPEAL_OPERATIONS = 12;
 const TERMINAL_ENTITY_STATUSES = new Set(["dead", "ended"]);
@@ -10,9 +11,13 @@ const FORBIDDEN_OPERATION_TYPES = new Set<StateOperation["type"]>([
 ]);
 
 export class AppealPolicyError extends Error {
-  constructor(message: string) {
+  /** Declared rules this appeal violated; repair telemetry redacts from them. */
+  readonly violations: readonly DomainViolation[];
+
+  constructor(code: DomainViolationCode, message: string) {
     super(message);
     this.name = "AppealPolicyError";
+    this.violations = [{ code, message }];
   }
 }
 
@@ -27,12 +32,16 @@ export function assertAppealOperations(
 ): void {
   if (operations.length > MAX_APPEAL_OPERATIONS) {
     throw new AppealPolicyError(
+      "appeal_operation_limit",
       `Appeal correction exceeds the ${MAX_APPEAL_OPERATIONS}-operation safety limit`,
     );
   }
   for (const operation of operations) {
     if (FORBIDDEN_OPERATION_TYPES.has(operation.type)) {
-      throw new AppealPolicyError(`Appeals cannot apply ${operation.type}`);
+      throw new AppealPolicyError(
+        "appeal_forbidden_operation",
+        `Appeals cannot apply ${operation.type}`,
+      );
     }
     if (operation.type === "set_entity_state" && operation.status !== undefined) {
       const current = existingEntities.get(operation.targetId);
@@ -41,7 +50,10 @@ export function assertAppealOperations(
         TERMINAL_ENTITY_STATUSES.has(current.status) &&
         operation.status !== current.status
       ) {
-        throw new AppealPolicyError(`Appeals cannot restore terminal entity ${current.id}`);
+        throw new AppealPolicyError(
+          "appeal_terminal_restore",
+          `Appeals cannot restore terminal entity ${current.id}`,
+        );
       }
     }
   }
@@ -81,17 +93,20 @@ export function assertAppealOperations(
     if (operation.type !== "create_entity") return [];
     if (operation.entity.kind !== "item") {
       throw new AppealPolicyError(
+        "appeal_non_item_creation",
         "Appeals may create only a missing item explicitly supported by committed evidence",
       );
     }
     if (operation.entity.location !== undefined) {
       throw new AppealPolicyError(
+        "appeal_created_item_placement",
         "An item created by an appeal must enter one authoritative inventory",
       );
     }
     const canonicalName = canonicalEntityName(operation.entity.name);
     if (currentNames.has(canonicalName)) {
       throw new AppealPolicyError(
+        "appeal_item_name_duplicate",
         `Appeal item ${operation.entity.name} duplicates an existing item`,
       );
     }
@@ -115,6 +130,7 @@ export function assertAppealOperations(
       hasOtherOwner(currentNames, canonicalName, operation.targetId)
     ) {
       throw new AppealPolicyError(
+        "appeal_item_name_duplicate",
         `Appeal item rename ${operation.name} duplicates an existing item`,
       );
     }
@@ -133,6 +149,7 @@ export function assertAppealOperations(
     );
     if (credits.length !== 1) {
       throw new AppealPolicyError(
+        "appeal_created_item_credit",
         "Each item created by an appeal must be credited to exactly one inventory",
       );
     }
@@ -142,6 +159,7 @@ export function assertAppealOperations(
       )
     ) {
       throw new AppealPolicyError(
+        "appeal_created_item_transfer",
         "A newly created appeal item cannot be transferred from a prior owner",
       );
     }

@@ -26,6 +26,22 @@ function state(overrides: Partial<GameState> = {}): GameState {
   };
 }
 
+function completedStory(
+  story = ["A", ...Array.from({ length: 399 }, () => "memory")].join(" "),
+): NonNullable<CampaignLogSnapshot["completedStory"]> {
+  return {
+    schemaVersion: 1,
+    campaignId: "campaign:test",
+    sourceRevision: "completed-revision",
+    sourceTurn: 2,
+    campaignStatus: "ended",
+    provider: "test",
+    model: "test-model",
+    generatedAt: "2026-07-17T10:16:00.000Z",
+    story,
+  };
+}
+
 describe("campaign Markdown export", () => {
   it("renders the complete player-visible story, checks, and appeals", () => {
     const snapshot: CampaignLogSnapshot = {
@@ -37,6 +53,7 @@ describe("campaign Markdown export", () => {
         language: "en",
         worldRules: "# The Crownlands\n\n- **Intrigue** has consequences.",
       },
+      completedStory: completedStory(),
       turns: [
         {
           turn: 0,
@@ -74,6 +91,8 @@ describe("campaign Markdown export", () => {
     expect(markdown.indexOf("### World and DM style")).toBeLessThan(
       markdown.indexOf("### Language"),
     );
+    expect(markdown).toContain("## Campaign story\n\nA memory memory");
+    expect(markdown.indexOf("## Campaign story")).toBeLessThan(markdown.indexOf("## Turn log"));
     expect(markdown).toContain("## Turn log");
     expect(markdown).toContain("### Opening");
     expect(markdown).toContain("### Turn 1");
@@ -100,6 +119,11 @@ describe("campaign Markdown export", () => {
         language: "en",
         worldRules: "# Crownlands\n- Never trust raw <script>alert(1)</script> markup.",
       },
+      completedStory: completedStory(
+        ["<script>alert('story')</script>", ...Array.from({ length: 399 }, () => "memory")].join(
+          " ",
+        ),
+      ),
       turns: [
         {
           turn: 0,
@@ -126,6 +150,10 @@ describe("campaign Markdown export", () => {
     expect(html).toContain('<dialog id="campaign-setup">');
     expect(html).toContain('class="entry player"');
     expect(html).toContain('class="entry check"');
+    expect(html).toContain('class="completed-story"');
+    expect(html).toContain("Campaign story");
+    expect(html).toContain("&lt;script&gt;alert(&#39;story&#39;)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert('story')</script>");
     expect(html).toContain("Elian &lt;Voss&gt;");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert(1)</script>");
@@ -144,7 +172,22 @@ describe("campaign Markdown export", () => {
     expect(markdown).toContain("# Эхо: Чужих / Мыслей");
     expect(markdown).toContain("**Статус:** Завершена");
     expect(markdown).toContain("**Текущий ход:** 2");
+    expect(markdown).not.toContain("## История кампании");
     expect(campaignMarkdownFilename("Эхо: Чужих / Мыслей")).toBe("Эхо- Чужих - Мыслей.md");
     expect(campaignMarkdownFilename("... ")).toBe("llm-dungeon-campaign.md");
+  });
+
+  it("uses localized copy for a persisted completed story", () => {
+    const markdown = renderCampaignMarkdown({
+      state: state({ language: "ru", status: "ended" }),
+      playerName: "Элиан Восс",
+      completedStory: completedStory(),
+      turns: [],
+    });
+
+    expect(markdown).toContain("## История кампании");
+    expect(markdown.indexOf("## История кампании")).toBeLessThan(
+      markdown.indexOf("## Журнал ходов"),
+    );
   });
 });

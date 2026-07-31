@@ -153,6 +153,10 @@ describe("V1 reliability boundaries", () => {
     ).rejects.toThrow(/is not active/);
     expect((await store.load()).threads[0]).toMatchObject({
       status: "resolved",
+      objective: "Travelers have stopped arriving from the north.",
+      createdTurn: 0,
+      updatedTurn: 1,
+      closedTurn: 1,
       summary: "Settled.",
     });
   });
@@ -244,7 +248,7 @@ describe("V1 reliability boundaries", () => {
     });
 
     const mara = (await store.load()).entities.get("npc:mara-venn")!;
-    expect(mara.facts).toContainEqual({ ...secret, active: false });
+    expect(mara.facts).toContainEqual({ ...secret, active: false, supersededTurn: 1 });
     expect(renderEntity(mara, true)).toContain(secret.text);
     expect(renderEntity(mara, false)).not.toContain(secret.text);
     expect(renderEntity(mara, false)).not.toContain("refuses the watch captain");
@@ -260,6 +264,14 @@ describe("V1 reliability boundaries", () => {
       "location:crooked-crown";
     expect(() => validateInitialSetup(doubleLocatedItem)).toThrow(
       /must not also have a world location/,
+    );
+
+    const multipleOwners = structuredClone(setupFixture);
+    multipleOwners.entities.find((entity) => entity.id === "npc:mara-venn")!.inventory = [
+      { entityId: "item:travel-sword", quantity: 1 },
+    ];
+    expect(() => validateInitialSetup(multipleOwners)).toThrow(
+      /Initial item item:travel-sword is inventoried by multiple owners/,
     );
 
     const looseInitialItem = structuredClone(setupFixture);
@@ -310,6 +322,70 @@ describe("V1 reliability boundaries", () => {
     expect(() => validateInitialSetup(cyclicInventory)).toThrow(
       /inventory ownership contains a cycle/,
     );
+  });
+
+  it("rejects mutable current-state tags in every newly generated setup entity", () => {
+    const reservedTags = [
+      "armed",
+      "missing",
+      "confined",
+      "discovered",
+      "guarding",
+      "hidden",
+      "holding",
+      "alarmed",
+      "idle",
+      "active",
+      "in-transit",
+      "known",
+      "undiscovered",
+      "unknown",
+    ];
+
+    for (const tag of reservedTags) {
+      const invalid = structuredClone(setupFixture);
+      invalid.entities.find((entity) => entity.id === "npc:mara-venn")!.tags = [tag];
+      expect(() => validateInitialSetup(invalid), tag).toThrow(
+        `Initial entity npc:mara-venn uses reserved mutable-state tag "${tag}"; represent current state with status, conditions, location, inventory, or facts instead`,
+      );
+    }
+
+    const normalizedInvalid = structuredClone(setupFixture);
+    normalizedInvalid.player.tags = ["  ArMeD  "];
+    expect(() => validateInitialSetup(normalizedInvalid)).toThrow(
+      'Initial entity player:hero uses reserved mutable-state tag "armed"',
+    );
+  });
+
+  it("requires language-neutral machine taxonomy tags in newly generated setup", () => {
+    for (const tag of ["Вооружён", "пропавший", "Crew Member", "crew_member"]) {
+      const invalid = structuredClone(setupFixture);
+      invalid.entities.find((entity) => entity.id === "npc:mara-venn")!.tags = [tag];
+      expect(() => validateInitialSetup(invalid), tag).toThrow(
+        /tags must be lowercase ASCII taxonomy tokens in kebab-case/,
+      );
+    }
+
+    const valid = structuredClone(setupFixture);
+    valid.entities.find((entity) => entity.id === "npc:mara-venn")!.tags = ["crew-member"];
+    expect(() => validateInitialSetup(valid)).not.toThrow();
+  });
+
+  it("keeps legacy campaign documents with mutable-state tags readable", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const mara = loaded.entities.get("npc:mara-venn")!;
+    await writeFile(
+      path.join(store.currentDir, "entities", loaded.entityFiles.get(mara.id)!),
+      renderEntity({ ...mara, tags: [...mara.tags, "armed", "unknown"] }),
+      "utf8",
+    );
+
+    await expect(store.load()).resolves.toMatchObject({
+      manifest: { campaignId: loaded.manifest.campaignId },
+    });
+    expect((await store.load()).entities.get(mara.id)?.tags).toContain("armed");
+    expect((await store.load()).entities.get(mara.id)?.tags).toContain("unknown");
   });
 
   it("canonicalizes non-Latin names distinctly and maps every safe ID to one filename", () => {
@@ -591,6 +667,66 @@ describe("V1 reliability boundaries", () => {
 
     expect((await store.load()).manifest.turn).toBe(targetTurn);
     expect((await store.load()).entities.get(player.id)?.conditions).toContain("Bruised");
+    await expect(access(store.pendingPath)).rejects.toThrow();
+  });
+
+  it("replays an older accepted pending ledger with a now-forbidden mutable tag", async () => {
+    const store = await createTestStore();
+    const loaded = await store.load();
+    const targetTurn = loaded.manifest.turn + 1;
+    const targetTurnPath = `turns/${String(targetTurn).padStart(6, "0")}.md`;
+    const player = loaded.entities.get(loaded.manifest.playerId)!;
+    const playerPath = `entities/${loaded.entityFiles.get(player.id)!}`;
+    const operation = {
+      type: "set_entity_state" as const,
+      targetId: player.id,
+      tags: [...player.tags, "missing", "unknown"],
+    };
+    const writes = {
+      [targetTurnPath]: renderTurnLog(targetTurn, {
+        action: "Legacy pending tag fixture.",
+        resolved: {
+          narration: "An older accepted turn marked the hero missing.",
+          turnSummary: "The older turn used a mutable tag.",
+          operations: [operation],
+        },
+        provider: "fake",
+        model: "fake-model",
+      }),
+      [playerPath]: renderEntity({
+        ...player,
+        tags: operation.tags,
+        updatedTurn: targetTurn,
+      }),
+      "manifest.json": `${JSON.stringify(
+        {
+          ...loaded.manifest,
+          turn: targetTurn,
+        },
+        null,
+        2,
+      )}\n`,
+    };
+    const manifestText = await readFile(path.join(store.currentDir, "manifest.json"), "utf8");
+    await writeFile(
+      store.pendingPath,
+      JSON.stringify({
+        kind: "commit",
+        formatVersion: CURRENT_PENDING_COMMIT_FORMAT_VERSION,
+        campaignId: loaded.manifest.campaignId,
+        expectedPreviousTurn: loaded.manifest.turn,
+        targetTurn,
+        preManifestHash: createHash("sha256").update(manifestText).digest("hex"),
+        writes,
+        preimages: await capturePendingCommitPreimages(store.currentDir, writes),
+      }),
+      "utf8",
+    );
+
+    await store.recoverCommit();
+
+    expect((await store.load()).entities.get(player.id)?.tags).toContain("missing");
+    expect((await store.load()).entities.get(player.id)?.tags).toContain("unknown");
     await expect(access(store.pendingPath)).rejects.toThrow();
   });
 

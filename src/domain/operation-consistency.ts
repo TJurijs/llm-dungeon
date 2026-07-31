@@ -1,13 +1,42 @@
 import type { Entity, StateOperation } from "../schemas.js";
+import { inventoryOwnershipSnapshot } from "./state-consistency.js";
 import { rejectDomainChange } from "./validation-error.js";
+import type { DomainViolationCollector } from "./violations.js";
 
 interface StateConsistencyIssue {
   code:
     | "conflicting_item_destination"
     | "item_move_requires_inventory_transfer"
     | "multiple_inventory_owners"
-    | "non_atomic_item_transfer";
+    | "non_atomic_item_transfer"
+    | "owned_item_credit_requires_transfer";
   message: string;
+}
+
+function closesInventoryCycle(
+  ownerId: string,
+  itemId: string,
+  ownership: ReadonlyMap<string, ReadonlyMap<string, number>>,
+): boolean {
+  const inventoryByOwner = new Map<string, string[]>();
+  for (const [ownedItemId, owners] of ownership) {
+    for (const [candidateOwnerId, quantity] of owners) {
+      if (quantity <= 0) continue;
+      const inventory = inventoryByOwner.get(candidateOwnerId) ?? [];
+      inventory.push(ownedItemId);
+      inventoryByOwner.set(candidateOwnerId, inventory);
+    }
+  }
+  const pending = [itemId];
+  const visited = new Set<string>();
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (current === ownerId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(inventoryByOwner.get(current) ?? []));
+  }
+  return false;
 }
 
 function entityKind(
@@ -29,6 +58,12 @@ function findDeterministicConsistencyIssues(
   entities: Map<string, Entity>,
 ): StateConsistencyIssue[] {
   const issues: StateConsistencyIssue[] = [];
+  const simulatedOwnership = inventoryOwnershipSnapshot(entities);
+  const ownedCreditCandidates: Array<{
+    ownerId: string;
+    itemId: string;
+    issue: StateConsistencyIssue;
+  }> = [];
   const itemDestinations = new Map<
     string,
     {
@@ -53,6 +88,31 @@ function findDeterministicConsistencyIssues(
       itemDestinations.set(operation.targetId, state);
     }
     if (operation.type === "change_inventory") {
+      const owners = simulatedOwnership.get(operation.itemId) ?? new Map<string, number>();
+      if (
+        operation.quantityDelta > 0 &&
+        [...owners.entries()].some(
+          ([ownerId, quantity]) => ownerId !== operation.ownerId && quantity > 0,
+        )
+      ) {
+        const existingOwners = [...owners.entries()]
+          .filter(([ownerId, quantity]) => ownerId !== operation.ownerId && quantity > 0)
+          .map(([ownerId]) => ownerId)
+          .sort()
+          .join(", ");
+        ownedCreditCandidates.push({
+          ownerId: operation.ownerId,
+          itemId: operation.itemId,
+          issue: {
+            code: "owned_item_credit_requires_transfer",
+            message: `${operation.itemId} is already owned by ${existingOwners}; crediting ${operation.ownerId} with change_inventory would duplicate known ownership, so use transfer_item from the existing owner`,
+          },
+        });
+      }
+      const nextQuantity = (owners.get(operation.ownerId) ?? 0) + operation.quantityDelta;
+      if (nextQuantity > 0) owners.set(operation.ownerId, nextQuantity);
+      else owners.delete(operation.ownerId);
+      simulatedOwnership.set(operation.itemId, owners);
       const state = itemDestinations.get(operation.itemId) ?? {
         moved: false,
         positiveOwners: new Set<string>(),
@@ -64,6 +124,12 @@ function findDeterministicConsistencyIssues(
       itemDestinations.set(operation.itemId, state);
     }
     if (operation.type === "transfer_item") {
+      const owners = simulatedOwnership.get(operation.itemId) ?? new Map<string, number>();
+      const sourceQuantity = (owners.get(operation.fromId) ?? 0) - operation.quantity;
+      if (sourceQuantity > 0) owners.set(operation.fromId, sourceQuantity);
+      else owners.delete(operation.fromId);
+      owners.set(operation.toId, (owners.get(operation.toId) ?? 0) + operation.quantity);
+      simulatedOwnership.set(operation.itemId, owners);
       const state = itemDestinations.get(operation.itemId) ?? {
         moved: false,
         positiveOwners: new Set<string>(),
@@ -74,6 +140,13 @@ function findDeterministicConsistencyIssues(
       state.negativeOwners.add(operation.fromId);
       state.transferred = true;
       itemDestinations.set(operation.itemId, state);
+    }
+  }
+  for (const candidate of ownedCreditCandidates) {
+    // Preserve the more specific whole-state cycle diagnostic when this credit
+    // closes a self-ownership or container cycle.
+    if (!closesInventoryCycle(candidate.ownerId, candidate.itemId, simulatedOwnership)) {
+      issues.push(candidate.issue);
     }
   }
   for (const [itemId, destination] of itemDestinations) {
@@ -112,11 +185,16 @@ function findDeterministicConsistencyIssues(
 export function assertDeterministicConsistency(
   operations: StateOperation[],
   entities: Map<string, Entity>,
+  collector?: DomainViolationCollector,
 ): void {
   const issues = findDeterministicConsistencyIssues(operations, entities);
-  if (issues.length) {
-    rejectDomainChange(
-      `State consistency validation failed:\n${issues.map((issue) => `- [${issue.code}] ${issue.message}`).join("\n")}`,
-    );
+  if (!issues.length) return;
+  if (collector) {
+    for (const issue of issues) collector.add(issue.code, issue.message);
+    return;
   }
+  rejectDomainChange(
+    `State consistency validation failed:\n${issues.map((issue) => `- [${issue.code}] ${issue.message}`).join("\n")}`,
+    issues[0]!.code,
+  );
 }

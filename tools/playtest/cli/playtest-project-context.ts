@@ -12,6 +12,7 @@ import {
   createUnifiedPlaytestRunner,
   resolvePlaytestTarget as resolveFrozenPlaytestTarget,
   type CalibrateModelResult,
+  type CalibrationTruncationEvidenceInput,
   type PlaytestModelTarget,
   type PlaytestProgressEvent,
   type PlaytestRunner,
@@ -76,6 +77,7 @@ export class PlaytestProjectContext extends CliProjectContext {
       cost?: { inputPerMillion: number; outputPerMillion: number } | undefined;
       scenarioSeed?: string | undefined;
       language?: LanguageCode | undefined;
+      truncationEvidence?: readonly CalibrationTruncationEvidenceInput[] | undefined;
     },
   ): Promise<CalibrateModelResult> {
     return calibratePlaytestModel({

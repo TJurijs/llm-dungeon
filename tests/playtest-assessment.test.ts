@@ -18,7 +18,11 @@ import {
   renderPlaytestJudgment,
   type PlaytestJudgment,
 } from "../tools/playtest/harness/judge.js";
-import { CERTIFICATION_PACKAGE, CERTIFICATION_SCRIPT } from "../tools/playtest/harness/packages.js";
+import {
+  CAMPAIGN_AUTOPLAY_PACKAGE,
+  CERTIFICATION_PACKAGE,
+  CERTIFICATION_SCRIPT,
+} from "../tools/playtest/harness/packages.js";
 
 function check(turn: number, roll: number) {
   return resolveCheck(
@@ -132,7 +136,7 @@ function call(overrides: Partial<PlaytestCallRecord> = {}): PlaytestCallRecord {
     actor: "candidate",
     phase: "decision",
     sequence: 1,
-    schemaName: "turn_decision_v1",
+    schemaName: "turn_decision_v2",
     provider: "fake",
     model: "candidate",
     route: "direct",
@@ -398,6 +402,75 @@ describe("playtest deterministic assessment", () => {
       status: "playable_with_recovery",
       candidateOwnedFailures: 1,
       schemaRepairs: 1,
+    });
+  });
+
+  it("marks an exhausted candidate-owned setup recovery unstable", () => {
+    const calls = [
+      call({
+        id: "setup-invalid",
+        phase: "setup",
+        success: false,
+        failureKind: "wire_schema_violation",
+        failureOwner: "candidate_model",
+      }),
+      call({
+        id: "setup-repair-invalid",
+        phase: "setup",
+        sequence: 2,
+        success: false,
+        repairKind: "schema",
+        failureKind: "wire_schema_violation",
+        failureOwner: "candidate_model",
+      }),
+    ];
+    const coverage = assessCoverage(CAMPAIGN_AUTOPLAY_PACKAGE, []);
+    const technical = buildCandidateTechnicalSnapshot({
+      playtestPackage: CAMPAIGN_AUTOPLAY_PACKAGE,
+      adapterStatus: "calibrated",
+      executionProfileCurrent: true,
+      turns: [],
+      calls,
+      coverage,
+      evidenceComplete: true,
+    });
+
+    expect(technical).toMatchObject({
+      status: "unstable",
+      candidateOwnedFailures: 2,
+      schemaRepairs: 1,
+      turnsRequired: 1,
+      reasons: ["completed 0/1 required turns"],
+    });
+    expect(technical.reasons.join(" ")).not.toContain("candidate completed");
+  });
+
+  it("reports a recovered content block separately from schema and transient repair", () => {
+    const turns = certificationTurns();
+    const technical = buildCandidateTechnicalSnapshot({
+      playtestPackage: CERTIFICATION_PACKAGE,
+      adapterStatus: "calibrated",
+      executionProfileCurrent: true,
+      turns,
+      calls: [
+        call({
+          id: "content-block",
+          success: false,
+          failureKind: "content_block",
+          failureOwner: "candidate_model",
+        }),
+        call({ id: "content-repair", sequence: 2, repairKind: "content" }),
+      ],
+      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      evidenceComplete: true,
+    });
+
+    expect(technical).toMatchObject({
+      status: "playable_with_recovery",
+      candidateOwnedFailures: 1,
+      schemaRepairs: 0,
+      contentRepairs: 1,
+      transientRetries: 0,
     });
   });
 

@@ -1,5 +1,46 @@
 import { z } from "zod";
 import { DEFAULT_LANGUAGE, LanguageCodeSchema } from "./language.js";
+import { UsageSchema } from "./usage.js";
+
+export const COMPLETED_STORY_SCHEMA_VERSION = 1 as const;
+export const COMPLETED_STORY_MIN_WORDS = 400;
+export const COMPLETED_STORY_MAX_WORDS = 600;
+export const COMPLETED_STORY_TARGET_WORDS = 500;
+export const COMPLETED_STORY_TARGET_MIN_WORDS = 450;
+export const COMPLETED_STORY_TARGET_MAX_WORDS = 550;
+
+/**
+ * The completed-story contract currently supports English and Russian, whose
+ * prose is deterministically countable by Unicode whitespace-delimited words.
+ */
+export function completedStoryWordCount(value: string): number {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(/\s+/u).length : 0;
+}
+
+const CompletedStoryTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .superRefine((story, context) => {
+    const words = completedStoryWordCount(story);
+    if (words < COMPLETED_STORY_MIN_WORDS || words > COMPLETED_STORY_MAX_WORDS) {
+      context.addIssue({
+        code: "custom",
+        message: `completed story must contain ${COMPLETED_STORY_MIN_WORDS}-${COMPLETED_STORY_MAX_WORDS} words; received ${words}`,
+      });
+    }
+  })
+  .describe(
+    `A retrospective campaign story whose accepted length is ${COMPLETED_STORY_MIN_WORDS}-${COMPLETED_STORY_MAX_WORDS} whitespace-delimited words. Write one direct draft of about ${COMPLETED_STORY_TARGET_WORDS} words, targeting ${COMPLETED_STORY_TARGET_MIN_WORDS}-${COMPLETED_STORY_TARGET_MAX_WORDS} words as a safety margin.`,
+  );
+
+/** Strict provider response for the separate post-completion artifact lane. */
+export const CompletedStoryOutputSchema = z
+  .object({
+    story: CompletedStoryTextSchema,
+  })
+  .strict();
 
 export const SafeIdSchema = z
   .string()
@@ -48,12 +89,49 @@ export const InventoryEntrySchema = z.object({
   quantity: z.number().int().positive(),
 });
 
-export const FactSchema = z.object({
-  id: SafeIdSchema,
-  section: FactSectionSchema,
-  text: z.string().min(1),
-  active: z.boolean().default(true),
-});
+/**
+ * How a proposition came to be known.
+ *
+ * Without this, "a trace suggests X" and "X is proven" are the same durable
+ * record, so evidence overreach is invisible to code, to inspection, and to
+ * judging. Optional so legacy Markdown facts stay readable.
+ */
+export const FactBasisSchema = z.enum([
+  "observed",
+  "reported",
+  "inferred",
+  "recorded",
+  "established",
+]);
+
+export const FactSchema = z
+  .object({
+    id: SafeIdSchema,
+    section: FactSectionSchema,
+    text: z.string().min(1),
+    active: z.boolean().default(true),
+    /** Application-owned lifecycle metadata; absent only on legacy Markdown facts. */
+    createdTurn: z.number().int().nonnegative().optional(),
+    supersededTurn: z.number().int().nonnegative().optional(),
+    basis: FactBasisSchema.optional(),
+    /** The record the evidence came from; required for reported and inferred. */
+    sourceId: SafeIdSchema.optional(),
+  })
+  .superRefine((fact, context) => {
+    if (fact.active && fact.supersededTurn !== undefined) {
+      context.addIssue({ code: "custom", message: "an active fact cannot have supersededTurn" });
+    }
+    if (
+      fact.createdTurn !== undefined &&
+      fact.supersededTurn !== undefined &&
+      fact.supersededTurn < fact.createdTurn
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "supersededTurn cannot precede createdTurn",
+      });
+    }
+  });
 
 export const RelationshipSchema = z.object({
   targetId: SafeIdSchema,
@@ -86,6 +164,12 @@ export const EntitySchema = z.object({
 export const ThreadSchema = z.object({
   id: SafeIdSchema,
   title: z.string().min(1),
+  /** Immutable initial problem/goal; absent only in legacy Markdown until read migration. */
+  objective: z.string().min(1).optional(),
+  /** Application-owned lifecycle turns; optional only for legacy Markdown. */
+  createdTurn: z.number().int().nonnegative().optional(),
+  updatedTurn: z.number().int().nonnegative().optional(),
+  closedTurn: z.number().int().nonnegative().optional(),
   summary: z.string().min(1),
   status: z.enum(["active", "resolved", "failed"]),
   relatedEntityIds: z.array(SafeIdSchema).default([]),
@@ -112,6 +196,25 @@ export const ManifestSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+/**
+ * Independently persisted, player-safe prose generated from one immutable
+ * campaign snapshot after gameplay has settled.
+ */
+export const CompletedStoryArtifactSchema = z
+  .object({
+    schemaVersion: z.literal(COMPLETED_STORY_SCHEMA_VERSION),
+    campaignId: SafeIdSchema,
+    sourceRevision: z.string().trim().min(1).max(200),
+    sourceTurn: z.number().int().nonnegative(),
+    campaignStatus: ManifestSchema.shape.status,
+    provider: z.string().trim().min(1).max(200),
+    model: z.string().trim().min(1).max(500),
+    generatedAt: z.string().datetime(),
+    usage: UsageSchema.optional(),
+    story: CompletedStoryTextSchema,
+  })
+  .strict();
+
 const CreateEntityOperationSchema = z.object({
   type: z.literal("create_entity"),
   entity: z.object({
@@ -134,6 +237,8 @@ const AddFactOperationSchema = z.object({
   section: FactSectionSchema,
   factId: GeneratedIdHintSchema,
   text: z.string().min(1),
+  basis: FactBasisSchema.optional(),
+  sourceId: ReferenceIdHintSchema.optional(),
 });
 
 const SupersedeFactOperationSchema = z.object({
@@ -293,10 +398,60 @@ export const CheckSpecSchema = CheckSpecInputSchema.superRefine((check, ctx) => 
   severeFailureStakes: check.severeFailureStakes ?? check.failureStakes,
 }));
 
+/**
+ * One declared disposition for one active thread.
+ *
+ * Thread updates were previously optional effects, so silence and "nothing
+ * changed" were indistinguishable and omission could not be detected. The
+ * audit is a closed set over the active threads: every thread gets an explicit
+ * verdict, and the application derives the thread operations from it, which
+ * makes a declaration/operation mismatch impossible rather than merely invalid.
+ */
+export const ThreadAuditEntrySchema = z.object({
+  /**
+   * 1-based position in the active-thread list supplied in context.
+   *
+   * An ordinal rather than an ID because reproducing a long generated ID many
+   * times per turn is a transcription task with a real error rate: mandatory
+   * per-thread ID copying multiplied reference failures roughly eightfold.
+   * A number cannot be misspelled.
+   */
+  threadIndex: z.number().int().positive().max(20),
+  verdict: z.enum(["unchanged", "progressed", "resolved", "failed"]),
+  /** Rolling summary, closure outcome, or the reason a thread is unchanged. */
+  text: z.string().default(""),
+  relatedEntityIds: z.array(ReferenceIdHintSchema).optional(),
+});
+
+/**
+ * The declared end-of-turn scene.
+ *
+ * Narration routinely moves actors while the effect list does not. Code cannot
+ * read narration, but it can require the same generation to state where the
+ * scene ended and then reconcile that declaration against authoritative
+ * placement deterministically.
+ */
+export const SceneStateSchema = z.object({
+  locationId: ReferenceIdHintSchema,
+  /**
+   * Actors physically present at the end of the turn. Authoritative inbound
+   * only: a declared presence moves an actor here, while omission is a review
+   * signal because the destination of a departure is not stated.
+   */
+  presentActorIds: z.array(ReferenceIdHintSchema).max(20).default([]),
+});
+
 export const ResolvedTurnSchema = z.object({
   narration: z.string().min(1),
   turnSummary: z.string().min(1),
   operations: z.array(StateOperationSchema).max(40),
+  /**
+   * Absent means the turn predates the V2 contract; the wire always supplies
+   * it, so a declared-but-empty audit is a coverage violation rather than a
+   * silent opt-out.
+   */
+  threadAudit: z.array(ThreadAuditEntrySchema).max(20).optional(),
+  sceneState: SceneStateSchema.optional(),
 });
 
 export const TurnDecisionSchema = z.discriminatedUnion("kind", [
@@ -341,13 +496,16 @@ const InitialThreadSchema = z.object({
   relatedEntityIds: z.array(SafeIdSchema).default([]),
 });
 
+/** The player is separate; generated setup may persist at most this many other entities. */
+export const SETUP_ENTITY_LIMIT = 20;
+
 export const SetupResultSchema = z.object({
   campaignTitle: z.string().min(1),
   scenarioMarkdown: z.string().min(1),
   openingNarration: z.string().min(1),
   timeLabel: z.string().min(1),
   player: InitialEntitySchema,
-  entities: z.array(InitialEntitySchema).min(1).max(20),
+  entities: z.array(InitialEntitySchema).min(1).max(SETUP_ENTITY_LIMIT),
   threads: z.array(InitialThreadSchema).max(10).default([]),
 });
 
@@ -367,6 +525,9 @@ export const QuestionAnswerSchema = z
 
 export type Entity = z.infer<typeof EntitySchema>;
 export type Fact = z.infer<typeof FactSchema>;
+export type FactBasis = z.infer<typeof FactBasisSchema>;
+export type ThreadAuditEntry = z.infer<typeof ThreadAuditEntrySchema>;
+export type SceneState = z.infer<typeof SceneStateSchema>;
 export type Thread = z.infer<typeof ThreadSchema>;
 export type ChronicleEvent = z.infer<typeof ChronicleEventSchema>;
 export type GameState = z.infer<typeof ManifestSchema>;
@@ -378,3 +539,5 @@ export type AutomaticOutcome = z.infer<typeof AutomaticOutcomeSchema>;
 export type SetupResult = z.infer<typeof SetupResultSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
+export type CompletedStoryOutput = z.infer<typeof CompletedStoryOutputSchema>;
+export type CompletedStoryArtifact = z.infer<typeof CompletedStoryArtifactSchema>;

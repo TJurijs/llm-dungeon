@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import {
   GAMEPLAY_SCHEMA_NAMES,
   decodeResolvedTurn,
@@ -14,8 +15,11 @@ import { attemptMetadataFor, structuredFailureDetails } from "../../../src/llm/s
 import { DM_SYSTEM_PROMPT, setupPrompt, type SetupPromptInput } from "../../../src/prompts.js";
 import {
   ModelExecutionProfileDraftSchema,
+  ModelGenerationPhaseSchema,
   assertSingleCalibrationVariableChange,
   escalateOutputBudgetAfterTruncation,
+  modelExecutionProfileFingerprint,
+  outputBudgetForPhase,
   type ModelExecutionProfileDraft,
   type ModelGenerationPhase,
 } from "../../../src/model-execution-profile.js";
@@ -35,6 +39,7 @@ import type {
   StructuredResult,
 } from "../../../src/types.js";
 import { attributePlaytestFailure, type FailureAttribution } from "./failure-attribution.js";
+import type { DiagnosticBundle } from "./replay.js";
 
 export const CALIBRATION_SUITE_VERSION = 2 as const;
 export const MAX_CALIBRATION_VARIANTS = 8 as const;
@@ -194,6 +199,7 @@ const EFFECT = {
   itemId: "item:healing-draught",
   entityKindCode: 0,
   factSectionCode: 0,
+  factBasisCode: 0,
   lifecycleCode: 0,
   name: "",
   status: "",
@@ -211,6 +217,7 @@ const REAL_EFFECTS = [
     itemId: "",
     entityKindCode: 0,
     factSectionCode: 3,
+    factBasisCode: 0,
     lifecycleCode: 0,
     name: "",
     status: "",
@@ -226,6 +233,7 @@ const REAL_EFFECTS = [
     itemId: "",
     entityKindCode: 0,
     factSectionCode: 0,
+    factBasisCode: 0,
     lifecycleCode: 0,
     name: "",
     status: "",
@@ -239,6 +247,8 @@ const REAL_EFFECTS = [
 function resolvedWire(narration: string, effects: unknown[] = []) {
   return {
     decision: "resolved",
+    threadAudit: [],
+    sceneState: { locationId: "", presentActorIds: [] },
     narration,
     effects,
     summary: narration,
@@ -255,6 +265,8 @@ function resolvedWire(narration: string, effects: unknown[] = []) {
 
 const CHECK_WIRE = {
   decision: "check_required",
+  threadAudit: [],
+  sceneState: { locationId: "", presentActorIds: [] },
   narration: "",
   effects: [],
   summary: "",
@@ -574,6 +586,7 @@ export async function runModelCalibrationProbe(
 export interface CalibrationVariantResult {
   profile: ModelExecutionProfileDraft;
   changedVariable?: string;
+  truncationEvidenceRefs?: CalibrationTruncationEvidenceRef[];
   probe: CalibrationProbeResult;
 }
 
@@ -583,7 +596,141 @@ export interface CalibrationAttemptArtifact {
   variantIndex: number;
   profile: ModelExecutionProfileDraft;
   changedVariable?: string;
+  truncationEvidenceRefs?: CalibrationTruncationEvidenceRef[];
   probe: CalibrationProbeResult;
+}
+
+export interface CalibrationTruncationEvidenceInput {
+  reference: string;
+  bundle: DiagnosticBundle;
+}
+
+/** Auditable external evidence that authorizes one bounded budget escalation. */
+export interface CalibrationTruncationEvidenceRef {
+  reference: string;
+  phase: ModelGenerationPhase;
+  baselineProfileFingerprint: string;
+  observedOutputTokenBudget: number;
+  requiredOutputTokenBudget: number;
+}
+
+const TruncationAttemptMetadataSchema = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    route: z.string().min(1),
+    generationPhase: ModelGenerationPhaseSchema,
+    profileFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    outputTokenField: z.string().min(1),
+    outputTokenBudget: z.number().int().positive(),
+    truncated: z.literal(true),
+  })
+  .passthrough();
+
+function storedBudgetForPhase(
+  profile: ModelExecutionProfileDraft,
+  phase: ModelGenerationPhase,
+): number {
+  if (phase === "locked_resolution") return profile.outputBudgets.lockedResolution;
+  return profile.outputBudgets[phase];
+}
+
+function evidenceError(reference: string, message: string): Error {
+  return new Error(`Truncation evidence ${reference}: ${message}`);
+}
+
+/**
+ * Accepts only a typed output-limit failure produced by the exact calibration
+ * baseline at its full phase budget. Lower application ceilings and evidence
+ * from another route/profile cannot silently widen a frozen profile.
+ */
+export function validateCalibrationTruncationEvidence(
+  baseline: ModelExecutionProfileDraft,
+  inputs: readonly CalibrationTruncationEvidenceInput[],
+): CalibrationTruncationEvidenceRef[] {
+  const parsedBaseline = ModelExecutionProfileDraftSchema.parse(baseline);
+  const baselineFingerprint = modelExecutionProfileFingerprint(parsedBaseline);
+  return inputs.map(({ reference: unparsedReference, bundle }) => {
+    const reference = unparsedReference.trim();
+    if (!reference) throw new Error("Truncation evidence reference must not be empty");
+    const target = parsedBaseline.key;
+    if (
+      bundle.provider !== target.provider ||
+      bundle.model !== target.model ||
+      bundle.route !== target.route
+    ) {
+      throw evidenceError(
+        reference,
+        `targets ${bundle.provider}/${bundle.model} via ${bundle.route}, expected ${target.provider}/${target.model} via ${target.route}`,
+      );
+    }
+    if (
+      bundle.executionProfile.key.provider !== target.provider ||
+      bundle.executionProfile.key.model !== target.model ||
+      bundle.executionProfile.key.route !== target.route ||
+      bundle.executionProfile.fingerprint !== baselineFingerprint
+    ) {
+      throw evidenceError(
+        reference,
+        "execution profile does not match the exact baseline fingerprint",
+      );
+    }
+    if (bundle.failure.attribution.reason !== "output_budget_truncation") {
+      throw evidenceError(reference, "failure is not attributed to output-budget truncation");
+    }
+    const metadataResult = TruncationAttemptMetadataSchema.safeParse(
+      bundle.responseMetadata.attemptMetadata,
+    );
+    if (!metadataResult.success) {
+      throw evidenceError(reference, "has no complete typed truncated-attempt metadata");
+    }
+    const metadata = metadataResult.data;
+    const phase = bundle.expectedPhase;
+    if (bundle.request.generationPhase !== phase || metadata.generationPhase !== phase) {
+      throw evidenceError(reference, "request, bundle, and attempt generation phases do not match");
+    }
+    if (
+      metadata.provider !== target.provider ||
+      metadata.model !== target.model ||
+      metadata.route !== target.route ||
+      metadata.profileFingerprint !== baselineFingerprint
+    ) {
+      throw evidenceError(reference, "attempt metadata does not match the exact baseline route");
+    }
+    if (metadata.outputTokenField !== parsedBaseline.outputTokenField) {
+      throw evidenceError(
+        reference,
+        "attempt used a different output-token field than the baseline",
+      );
+    }
+    const expectedBudget = outputBudgetForPhase(
+      parsedBaseline,
+      phase,
+      bundle.request.repairOfPhase,
+    );
+    if (
+      bundle.request.maxOutputTokens !== expectedBudget ||
+      metadata.outputTokenBudget !== expectedBudget ||
+      (bundle.request.outputTokenCeiling !== undefined &&
+        bundle.request.outputTokenCeiling < expectedBudget)
+    ) {
+      throw evidenceError(
+        reference,
+        `used output budget ${metadata.outputTokenBudget}, expected the full baseline phase budget ${expectedBudget}`,
+      );
+    }
+    const escalated = escalateOutputBudgetAfterTruncation(parsedBaseline, phase, true);
+    if (!escalated) {
+      throw evidenceError(reference, `phase ${phase} has no bounded escalation step remaining`);
+    }
+    return {
+      reference,
+      phase,
+      baselineProfileFingerprint: baselineFingerprint,
+      observedOutputTokenBudget: expectedBudget,
+      requiredOutputTokenBudget: storedBudgetForPhase(escalated, phase),
+    };
+  });
 }
 
 export function calibrationEvidenceId(value: string): string {
@@ -639,6 +786,8 @@ export interface CalibrationVariantRunOptions {
   /** Append bounded one-variable budget steps only when the last probe proves truncation. */
   autoEscalateTruncation?: boolean;
   probeOptions?: CalibrationProbeOptions | undefined;
+  /** Already validated production diagnostics that authorize one baseline budget step. */
+  truncationEvidenceRefs?: readonly CalibrationTruncationEvidenceRef[] | undefined;
 }
 
 function firstTruncationEscalation(
@@ -676,6 +825,69 @@ function phaseTruncated(probe: CalibrationProbeResult, phase: ModelGenerationPha
   );
 }
 
+const EVIDENCE_PHASE_ORDER = [
+  "setup",
+  "decision",
+  "locked_resolution",
+  "repair",
+] as const satisfies readonly ModelGenerationPhase[];
+
+function profileMeetsEvidenceMinimums(
+  profile: ModelExecutionProfileDraft,
+  evidence: readonly CalibrationTruncationEvidenceRef[],
+): boolean {
+  return evidence.every(
+    (item) => storedBudgetForPhase(profile, item.phase) >= item.requiredOutputTokenBudget,
+  );
+}
+
+function appendEvidenceAuthorizedVariants(
+  parsed: ModelExecutionProfileDraft[],
+  evidence: readonly CalibrationTruncationEvidenceRef[],
+): Set<number> {
+  const evidenceVariantIndexes = new Set<number>();
+  if (evidence.length === 0) return evidenceVariantIndexes;
+  if (parsed.length !== 1) {
+    throw new Error(
+      "Truncation evidence calibration starts from the exact baseline and cannot combine explicit variants",
+    );
+  }
+  const baseline = parsed[0]!;
+  const baselineFingerprint = modelExecutionProfileFingerprint(baseline);
+  const minimums = new Map<ModelGenerationPhase, number>();
+  for (const item of evidence) {
+    if (item.baselineProfileFingerprint !== baselineFingerprint) {
+      throw new Error("Truncation evidence does not match the calibration baseline fingerprint");
+    }
+    const expected = escalateOutputBudgetAfterTruncation(baseline, item.phase, true);
+    if (
+      !expected ||
+      storedBudgetForPhase(expected, item.phase) !== item.requiredOutputTokenBudget
+    ) {
+      throw new Error(
+        `Truncation evidence for ${item.phase} does not authorize exactly the next bounded step`,
+      );
+    }
+    minimums.set(
+      item.phase,
+      Math.max(minimums.get(item.phase) ?? 0, item.requiredOutputTokenBudget),
+    );
+  }
+  let current = baseline;
+  for (const phase of EVIDENCE_PHASE_ORDER) {
+    const minimum = minimums.get(phase);
+    if (minimum === undefined) continue;
+    const escalated = escalateOutputBudgetAfterTruncation(current, phase, true);
+    if (!escalated || storedBudgetForPhase(escalated, phase) !== minimum) {
+      throw new Error(`Truncation evidence for ${phase} cannot be applied as one bounded step`);
+    }
+    parsed.push(escalated);
+    evidenceVariantIndexes.add(parsed.length - 1);
+    current = escalated;
+  }
+  return evidenceVariantIndexes;
+}
+
 /** Enforces one-variable-at-a-time comparison and sequential execution. */
 export async function runCalibrationVariants(
   variants: readonly ModelExecutionProfileDraft[],
@@ -688,6 +900,13 @@ export async function runCalibrationVariants(
     );
   }
   const parsed = variants.map((variant) => ModelExecutionProfileDraftSchema.parse(variant));
+  const truncationEvidenceRefs = [...(options.truncationEvidenceRefs ?? [])].map((item) => ({
+    ...item,
+  }));
+  const evidenceVariantIndexes = appendEvidenceAuthorizedVariants(parsed, truncationEvidenceRefs);
+  if (parsed.length > MAX_CALIBRATION_VARIANTS) {
+    throw new Error(`Calibration requires at most ${MAX_CALIBRATION_VARIANTS} bounded variants`);
+  }
   for (let index = 1; index < parsed.length; index += 1) {
     const prior = parsed[index - 1]!;
     const profile = parsed[index]!;
@@ -709,13 +928,22 @@ export async function runCalibrationVariants(
     const changedVariable =
       prior === undefined ? undefined : assertSingleCalibrationVariableChange(prior, profile);
     const budgetPhase = changedVariable ? budgetPhaseForChange(changedVariable) : undefined;
-    if (budgetPhase && !phaseTruncated(results[index - 1]!.probe, budgetPhase)) {
+    if (
+      budgetPhase &&
+      !evidenceVariantIndexes.has(index) &&
+      !phaseTruncated(results[index - 1]!.probe, budgetPhase)
+    ) {
       throw new Error(
         `${changedVariable} requires confirmed truncation in the immediately preceding probe`,
       );
     }
     const probe = await runModelCalibrationProbe(providerFor(profile), options.probeOptions);
-    const result = { profile, ...(changedVariable ? { changedVariable } : {}), probe };
+    const result = {
+      profile,
+      ...(changedVariable ? { changedVariable } : {}),
+      ...(truncationEvidenceRefs.length > 0 ? { truncationEvidenceRefs } : {}),
+      probe,
+    };
     results.push(result);
     if (options.evidenceStore && options.evidenceId) {
       await options.evidenceStore.appendAttempt({
@@ -724,15 +952,23 @@ export async function runCalibrationVariants(
         variantIndex: index,
         profile,
         ...(changedVariable ? { changedVariable } : {}),
+        ...(truncationEvidenceRefs.length > 0 ? { truncationEvidenceRefs } : {}),
         probe,
       });
     }
-    if ((options.autoEscalateTruncation ?? true) && index === parsed.length - 1) {
+    // External evidence authorizes exactly one step. That step must itself
+    // complete the full suite; a failure needs a fresh calibration attempt.
+    if (evidenceVariantIndexes.has(index) && !probe.passed) break;
+    if (
+      truncationEvidenceRefs.length === 0 &&
+      (options.autoEscalateTruncation ?? true) &&
+      index === parsed.length - 1
+    ) {
       const escalated = firstTruncationEscalation(profile, probe);
       if (escalated && parsed.length < MAX_CALIBRATION_VARIANTS) parsed.push(escalated);
     }
   }
-  const selected = selectCalibrationProfile(results);
+  const selected = selectCalibrationProfile(results, { truncationEvidenceRefs });
   if (selected && options.evidenceStore && options.evidenceId) {
     await options.evidenceStore.writeSelection(options.evidenceId, selected);
   }
@@ -766,6 +1002,7 @@ function repairedAttempts(result: CalibrationVariantResult): number {
   return result.probe.cases.filter(
     (item) =>
       item.attemptMetadata?.attemptKind === "schema_repair" ||
+      item.attemptMetadata?.attemptKind === "content_repair" ||
       item.attemptMetadata?.attemptKind === "transient_retry" ||
       item.attemptMetadata?.attemptKind === "domain_repair",
   ).length;
@@ -774,8 +1011,20 @@ function repairedAttempts(result: CalibrationVariantResult): number {
 /** Selects without narrative scoring: correctness, first pass, truncation, repair, latency, then cost. */
 export function selectCalibrationProfile(
   results: readonly CalibrationVariantResult[],
+  options: {
+    truncationEvidenceRefs?: readonly CalibrationTruncationEvidenceRef[] | undefined;
+  } = {},
 ): CalibrationVariantResult | undefined {
-  return [...results].sort((left, right) => {
+  const truncationEvidenceRefs = options.truncationEvidenceRefs ?? [];
+  const candidates =
+    truncationEvidenceRefs.length === 0
+      ? [...results]
+      : results.filter(
+          (result) =>
+            result.probe.passed &&
+            profileMeetsEvidenceMinimums(result.profile, truncationEvidenceRefs),
+        );
+  return candidates.sort((left, right) => {
     const leftSuccesses = left.probe.cases.filter((item) => item.success).length;
     const rightSuccesses = right.probe.cases.filter((item) => item.success).length;
     if (leftSuccesses !== rightSuccesses) return rightSuccesses - leftSuccesses;

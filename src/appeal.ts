@@ -1,3 +1,4 @@
+import { INPUT_CHARACTER_LIMITS } from "./input-budget.js";
 import type { AppealInput } from "./types.js";
 
 const APPEAL_COMMAND = ":appeal";
@@ -5,7 +6,8 @@ const APPEAL_COMMAND = ":appeal";
 function validateClaim(value: string): string {
   const claim = value.trim();
   if (!claim) throw new Error("Appeal requires an explanation");
-  if (claim.length > 10_000) throw new Error("Appeal explanation exceeds 10,000 characters");
+  if (claim.length > INPUT_CHARACTER_LIMITS.appeal)
+    throw new Error("Appeal explanation exceeds 10,000 characters");
   return claim;
 }
 

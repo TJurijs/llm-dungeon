@@ -79,6 +79,19 @@ describe("playtest scheduling", () => {
 });
 
 describe("shared playtest cost manager", () => {
+  it("exposes settled spend plus concurrent active reservations", async () => {
+    const budget = new PlaytestCostManager(0.02, 0.002);
+    const [candidate, player] = await Promise.all([budget.acquire(0.006), budget.acquire(0.004)]);
+
+    expect(budget.spentUsd).toBe(0.002);
+    expect(budget.exposureUsd).toBe(0.012);
+    budget.commit(candidate, 0.005);
+    expect(budget.spentUsd).toBe(0.007);
+    expect(budget.exposureUsd).toBe(0.011);
+    budget.release(player);
+    expect(budget.exposureUsd).toBe(0.007);
+  });
+
   it("reserves across lanes and stops new calls after the ceiling is committed", async () => {
     const budget = new PlaytestCostManager(0.01);
     const first = await budget.acquire(0.006);

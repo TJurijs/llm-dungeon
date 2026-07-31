@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createPlaytestCliProgram } from "../tools/playtest/cli/playtest-program.js";
 import { EvaluationCli } from "../tools/playtest/cli/evaluation.js";
 import {
+  DEFAULT_PLAYTEST_PLAYER_SPEC,
   PlaytestCli,
   languageList,
   modelSpec,
   providerConcurrency,
+  withProcessCancellation,
   type PlaytestRunOptions,
 } from "../tools/playtest/cli/playtest.js";
 import type { PlaytestProjectContext } from "../tools/playtest/cli/playtest-project-context.js";
@@ -42,6 +44,24 @@ function fakeProject(): PlaytestProjectContext {
 }
 
 describe("playtest terminal commands", () => {
+  it("coalesces duplicate process cancellation signals and removes its listeners", async () => {
+    const beforeInterrupts = process.listenerCount("SIGINT");
+    const beforeTerminations = process.listenerCount("SIGTERM");
+    const cancel = vi.fn();
+
+    const result = await withProcessCancellation({ cancel }, async () => {
+      process.emit("SIGINT", "SIGINT");
+      process.emit("SIGINT", "SIGINT");
+      process.emit("SIGTERM", "SIGTERM");
+      return "cancelled-cleanly";
+    });
+
+    expect(result).toBe("cancelled-cleanly");
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(process.listenerCount("SIGINT")).toBe(beforeInterrupts);
+    expect(process.listenerCount("SIGTERM")).toBe(beforeTerminations);
+  });
+
   it("parses model, language, and provider-limit options deterministically", () => {
     expect(modelSpec("openrouter:qwen/qwen3.7-plus@openrouter")).toEqual({
       config: {
@@ -133,7 +153,47 @@ describe("playtest terminal commands", () => {
     expect(project.resolvePlaytestTarget).toHaveBeenCalledTimes(2);
   });
 
-  it("builds autoplay with fixed player and separate optional judge lanes", async () => {
+  it("uses Gemini 3.6 Flash direct as the default model-driven player", async () => {
+    const project = fakeProject();
+    const cli = new PlaytestCli(project);
+    const build = (
+      cli as unknown as {
+        buildRunConfig(
+          id: string,
+          options: PlaytestRunOptions,
+          matrix: boolean,
+        ): Promise<PlaytestRunConfig>;
+      }
+    ).buildRunConfig.bind(cli);
+
+    const config = await build(
+      "campaign-autoplay-v1",
+      {
+        candidate: "openai:gpt-5.6-terra@direct",
+        languages: ["en"],
+        maxCost: 2,
+      },
+      false,
+    );
+
+    expect(DEFAULT_PLAYTEST_PLAYER_SPEC).toBe("gemini:gemini-3.6-flash@direct");
+    expect(config.player).toMatchObject({
+      profile: "curious-explorer",
+      target: {
+        config: { provider: "gemini", model: "gemini-3.6-flash" },
+        route: "direct",
+        executionProfileFingerprint: fingerprint,
+      },
+    });
+    expect(project.resolvePlaytestTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "gemini", model: "gemini-3.6-flash" }),
+      "direct",
+      undefined,
+    );
+    expect(config.judge).toEqual({ policy: "none", rubricVersion: 1 });
+  });
+
+  it("builds autoplay with a fixed player and rejects judge options", async () => {
     const cli = new PlaytestCli(fakeProject());
     const build = (
       cli as unknown as {
@@ -149,8 +209,6 @@ describe("playtest terminal commands", () => {
       {
         player: "gemini:gemini-3.1-flash-lite@direct",
         playerProfile: "long-term-planner",
-        judge: "openai:gpt-5.6-terra@direct",
-        checkpointEvery: 12,
         turns: 50,
         concurrency: 3,
         providerConcurrency: { gemini: 2, openai: 1 },
@@ -158,14 +216,31 @@ describe("playtest terminal commands", () => {
       false,
     );
 
-    expect(config.player).toMatchObject({ profile: "long-term-planner" });
-    expect(config.judge).toMatchObject({
-      policy: "checkpoints_and_final",
-      rubricVersion: 1,
-      checkpointEvery: 12,
+    expect(config.player).toMatchObject({
+      profile: "long-term-planner",
+      target: { config: { provider: "gemini", model: "gemini-3.1-flash-lite" } },
     });
+    expect(config.judge).toEqual({ policy: "none", rubricVersion: 1 });
     expect(config.latencyMode).toBe("loaded");
     expect(config.providerConcurrency).toEqual({ gemini: 2, openai: 1 });
+    await expect(
+      build("campaign-autoplay-v1", { judge: "openai:gpt-5.6-terra@direct", maxCost: 2 }, false),
+    ).rejects.toThrow(/does not define a judge rubric/i);
+  });
+
+  it("routes the deprecated autoplay alias through the canonical player default", async () => {
+    const cli = new PlaytestCli(fakeProject());
+    const run = vi.spyOn(cli, "run").mockResolvedValue();
+
+    await cli.legacyEvaluate({ concurrency: 1, maxCost: 2 });
+
+    expect(run).toHaveBeenCalledWith(
+      "campaign-autoplay-v1",
+      expect.objectContaining({
+        player: DEFAULT_PLAYTEST_PLAYER_SPEC,
+        playerProfile: "curious-explorer",
+      }),
+    );
   });
 
   it("registers the unified command tree and routes deprecated evaluate through its wrapper", async () => {
@@ -207,6 +282,10 @@ describe("playtest terminal commands", () => {
         "far-meridian-dead-signal",
         "--language",
         "ru",
+        "--truncation-evidence",
+        "playtests/runs/run-a/diagnostics/setup.json",
+        "--truncation-evidence",
+        "playtests/runs/run-b/diagnostics/decision.json",
         "--max-cost",
         "2",
       ]);
@@ -214,6 +293,10 @@ describe("playtest terminal commands", () => {
         expect.objectContaining({
           scenarioSeed: "far-meridian-dead-signal",
           language: "ru",
+          truncationEvidence: [
+            "playtests/runs/run-a/diagnostics/setup.json",
+            "playtests/runs/run-b/diagnostics/decision.json",
+          ],
           maxCost: 2,
         }),
       );
@@ -272,6 +355,16 @@ describe("playtest terminal commands", () => {
       probe.mockRestore();
       legacy.mockRestore();
     }
+  });
+
+  it("documents the default player model in model-driven command help", () => {
+    const program = createPlaytestCliProgram(fakeProject());
+    const group = program.commands.find((command) => command.name() === "playtest");
+    const run = group?.commands.find((command) => command.name() === "run");
+    const calibrate = group?.commands.find((command) => command.name() === "calibrate");
+
+    expect(run?.helpInformation()).toContain("defaults to Gemini 3.6 Flash direct");
+    expect(calibrate?.helpInformation()).toContain("--truncation-evidence <diagnostic-bundle>");
   });
 
   it("passes repeatable singular --candidate flags to matrix execution", async () => {

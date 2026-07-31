@@ -5,7 +5,13 @@ import { ProviderConfigSchema } from "./schemas.js";
 
 export const MODEL_EXECUTION_PROFILE_VERSION = 1 as const;
 /** Increment whenever profile interpretation or a named projection changes. */
-export const MODEL_EXECUTION_ADAPTER_REVISION = 7 as const;
+/**
+ * Revision 8 retires every profile calibrated against Gameplay Contract V1.
+ * V2 adds two required top-level declarations and a new effect field, so V1
+ * output budgets, truncation evidence, and timeouts no longer describe the
+ * same request. Fresh calibration must precede any new certification.
+ */
+export const MODEL_EXECUTION_ADAPTER_REVISION = 8 as const;
 
 export const ModelGenerationPhaseSchema = z.enum([
   "setup",

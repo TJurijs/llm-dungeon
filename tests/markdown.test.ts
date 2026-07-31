@@ -308,8 +308,7 @@ describe("Markdown persistence codec", () => {
     expect(log).toContain("## Automatic Outcome");
     expect(parsePlayerVisibleTurn(log)).toMatchObject({
       turn: 2,
-      checkText:
-        "AUTOMATIC SUCCESS — The captive is already restrained and cannot resist.",
+      checkText: "AUTOMATIC SUCCESS — The captive is already restrained and cannot resist.",
     });
     expect(validatePreparedTurnLog(log)).toMatchObject({ turn: 2, kind: "gameplay" });
   });

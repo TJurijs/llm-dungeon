@@ -25,7 +25,8 @@ import {
   CERTIFICATION_PACKAGE_VERSION,
   CERTIFICATION_SCRIPT,
 } from "../tools/playtest/harness/packages.js";
-import { PlaytestRunner } from "../tools/playtest/harness/runner.js";
+import { PlaytestRunner, type PlaytestProgressEvent } from "../tools/playtest/harness/runner.js";
+import { CampaignCatalog } from "../src/campaign-catalog.js";
 import { StateStore } from "../src/store.js";
 import type { LlmProvider, StructuredRequest, StructuredResult } from "../src/types.js";
 
@@ -65,6 +66,10 @@ const playerProfile = frozenProfile("gemini", "gemini-3.1-flash-lite");
 const candidateTarget = target(candidateProfile);
 const judgeTarget = target(judgeProfile);
 const playerTarget = target(playerProfile);
+const COMPLETED_STORY_FIXTURE = Array.from(
+  { length: 420 },
+  (_, index) => `retrospective${index + 1}`,
+).join(" ");
 
 function certificationConfig(overrides: Partial<PlaytestRunConfig> = {}): PlaytestRunConfig {
   return {
@@ -165,6 +170,8 @@ class RunnerFakeProvider implements LlmProvider {
   cancel: (() => void) | undefined;
   cancelledOnce = false;
   terminalOnDecision: number | undefined;
+  completedStoryFailuresRemaining = 0;
+  onCompletedStory: (() => void | Promise<void>) | undefined;
 
   constructor(
     profile: FrozenModelExecutionProfile,
@@ -224,6 +231,13 @@ class RunnerFakeProvider implements LlmProvider {
             })),
           })),
         };
+      } else if (request.schemaName === "completed_campaign_story_v1") {
+        await this.onCompletedStory?.();
+        if (this.completedStoryFailuresRemaining > 0) {
+          this.completedStoryFailuresRemaining -= 1;
+          throw new Error("Completed-story artifact fixture failed");
+        }
+        value = { story: COMPLETED_STORY_FIXTURE };
       } else if (request.schemaName.includes("playtest_player_action")) {
         value = {
           action: "I observe the scene and follow the most relevant established lead.",
@@ -231,7 +245,7 @@ class RunnerFakeProvider implements LlmProvider {
         };
       } else if (request.schemaName.includes("campaign_setup")) {
         value = CERTIFICATION_CANONICAL_SETUPS.en;
-      } else if (request.schemaName.includes("turn_resolution_v1")) {
+      } else if (request.schemaName.includes("turn_resolution_v2")) {
         value = {
           narration: `The locked outcome resolves decision ${this.decisionCount}.`,
           turnSummary: `Locked outcome ${this.decisionCount} completed.`,
@@ -246,7 +260,7 @@ class RunnerFakeProvider implements LlmProvider {
                 ]
               : [],
         };
-      } else if (request.schemaName.includes("turn_decision_v1")) {
+      } else if (request.schemaName.includes("turn_decision_v2")) {
         this.decisionCount += 1;
         const checked = [3, 6, 7].includes(this.decisionCount);
         value = checked
@@ -298,6 +312,27 @@ class FirstCallGateProvider extends RunnerFakeProvider {
       this.gated = true;
       this.signalStarted();
       await this.firstCallGate;
+    }
+    return super.generateStructured(request);
+  }
+}
+
+class FirstCallSignalWaitProvider extends RunnerFakeProvider {
+  private waited = false;
+
+  constructor(
+    profile: FrozenModelExecutionProfile,
+    private readonly signal: Promise<void>,
+  ) {
+    super(profile);
+  }
+
+  override async generateStructured<T>(
+    request: StructuredRequest<T>,
+  ): Promise<StructuredResult<T>> {
+    if (!this.waited) {
+      this.waited = true;
+      await this.signal;
     }
     return super.generateStructured(request);
   }
@@ -371,6 +406,63 @@ function dependencies(
 }
 
 describe("playtest runner", () => {
+  it("reports reservation-safe cost while another job has an in-flight call", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-progress-cost-"));
+    const held = new FirstCallGateProvider(candidateProfile);
+    const candidate = new FirstCallSignalWaitProvider(candidateProfile, held.firstCallStarted);
+    const judge = new RunnerFakeProvider(judgeProfile);
+    const catalog = await fixtureCatalog(root);
+    const progress: PlaytestProgressEvent[] = [];
+    let providerCount = 0;
+    let released = false;
+    const runner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      {
+        profileFor: async (input) =>
+          input.config.provider === "gemini" ? candidateProfile : judgeProfile,
+        providerFor: (input) => {
+          if (input.config.provider !== "gemini") return judge;
+          providerCount += 1;
+          return providerCount === 1 ? candidate : held;
+        },
+        costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
+        worldRulesFor: async () => "Deterministic runner test rules.",
+        assessmentCatalog: catalog,
+      },
+      (event) => {
+        progress.push(event);
+        if (!released && event.message.startsWith("Committed turn ")) {
+          released = true;
+          held.releaseFirstCall();
+        }
+      },
+    );
+
+    let result: Awaited<ReturnType<PlaytestRunner["run"]>>;
+    try {
+      result = await runner.run(
+        certificationConfig({
+          package: { id: "tuning-v1", version: 1 },
+          tuningVariable: "model: reservation-safe-progress-fixture",
+          repetitions: 2,
+          globalWorkerLimit: 2,
+          latencyMode: "loaded",
+          providerConcurrency: { gemini: 2, openai: 1 },
+        }),
+        "runner-progress-cost",
+      );
+    } finally {
+      held.releaseFirstCall();
+    }
+    const committed = progress.filter((event) => event.message.startsWith("Committed turn "));
+
+    expect(committed).toHaveLength(20);
+    expect(committed[0]!.estimatedCostUsd).toBeGreaterThan(0);
+    expect(committed[0]!.estimatedCostUsd).toBeGreaterThan(result.manifest.totalEstimatedCostUsd);
+    expect(committed.at(-1)!.estimatedCostUsd).toBeLessThan(result.manifest.totalEstimatedCostUsd);
+  });
+
   it("preflights every target-language pair and rejects before creating providers", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-preflight-"));
     const preflights: string[] = [];
@@ -600,7 +692,9 @@ describe("playtest runner", () => {
     expect(await readFile(path.join(jobDir, "transcript.md"), "utf8")).toContain(
       "Fresh isolated coverage fixture",
     );
-  });
+    // Two full campaigns over a real temp directory; the default 5s budget is
+    // met in isolation but not reliably when the whole suite runs in parallel.
+  }, 30_000);
 
   it("reconciles a completed immutable judgment after its assessment commit was interrupted", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-judgment-commit-"));
@@ -676,102 +770,303 @@ describe("playtest runner", () => {
     expect(await campaignStore.getPending()).toBeUndefined();
   });
 
-  it("runs autoplay checkpoint judgments separately and retries only the failed interval", async () => {
+  it("isolates same-model candidate and player instances while publishing without judging", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-autoplay-"));
-    const candidate = new RunnerFakeProvider(candidateProfile);
-    const player = new RunnerFakeProvider(playerProfile);
-    const judge = new RunnerFakeProvider(judgeProfile);
-    judge.judgmentFailuresRemaining = 1;
+    const providerInstances: RunnerFakeProvider[] = [];
+    let storyObservedFrozenTechnical = false;
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
       profileFor: async (input) => {
-        if (input.config.model === candidateProfile.key.model) return candidateProfile;
         if (input.config.model === playerProfile.key.model) return playerProfile;
-        if (input.config.model === judgeProfile.key.model) return judgeProfile;
         throw new Error(`Unexpected target ${input.config.model}`);
       },
       providerFor: (input) => {
-        if (input.config.model === candidateProfile.key.model) return candidate;
-        if (input.config.model === playerProfile.key.model) return player;
-        return judge;
+        if (input.config.model !== playerProfile.key.model) {
+          throw new Error(`Unexpected target ${input.config.model}`);
+        }
+        const provider = new RunnerFakeProvider(playerProfile);
+        provider.onCompletedStory = async () => {
+          const technical = JSON.parse(
+            await readFile(
+              path.join(
+                root,
+                "playtests",
+                "runs",
+                "runner-autoplay-checkpoints",
+                "jobs",
+                "job-001",
+                "technical.json",
+              ),
+              "utf8",
+            ),
+          ) as { status?: string };
+          storyObservedFrozenTechnical = typeof technical.status === "string";
+        };
+        providerInstances.push(provider);
+        return provider;
       },
       costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
       worldRulesFor: async () => "Deterministic autoplay test rules.",
     });
     const config: PlaytestRunConfig = {
       engineVersion: 1,
-      package: { id: "campaign-autoplay-v1", version: 1 },
-      candidates: [candidateTarget],
+      package: { id: "campaign-autoplay-v1", version: 2 },
+      candidates: [playerTarget],
       languages: ["en"],
       turns: 25,
       seed: "autoplay-checkpoints",
       repetitions: 1,
       globalWorkerLimit: 1,
       latencyMode: "canonical",
-      providerConcurrency: { gemini: 1, openai: 1 },
+      providerConcurrency: { gemini: 1 },
       maxCostUsd: 5,
       maxDurationMs: 600_000,
       player: { target: playerTarget, profile: "curious-explorer" },
-      judge: {
-        policy: "checkpoints_and_final",
-        rubricVersion: 1,
-        target: judgeTarget,
-        checkpointEvery: 10,
-      },
+      judge: { policy: "none", rubricVersion: 1 },
     };
 
     const first = await runner.run(config, "runner-autoplay-checkpoints");
     const jobDir = path.join(first.runDir, "jobs", "job-001");
     expect(first.manifest.jobs[0]).toMatchObject({
-      status: "awaiting_judgment",
+      status: "completed",
       completedTurns: 25,
+      completedStory: { status: "completed", attempts: 1 },
+      publishedCampaignId: expect.any(String),
     });
-    const candidateBefore = await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8");
-    const playerBefore = await readFile(path.join(jobDir, "calls", "player-driver.jsonl"), "utf8");
-    const initialTasks = JSON.parse(
-      await readFile(path.join(jobDir, "judge-tasks.json"), "utf8"),
-    ) as Array<{
-      id: string;
-      status: string;
-      attempts: number;
-    }>;
-    expect(initialTasks.map((task) => [task.id, task.status, task.attempts])).toEqual([
-      ["checkpoint-010", "failed", 1],
-      ["checkpoint-020", "completed", 1],
-      ["final", "completed", 1],
-    ]);
-
-    const retried = await runner.judge("runner-autoplay-checkpoints");
-    expect(retried.manifest.jobs[0]).toMatchObject({ status: "completed", completedTurns: 25 });
-    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(
-      candidateBefore,
+    expect(first.manifest.jobs[0]?.candidate).toEqual(first.manifest.jobs[0]?.player?.target);
+    expect(providerInstances.length).toBeGreaterThan(1);
+    expect(providerInstances[0]).not.toBe(providerInstances[1]);
+    expect(
+      providerInstances[0]?.requests.some((request) => request.schemaName === "campaign_setup"),
+    ).toBe(true);
+    const allRequests = providerInstances.flatMap((provider) => provider.requests);
+    expect(
+      allRequests.filter((request) => request.schemaName === "completed_campaign_story_v1"),
+    ).toHaveLength(1);
+    expect(storyObservedFrozenTechnical).toBe(true);
+    const playerProviders = providerInstances.filter((provider) =>
+      provider.requests.some((request) => request.schemaName === "playtest_player_action_v1"),
     );
-    expect(await readFile(path.join(jobDir, "calls", "player-driver.jsonl"), "utf8")).toBe(
-      playerBefore,
-    );
-    const retriedTasks = JSON.parse(
-      await readFile(path.join(jobDir, "judge-tasks.json"), "utf8"),
-    ) as Array<{
-      id: string;
-      status: string;
-      attempts: number;
-    }>;
-    expect(retriedTasks.map((task) => [task.id, task.status, task.attempts])).toEqual([
-      ["checkpoint-010", "completed", 2],
-      ["checkpoint-020", "completed", 1],
-      ["final", "completed", 1],
-    ]);
-    const judgeCalls = PlaytestCallRecordSchema.array().parse(
-      (await readFile(path.join(jobDir, "calls", "judge.jsonl"), "utf8"))
+    expect(playerProviders.length).toBeGreaterThan(0);
+    expect(
+      playerProviders.every((provider) =>
+        provider.requests.every((request) => request.schemaName === "playtest_player_action_v1"),
+      ),
+    ).toBe(true);
+    const artifactCalls = PlaytestCallRecordSchema.array().parse(
+      (await readFile(path.join(jobDir, "calls", "artifact.jsonl"), "utf8"))
         .trim()
         .split(/\r?\n/u)
         .map((line) => JSON.parse(line)),
     );
-    expect(judgeCalls.map((call) => call.phase)).toEqual([
-      "checkpoint_judge",
-      "checkpoint_judge",
-      "final_judge",
-      "checkpoint_judge",
-    ]);
+    expect(artifactCalls).toHaveLength(1);
+    expect(artifactCalls[0]).toMatchObject({
+      actor: "artifact",
+      phase: "completed_story",
+      success: true,
+    });
+    expect(
+      (await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).includes(
+        "completed_campaign_story_v1",
+      ),
+    ).toBe(false);
+    expect(await new StateStore(path.join(jobDir, "campaign")).completedStory()).toMatchObject({
+      story: COMPLETED_STORY_FIXTURE,
+      campaignStatus: "active",
+      sourceTurn: 25,
+    });
+    const catalog = new CampaignCatalog(path.join(root, "data"));
+    const published = await catalog.listCampaigns();
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      campaignId: first.manifest.jobs[0]?.publishedCampaignId,
+      archived: true,
+      turn: 25,
+      tags: [
+        "Autoplay",
+        "Player: curious-explorer",
+        `Model: ${playerTarget.config.model}`,
+        "Run: runner-autoplay-checkpoints",
+      ],
+    });
+    await expect(catalog.openCampaign(published[0]!.campaignId)).rejects.toThrow(/archived/i);
+    expect(
+      await (await catalog.readCampaign(published[0]!.campaignId)).completedStory(),
+    ).toMatchObject({ story: COMPLETED_STORY_FIXTURE, sourceTurn: 25 });
+    await expect(runner.judge("runner-autoplay-checkpoints")).rejects.toThrow(/not model-judged/i);
+
+    const resumed = await runner.resume("runner-autoplay-checkpoints");
+    expect(resumed.manifest.jobs[0]?.publishedCampaignId).toBe(published[0]!.campaignId);
+    expect(await catalog.listCampaigns()).toHaveLength(1);
+    expect(
+      PlaytestCallRecordSchema.array().parse(
+        (await readFile(path.join(jobDir, "calls", "artifact.jsonl"), "utf8"))
+          .trim()
+          .split(/\r?\n/u)
+          .map((line) => JSON.parse(line)),
+      ),
+    ).toHaveLength(1);
+    await expect(readFile(path.join(jobDir, "calls", "judge.jsonl"), "utf8")).rejects.toThrow();
+  });
+
+  it("does not publish a cancelled partial autoplay campaign", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-autoplay-cancel-"));
+    const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
+      profileFor: async () => playerProfile,
+      providerFor: () => {
+        const provider = new RunnerFakeProvider(playerProfile);
+        provider.cancelOnDecision = 2;
+        provider.cancel = () => runner.cancel();
+        return provider;
+      },
+      costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
+      worldRulesFor: async () => "Deterministic cancelled autoplay rules.",
+    });
+    const config: PlaytestRunConfig = {
+      engineVersion: 1,
+      package: { id: "campaign-autoplay-v1", version: 2 },
+      candidates: [playerTarget],
+      languages: ["en"],
+      turns: 25,
+      seed: "autoplay-cancelled-publication",
+      repetitions: 1,
+      globalWorkerLimit: 1,
+      latencyMode: "canonical",
+      providerConcurrency: { gemini: 1 },
+      maxCostUsd: 5,
+      maxDurationMs: 600_000,
+      player: { target: playerTarget, profile: "curious-explorer" },
+      judge: { policy: "none", rubricVersion: 1 },
+    };
+
+    const result = await runner.run(config, "runner-autoplay-cancelled-publication");
+
+    expect(result.manifest.status).toBe("cancelled");
+    expect(result.manifest.jobs[0]).toMatchObject({
+      status: "cancelled",
+      stopReason: "cancelled",
+      completedStory: {
+        status: "not_applicable",
+        error: "Gameplay did not reach a settled autoplay snapshot",
+      },
+    });
+    expect(result.manifest.jobs[0]?.publishedCampaignId).toBeUndefined();
+    expect(await new CampaignCatalog(path.join(root, "data")).listCampaigns()).toEqual([]);
+  });
+
+  it("keeps a failed terminal story outside gameplay evidence and retries it only on resume", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-story-retry-"));
+    const providerInstances: RunnerFakeProvider[] = [];
+    let failStory = true;
+    const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
+      profileFor: async () => playerProfile,
+      providerFor: () => {
+        const provider = new RunnerFakeProvider(playerProfile);
+        provider.terminalOnDecision = 3;
+        provider.completedStoryFailuresRemaining = failStory ? 1 : 0;
+        providerInstances.push(provider);
+        return provider;
+      },
+      costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
+      worldRulesFor: async () => "Deterministic terminal autoplay rules.",
+    });
+    const config: PlaytestRunConfig = {
+      engineVersion: 1,
+      package: { id: "campaign-autoplay-v1", version: 2 },
+      candidates: [playerTarget],
+      languages: ["en"],
+      turns: 25,
+      seed: "autoplay-story-retry",
+      repetitions: 1,
+      globalWorkerLimit: 1,
+      latencyMode: "canonical",
+      providerConcurrency: { gemini: 1 },
+      maxCostUsd: 5,
+      maxDurationMs: 600_000,
+      player: { target: playerTarget, profile: "curious-explorer" },
+      judge: { policy: "none", rubricVersion: 1 },
+    };
+
+    const failed = await runner.run(config, "runner-autoplay-story-retry");
+    const jobDir = path.join(failed.runDir, "jobs", "job-001");
+    const technicalBefore = await readFile(path.join(jobDir, "technical.json"), "utf8");
+    const candidateCallsBefore = await readFile(
+      path.join(jobDir, "calls", "candidate.jsonl"),
+      "utf8",
+    );
+    expect(failed.manifest.status).toBe("completed_with_failures");
+    expect(failed.manifest.jobs[0]).toMatchObject({
+      status: "completed",
+      stopReason: "legitimate_terminal",
+      completedTurns: 3,
+      completedStory: {
+        status: "failed",
+        attempts: 1,
+        error: "Completed-story artifact fixture failed",
+      },
+      publishedCampaignId: expect.any(String),
+    });
+    expect(candidateCallsBefore).not.toContain("completed_campaign_story_v1");
+    expect(
+      providerInstances
+        .flatMap((provider) => provider.requests)
+        .filter((request) => request.schemaName === "completed_campaign_story_v1"),
+    ).toHaveLength(1);
+    const failedArtifactCalls = PlaytestCallRecordSchema.array().parse(
+      (await readFile(path.join(jobDir, "calls", "artifact.jsonl"), "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line)),
+    );
+    expect(failedArtifactCalls).toHaveLength(1);
+    expect(failedArtifactCalls[0]).toMatchObject({
+      actor: "artifact",
+      phase: "completed_story",
+      success: false,
+    });
+    expect(await new StateStore(path.join(jobDir, "campaign")).completedStory()).toBeUndefined();
+    const catalog = new CampaignCatalog(path.join(root, "data"));
+    const publishedCampaignId = failed.manifest.jobs[0]!.publishedCampaignId!;
+    expect(
+      await (await catalog.readCampaign(publishedCampaignId)).completedStory(),
+    ).toBeUndefined();
+
+    failStory = false;
+    const resumed = await runner.resume("runner-autoplay-story-retry");
+    expect(resumed.manifest.jobs[0]).toMatchObject({
+      status: "completed",
+      technicalStatus: failed.manifest.jobs[0]?.technicalStatus,
+      completedStory: { status: "completed", attempts: 2 },
+      publishedCampaignId: failed.manifest.jobs[0]?.publishedCampaignId,
+    });
+    expect(resumed.manifest.status).toBe("completed");
+    expect(resumed.manifest.totalEstimatedCostUsd).toBeGreaterThan(
+      failed.manifest.totalEstimatedCostUsd,
+    );
+    expect(await readFile(path.join(jobDir, "technical.json"), "utf8")).toBe(technicalBefore);
+    expect(await readFile(path.join(jobDir, "calls", "candidate.jsonl"), "utf8")).toBe(
+      candidateCallsBefore,
+    );
+    const retriedArtifactCalls = PlaytestCallRecordSchema.array().parse(
+      (await readFile(path.join(jobDir, "calls", "artifact.jsonl"), "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line)),
+    );
+    expect(retriedArtifactCalls.map((call) => call.success)).toEqual([false, true]);
+    expect(await new StateStore(path.join(jobDir, "campaign")).completedStory()).toMatchObject({
+      story: COMPLETED_STORY_FIXTURE,
+      campaignStatus: "dead",
+      sourceTurn: 3,
+    });
+    expect(await (await catalog.readCampaign(publishedCampaignId)).completedStory()).toMatchObject({
+      story: COMPLETED_STORY_FIXTURE,
+      campaignStatus: "dead",
+      sourceTurn: 3,
+    });
+    expect(await readFile(resumed.reportPath, "utf8")).toContain(
+      "Completed-story artifact: **completed**; finalization attempts: 2",
+    );
+    expect(await catalog.listCampaigns()).toHaveLength(1);
   });
 
   it("keeps the run lock until sibling workers settle when one provider fails during initialization", async () => {
@@ -861,7 +1156,7 @@ describe("playtest runner", () => {
       actor: "candidate",
       phase: "decision",
       sequence: existingCalls.length + 1,
-      schemaName: "turn_decision_v1",
+      schemaName: "turn_decision_v2",
       provider: candidateProfile.key.provider,
       model: candidateProfile.key.model,
       route: candidateProfile.key.route,
@@ -905,6 +1200,110 @@ describe("playtest runner", () => {
     expect(persistedCalls.at(-1)).toMatchObject({
       id: "historical-failed-call",
       failureOwner: "candidate_model",
+    });
+  });
+
+  it("attributes the package failure limit to the latest failed call after its repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-failure-limit-"));
+    const candidate = new RunnerFakeProvider(candidateProfile);
+    const judge = new RunnerFakeProvider(judgeProfile);
+    const catalog = await fixtureCatalog(root);
+    const runner: PlaytestRunner = new PlaytestRunner(
+      root,
+      path.join(root, "playtests"),
+      dependencies(candidate, judge, catalog),
+    );
+    candidate.cancelOnDecision = 3;
+    candidate.cancel = () => runner.cancel();
+
+    const interrupted = await runner.run(certificationConfig(), "runner-failure-limit-owner");
+    expect(interrupted.manifest.jobs[0]).toMatchObject({ status: "cancelled", completedTurns: 2 });
+    const candidateCallsPath = path.join(
+      interrupted.runDir,
+      "jobs",
+      "job-001",
+      "calls",
+      "candidate.jsonl",
+    );
+    const existingCalls = PlaytestCallRecordSchema.array().parse(
+      (await readFile(candidateCallsPath, "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    );
+    const callBase = {
+      jobId: "job-001",
+      actor: "candidate" as const,
+      provider: candidateProfile.key.provider,
+      model: candidateProfile.key.model,
+      route: candidateProfile.key.route,
+      executionProfileFingerprint: candidateProfile.fingerprint,
+      providerDurationMs: 1,
+      promptHash: "failure-limit-prompt",
+      systemHash: "failure-limit-system",
+      schemaHash: "failure-limit-schema",
+      estimatedCostUsd: 0,
+    };
+    const candidateFailure = PlaytestCallRecordSchema.parse({
+      ...callBase,
+      id: "failure-limit-candidate",
+      timestamp: "2026-07-19T00:01:00.000Z",
+      phase: "decision",
+      sequence: existingCalls.length + 1,
+      schemaName: "turn_decision_v2",
+      success: false,
+      failureKind: "wire_schema_violation",
+      failureOwner: "candidate_model",
+      failureFingerprint: "b".repeat(64),
+      error: "First bounded candidate failure",
+    });
+    const adapterFailure = PlaytestCallRecordSchema.parse({
+      ...callBase,
+      id: "failure-limit-adapter",
+      timestamp: "2026-07-19T00:01:00.001Z",
+      phase: "decision",
+      sequence: existingCalls.length + 2,
+      schemaName: "turn_decision_v2",
+      success: false,
+      finishReason: "MAX_TOKENS",
+      truncated: true,
+      failureKind: "malformed_json",
+      failureOwner: "adapter_configuration",
+      failureFingerprint: "c".repeat(64),
+      error: "Latest failed call reached its output budget",
+    });
+    const successfulRepair = PlaytestCallRecordSchema.parse({
+      ...callBase,
+      id: "failure-limit-repair",
+      timestamp: "2026-07-19T00:01:00.002Z",
+      phase: "repair",
+      sequence: existingCalls.length + 3,
+      schemaName: "repair_turn_decision_v2",
+      success: true,
+      repairKind: "schema",
+    });
+    await appendFile(
+      candidateCallsPath,
+      `${[candidateFailure, adapterFailure, successfulRepair]
+        .map((call) => JSON.stringify(call))
+        .join("\n")}\n`,
+      "utf8",
+    );
+
+    const resumed = await runner.resume("runner-failure-limit-owner");
+    expect(resumed.manifest.jobs[0]).toMatchObject({
+      status: "inconclusive",
+      completedTurns: 2,
+      stopReason: "error",
+      failureOwner: "adapter_configuration",
+      error: "Playtest package candidate failure limit reached",
+      technicalStatus: "inconclusive",
+    });
+    expect((await readTurns(resumed.runDir)).at(-1)).toMatchObject({
+      turn: 3,
+      status: "failed",
+      failureOwner: "adapter_configuration",
     });
   });
 

@@ -10,7 +10,7 @@ import {
   createProvider,
   providerSupportsTemperature,
 } from "../src/providers.js";
-import { TurnDecisionSchema } from "../src/schemas.js";
+import { SetupResultSchema, TurnDecisionSchema } from "../src/schemas.js";
 import {
   GAMEPLAY_PROTOCOL_VERSION,
   GAMEPLAY_WIRE_JSON_SCHEMA,
@@ -22,7 +22,9 @@ import {
 } from "../src/llm/gameplay-protocol.js";
 import { GenerationFailure } from "../src/llm/failures.js";
 import { requestDiagnosticsFor } from "../src/llm/request-diagnostics.js";
-import { structuredFailureDetails } from "../src/llm/structured-error.js";
+import { attemptMetadataFor, structuredFailureDetails } from "../src/llm/structured-error.js";
+import type { LlmProvider } from "../src/types.js";
+import { createTestStore, setupFixture } from "./helpers.js";
 
 const answerSchema = z.object({ answer: z.string() });
 const answerRequest = {
@@ -32,9 +34,19 @@ const answerRequest = {
   prompt: "prompt",
 };
 
-function resolvedWire(effects: unknown[] = []) {
+/**
+ * A resolved V2 turn always declares its thread audit and end-of-turn scene.
+ * Callers that commit against the shared fixture campaign pass its active
+ * thread and current location.
+ */
+function resolvedWire(
+  effects: unknown[] = [],
+  declarations: { threadAudit?: unknown[]; sceneState?: unknown } = {},
+) {
   return {
     decision: "resolved",
+    threadAudit: declarations.threadAudit ?? [],
+    sceneState: declarations.sceneState ?? { locationId: "", presentActorIds: [] },
     narration: "Schema enforcement verified.",
     summary: "Schema enforcement verified.",
     effects,
@@ -57,6 +69,7 @@ function effect(overrides: Record<string, unknown>) {
     itemId: "",
     entityKindCode: 0,
     factSectionCode: 0,
+    factBasisCode: 0,
     lifecycleCode: 0,
     name: "",
     status: "",
@@ -69,7 +82,7 @@ function effect(overrides: Record<string, unknown>) {
 }
 
 const gameplayRequest = {
-  schemaName: "turn_decision_v1",
+  schemaName: "turn_decision_v2",
   schema: TurnDecisionSchema,
   wireSchema: WireTurnSchema,
   jsonSchema: GAMEPLAY_WIRE_JSON_SCHEMA,
@@ -82,7 +95,7 @@ const gameplayRequest = {
 describe("provider adapters", () => {
   it("locks provider schemas to resolved responses after the application rolls", () => {
     const request = resolvedGameplayRequest({
-      schemaName: "turn_resolution_v1",
+      schemaName: "turn_resolution_v2",
       schema: TurnDecisionSchema,
       decodeResponse: decodeTurnDecision,
       system: "system",
@@ -633,7 +646,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "openai",
-      protocolVersion: 1,
+      protocolVersion: 2,
       data: { kind: "resolved", operations: [] },
     });
   });
@@ -729,7 +742,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "anthropic",
-      protocolVersion: 1,
+      protocolVersion: 2,
       data: { kind: "resolved", operations: [] },
     });
   });
@@ -741,7 +754,7 @@ describe("provider adapters", () => {
       expect(body.thinking).toEqual({ type: "disabled" });
       expect(body).not.toHaveProperty("temperature");
       expect(body.messages[0].content).toContain("DEEPSEEK JSON OUTPUT CONTRACT");
-      expect(body.messages[0].content).toContain("Schema name: turn_decision_v1");
+      expect(body.messages[0].content).toContain("Schema name: turn_decision_v2");
       expect(body.messages[0].content).toContain(
         '\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]',
       );
@@ -749,9 +762,12 @@ describe("provider adapters", () => {
         "Required fields apply independently to every object inside an array",
       );
       expect(body.messages[0].content).toContain(
-        "$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, lifecycleCode, name, status, text, quantity, tags, references",
+        "$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, factBasisCode, lifecycleCode, name, status, text, quantity, tags, references",
       );
       expect(body.messages[0].content).toContain("$.modifiers[]: label, value");
+      expect(body.messages[0].content).toContain(
+        "$.threadAudit[]: threadIndex, verdictCode, text, references",
+      );
       expect(body.messages[0].content).toContain("Example JSON object with the required shape:");
       return new Response(
         JSON.stringify({
@@ -772,7 +788,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "deepseek",
-      protocolVersion: 1,
+      protocolVersion: 2,
       structuredMode: "json_object_local_schema",
       data: { kind: "resolved", operations: [] },
       usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
@@ -1378,13 +1394,215 @@ describe("provider adapters", () => {
     );
     const result = await provider.generateStructured(gameplayRequest);
     expect(result.structuredMode).toBe("exact_schema");
-    expect(result.protocolVersion).toBe(1);
+    expect(result.protocolVersion).toBe(2);
     expect(result.data).toMatchObject({
       kind: "resolved",
       operations: [
         { type: "create_entity", entity: { id: "location:market-square", kind: "location" } },
       ],
     });
+  });
+
+  it("remaps an unsafe same-turn create hint and its exact references before allocating a durable ID", async () => {
+    const unsafeHint = "npc:Master Haddon";
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify(
+                    resolvedWire(
+                      [
+                        effect({
+                          kind: "add_fact",
+                          targetId: unsafeHint,
+                          factSectionCode: 3,
+                          factBasisCode: 0,
+                          text: "Haddon offered a timber-line patrol contract.",
+                        }),
+                        effect({
+                          kind: "set_relationship",
+                          targetId: "player:hero",
+                          relatedId: unsafeHint,
+                          text: "The hero works for Haddon as a contracted scout.",
+                        }),
+                        effect({
+                          kind: "create_entity",
+                          targetId: unsafeHint,
+                          relatedId: "location:crooked-crown",
+                          entityKindCode: 1,
+                          name: "Master Haddon",
+                          status: "watchful",
+                          text: "A practical timber foreman.",
+                          tags: ["foreman"],
+                        }),
+                      ],
+                      {
+                        threadAudit: [
+                          {
+                            threadIndex: 1,
+                            verdictCode: 1,
+                            text: "",
+                            references: ["$unchanged"],
+                          },
+                        ],
+                        sceneState: {
+                          locationId: "location:crooked-crown",
+                          presentActorIds: [],
+                        },
+                      },
+                    ),
+                  ),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    const provider = new OpenRouterProvider(
+      "provider/model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/chat",
+      fetchMock as typeof fetch,
+    );
+
+    const generated = await provider.generateStructured(gameplayRequest);
+    expect(generated.data.kind).toBe("resolved");
+    if (generated.data.kind === "check_required") throw new Error("Expected a resolved turn");
+    const createdHint = generated.data.operations.find(
+      (operation) => operation.type === "create_entity",
+    )?.entity.id;
+    expect(createdHint).toMatch(/^generated:wire-create-/u);
+    expect(generated.data.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "add_fact", targetId: createdHint }),
+        expect.objectContaining({ type: "set_relationship", targetId: createdHint }),
+        expect.objectContaining({
+          type: "create_entity",
+          entity: expect.objectContaining({ id: createdHint }),
+        }),
+      ]),
+    );
+
+    const store = await createTestStore();
+    const committed = await store.commitTurnWithResult({
+      action: "I accept Haddon's patrol contract.",
+      resolved: generated.data,
+      provider: generated.provider,
+      model: generated.model,
+    });
+    const durableId = committed.operations.find((operation) => operation.type === "create_entity")
+      ?.entity.id;
+    expect(durableId).toBe("npc:master-haddon");
+    expect(durableId).not.toBe(createdHint);
+    expect(committed.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "add_fact", targetId: durableId }),
+        expect.objectContaining({ type: "set_relationship", targetId: durableId }),
+      ]),
+    );
+    expect((await store.load()).entities.has(durableId!)).toBe(true);
+  });
+
+  it("does not sanitize unsafe established references, empty creates, duplicates, or near-misses", async () => {
+    const store = await createTestStore();
+    const unresolvedEstablished = decodeTurnDecision(
+      resolvedWire([
+        effect({
+          kind: "add_fact",
+          targetId: "npc:Unknown Established Actor",
+          factSectionCode: 3,
+          factBasisCode: 0,
+          text: "This must not be attached to a guessed actor.",
+        }),
+      ]),
+    );
+    expect(unresolvedEstablished.kind).toBe("resolved");
+    if (unresolvedEstablished.kind === "check_required") {
+      throw new Error("Expected a resolved turn");
+    }
+    expect(unresolvedEstablished.operations[0]).toMatchObject({
+      type: "add_fact",
+      targetId: "npc:Unknown Established Actor",
+    });
+    await expect(
+      store.commitTurnWithResult({
+        action: "I rely on an unknown actor.",
+        resolved: unresolvedEstablished,
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/Unknown entity reference npc:Unknown Established Actor/u);
+
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire([
+          effect({
+            kind: "create_entity",
+            targetId: "",
+            entityKindCode: 1,
+            name: "Nameless Hint",
+            text: "The empty hint remains invalid.",
+          }),
+        ]),
+      ),
+    ).toThrow(/effects\[0\]\.targetId: field is required/u);
+
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire([
+          effect({
+            kind: "create_entity",
+            targetId: "npc:Duplicate Hint",
+            entityKindCode: 1,
+            name: "First",
+            text: "First duplicate.",
+          }),
+          effect({
+            kind: "create_entity",
+            targetId: "npc:Duplicate Hint",
+            entityKindCode: 1,
+            name: "Second",
+            text: "Second duplicate.",
+          }),
+        ]),
+      ),
+    ).toThrow(/duplicate create_entity targetId hint/u);
+
+    const nearMiss = decodeTurnDecision(
+      resolvedWire([
+        effect({
+          kind: "create_entity",
+          targetId: "npc:Master Haddon",
+          relatedId: "location:crooked-crown",
+          entityKindCode: 1,
+          name: "Master Haddon",
+          text: "A timber foreman.",
+        }),
+        effect({
+          kind: "add_fact",
+          targetId: "npc:Master Hadd0n",
+          factSectionCode: 3,
+          factBasisCode: 0,
+          text: "A near-miss must not be rewritten by the wire decoder.",
+        }),
+      ]),
+    );
+    expect(nearMiss.kind).toBe("resolved");
+    if (nearMiss.kind === "check_required") throw new Error("Expected a resolved turn");
+    expect(nearMiss.operations[1]).toMatchObject({ targetId: "npc:Master Hadd0n" });
+    await expect(
+      store.commitTurnWithResult({
+        action: "I rely on a near-miss actor reference.",
+        resolved: nearMiss,
+        provider: "fake",
+        model: "fake-model",
+      }),
+    ).rejects.toThrow(/Unknown entity reference npc:Master Hadd0n/u);
   });
 
   it("rejects domain-shaped and prose-coded responses outside the wire contract", () => {
@@ -1403,6 +1621,7 @@ describe("provider adapters", () => {
               kind: "add_fact",
               targetId: "player:hero",
               factSectionCode: 3,
+              factBasisCode: 0,
               text: "A clue.",
             }),
             factSectionCode: "Player Knowledge",
@@ -1417,6 +1636,7 @@ describe("provider adapters", () => {
             kind: "add_fact",
             targetId: "player:hero",
             factSectionCode: 3,
+            factBasisCode: 0,
             text: "A clue.",
           }),
         ]),
@@ -1450,28 +1670,62 @@ describe("provider adapters", () => {
   it("uses explicit sentinels without losing intentional empty list updates", () => {
     expect(
       decodeTurnDecision(
-        resolvedWire([
-          effect({
-            kind: "set_entity_state",
-            targetId: "npc:mara-venn",
-            name: "Mara",
-            tags: ["$unchanged"],
-          }),
-          effect({
-            kind: "update_thread",
-            targetId: "thread:northern-road",
-            text: "The road is open.",
-            references: [],
-          }),
-        ]),
+        resolvedWire(
+          [
+            effect({
+              kind: "set_entity_state",
+              targetId: "npc:mara-venn",
+              name: "Mara",
+              tags: ["$unchanged"],
+            }),
+          ],
+          {
+            // Thread lifecycle is declared, not emitted as an effect, and the
+            // application derives the operation from the verdict.
+            threadAudit: [
+              {
+                threadIndex: 1,
+                verdictCode: 2,
+                text: "The road is open.",
+                references: [],
+              },
+              {
+                threadIndex: 2,
+                verdictCode: 3,
+                text: "The caravan was found intact.",
+                references: ["$unchanged"],
+              },
+            ],
+            sceneState: { locationId: "location:crooked-crown", presentActorIds: [] },
+          },
+        ),
       ),
     ).toMatchObject({
       kind: "resolved",
-      operations: [
-        { type: "set_entity_state", targetId: "npc:mara-venn", name: "Mara" },
-        { type: "update_thread", threadId: "thread:northern-road", relatedEntityIds: [] },
+      operations: [{ type: "set_entity_state", targetId: "npc:mara-venn", name: "Mara" }],
+      // Lifecycle is derived in the domain, which owns the thread list, so the
+      // decoder carries verdicts by number and emits no thread operations.
+      threadAudit: [
+        { threadIndex: 1, verdict: "progressed", relatedEntityIds: [] },
+        { threadIndex: 2, verdict: "resolved" },
       ],
     });
+    // A retained-links sentinel leaves the durable references untouched.
+    expect(
+      decodeTurnDecision(
+        resolvedWire([], {
+          threadAudit: [
+            {
+              threadIndex: 1,
+              verdictCode: 2,
+              text: "Still open.",
+              references: ["$unchanged"],
+            },
+          ],
+          sceneState: { locationId: "location:crooked-crown", presentActorIds: [] },
+        }),
+      ).threadAudit?.[0],
+    ).not.toHaveProperty("relatedEntityIds");
     expect(() =>
       decodeTurnDecision(
         resolvedWire(
@@ -1545,6 +1799,116 @@ describe("provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10, totalTokens: 30 });
   });
 
+  it.each([
+    ["non-JSON", "not json", 200],
+    ["null", "null", 200],
+    ["root array", "[]", 200],
+    ["malformed object", '{"candidates":[42]}', undefined],
+  ])(
+    "fails closed on a %s Gemini success envelope with attempt metadata",
+    async (_case, body, status) => {
+      const provider = new GeminiProvider(
+        "gemini-model",
+        "key",
+        { temperature: 0.8, maxOutputTokens: 1000 },
+        "https://example.test/v1beta",
+        vi.fn(async () => new Response(body, { status: 200 })) as typeof fetch,
+      );
+      let failure: unknown;
+      try {
+        await provider.generateStructured(answerRequest);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toMatchObject({ kind: "provider", retryable: false });
+      expect((failure as GenerationFailure).status).toBe(status);
+      expect(attemptMetadataFor(failure)).toEqual({
+        provider: "gemini",
+        model: "gemini-model",
+        route: "direct",
+        attemptKind: "initial",
+        structuredMode: "exact_schema",
+        schemaProjection: "gemini_compatible_v1",
+        outputTokenField: "maxOutputTokens",
+        outputTokenBudget: 1000,
+        retryBackoffMs: 0,
+        truncated: false,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "Chat Completions",
+      (fetchMock: typeof fetch): LlmProvider =>
+        new OpenAIProvider(
+          "gpt-4o",
+          "key",
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/chat",
+          fetchMock,
+        ),
+    ],
+    [
+      "Anthropic Messages",
+      (fetchMock: typeof fetch): LlmProvider =>
+        new AnthropicProvider(
+          "claude-model",
+          "key",
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/messages",
+          fetchMock,
+        ),
+    ],
+    [
+      "Gemini",
+      (fetchMock: typeof fetch): LlmProvider =>
+        new GeminiProvider(
+          "gemini-model",
+          "key",
+          { temperature: 0.8, maxOutputTokens: 1000 },
+          "https://example.test/v1beta",
+          fetchMock,
+        ),
+    ],
+  ])("propagates terminal cancellation through the %s transport", async (_case, createProvider) => {
+    const controller = new AbortController();
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const rejectAbort = (): void => reject(new DOMException("aborted", "AbortError"));
+          init?.signal?.addEventListener("abort", rejectAbort, { once: true });
+          markStarted?.();
+          if (init?.signal?.aborted) rejectAbort();
+        }),
+    );
+    const provider = createProvider(fetchMock as typeof fetch);
+    const pending = provider.generateStructured({ ...answerRequest, signal: controller.signal });
+    await started;
+    controller.abort();
+
+    let failure: unknown;
+    try {
+      await pending;
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ kind: "cancelled", retryable: false });
+    expect(attemptMetadataFor(failure)).toMatchObject({
+      provider: provider.id,
+      model: provider.model,
+      attemptKind: "initial",
+      retryBackoffMs: 0,
+      truncated: false,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("rejects root arrays rather than selecting or merging a candidate", async () => {
     const fetchMock = vi.fn(
       async () =>
@@ -1563,6 +1927,48 @@ describe("provider adapters", () => {
       fetchMock as typeof fetch,
     );
     await expect(provider.generateStructured(answerRequest)).rejects.toBeInstanceOf(z.ZodError);
+  });
+
+  it("preserves optional setup-location guidance in Gemini's compatible schema", async () => {
+    let projectedEntitySchema: Record<string, any> | undefined;
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      projectedEntitySchema =
+        body.generationConfig.responseFormat.text.schema.properties.entities.items;
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: JSON.stringify(setupFixture) }] },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 16_000 },
+      "https://example.test/v1beta",
+      fetchMock as typeof fetch,
+    );
+
+    await expect(
+      provider.generateStructured({
+        schemaName: "campaign_setup",
+        schema: SetupResultSchema,
+        system: "system",
+        prompt: "prompt",
+      }),
+    ).resolves.toMatchObject({ data: setupFixture });
+
+    const projectedLocation = projectedEntitySchema?.properties.location;
+    expect(projectedEntitySchema?.required).not.toContain("location");
+    expect(projectedLocation).not.toHaveProperty("pattern");
+    expect(projectedLocation?.description).toContain("physical containment");
+    expect(projectedLocation?.description).toContain("omit it for a top-level location");
   });
 
   it("retains raw schema-invalid output and billed usage for diagnostics", async () => {
@@ -1661,6 +2067,80 @@ describe("provider adapters", () => {
       rawText: "",
       structuredMode: "exact_schema",
       usage: { inputTokens: 20, outputTokens: 100, totalTokens: 120 },
+    });
+  });
+
+  it("classifies Gemini PROHIBITED_CONTENT as a typed content block with usage and metadata", async () => {
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              candidates: [{ finishReason: "PROHIBITED_CONTENT" }],
+              usageMetadata: {
+                promptTokenCount: 20,
+                candidatesTokenCount: 3,
+                totalTokenCount: 23,
+              },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
+    );
+
+    let failure: unknown;
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ kind: "content_block", retryable: false });
+    expect(structuredFailureDetails(failure)).toMatchObject({
+      rawText: "",
+      parsedResponse: null,
+      structuredMode: "exact_schema",
+      usage: { inputTokens: 20, outputTokens: 3, totalTokens: 23 },
+      attemptMetadata: {
+        finishReason: "PROHIBITED_CONTENT",
+        truncated: false,
+      },
+    });
+  });
+
+  it("classifies a Gemini prompt-feedback block when no candidate exists", async () => {
+    const provider = new GeminiProvider(
+      "gemini-model",
+      "key",
+      { temperature: 0.8, maxOutputTokens: 1000 },
+      "https://example.test/v1beta",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              promptFeedback: { blockReason: "BLOCKLIST" },
+              usageMetadata: { promptTokenCount: 20, totalTokenCount: 20 },
+            }),
+            { status: 200 },
+          ),
+      ) as typeof fetch,
+    );
+
+    let failure: unknown;
+    try {
+      await provider.generateStructured(answerRequest);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ kind: "content_block", retryable: false });
+    expect(structuredFailureDetails(failure)).toMatchObject({
+      usage: { inputTokens: 20, totalTokens: 20 },
+      attemptMetadata: { finishReason: "BLOCKLIST" },
     });
   });
 

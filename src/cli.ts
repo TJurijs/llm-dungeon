@@ -17,7 +17,10 @@ async function main(): Promise<void> {
       import("./cli/program.js"),
       import("./cli/project-context.js"),
     ]);
-  const project = createCliProjectContext(process.cwd());
+  const command = process.argv[2];
+  const project = createCliProjectContext(process.cwd(), {
+    loadEnvironment: command !== "doctor" && command !== "backup",
+  });
   try {
     await createCliProgram(project).parseAsync();
   } catch (error) {
