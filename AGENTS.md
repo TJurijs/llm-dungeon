@@ -208,6 +208,40 @@ transaction    Gameplay Contract V2
 Presentation code may depend on the engine; the engine must not depend on CLI or
 browser code.
 
+### The engine boundary
+
+The engine is the deterministic game schema plus the DM reasoning loop: protocol,
+prompts, rules, transaction, mechanics, and one campaign's durable state. It is
+the transitive closure of `src/engine.ts` — currently 57 files. Everything else
+in `src/` is downstream of it. `tests/engine-boundary.test.ts` asserts this, so
+the seam is checked rather than merely described; the `tools/` half is
+lint-enforced separately.
+
+Inside, and staying inside: `store.ts`, the Markdown codec, atomic commit,
+locking, and pending-turn recovery. Code owns truth, which means the store owns
+truth, so persistence is the mechanics substrate rather than a peer of it — a
+turn cannot be validated without the thing that commits it. Do not try to
+separate one campaign's save format from the engine.
+
+Outside, and never imported by it: terminal and browser presentation, provider
+construction, the campaign catalog manager, the model catalog, assessment and
+certification evidence, the execution-profile store, the connection probe, world
+profiles, and the playtest harness. Multi-campaign management is separate from
+one campaign's state, and that distinction is the one worth keeping clear.
+
+Four non-gameplay modules are reached today and are pinned in that test. Two are
+vocabulary only (`model-execution-profile` supplies three type aliases through
+`types.ts`; `scenario-contracts` supplies one Zod schema). `input-budget` guards
+the model call and counts as core. `store.ts` takes exactly one read-only symbol,
+`readCampaignMetadata`, so a catalog-owned store can refuse to mutate an archived
+campaign; that crossing is pinned to that symbol and must not widen.
+
+`spending` is the one real crosscut. A logical turn's USD envelope is held across
+adjudication and locked resolution and its retries share one durable operation
+ID, so the state is turn-scoped and lives where the turn lives. Inverting it
+means teaching the provider wrapper the turn boundary. That is a deliberate
+design decision, not cleanup; a fifth pinned entry appearing is the same.
+
 ## State and transaction invariants
 
 - The model returns operations; it never writes files or supplies paths.
