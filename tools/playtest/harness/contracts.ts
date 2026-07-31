@@ -934,13 +934,23 @@ export const PlaytestTurnRecordSchema = z
      * An omission behaves as "unchanged" and no longer fails the turn, so this
      * is the only way the omission rate stays visible.
      */
+    /**
+     * Thread lifecycle for the turn, counted from the committed operations.
+     *
+     * Field names predate V3, when the same counts were read from the
+     * threadAudit declaration instead. They are kept so a report can still be
+     * built over the runs recorded under V2 and compared with a current one.
+     * `omitted` and `invented` are V2-only: with a single channel an untouched
+     * thread is simply unchanged, and an out-of-range ordinal is rejected
+     * before it can reach a committed turn.
+     */
     threadAudit: z
       .object({
         unchanged: z.number().int().nonnegative(),
         progressed: z.number().int().nonnegative(),
         closed: z.number().int().nonnegative(),
-        omitted: z.number().int().nonnegative(),
-        invented: z.number().int().nonnegative().default(0),
+        omitted: z.number().int().nonnegative().optional(),
+        invented: z.number().int().nonnegative().optional(),
       })
       .strict()
       .optional(),

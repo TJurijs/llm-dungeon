@@ -197,6 +197,7 @@ const EFFECT = {
   targetId: "npc:mara",
   relatedId: "player:hero",
   itemId: "item:healing-draught",
+  threadOrdinal: 0,
   entityKindCode: 0,
   factSectionCode: 0,
   factBasisCode: 0,
@@ -215,6 +216,7 @@ const REAL_EFFECTS = [
     targetId: "player:hero",
     relatedId: "",
     itemId: "",
+    threadOrdinal: 0,
     entityKindCode: 0,
     factSectionCode: 3,
     factBasisCode: 0,
@@ -231,6 +233,7 @@ const REAL_EFFECTS = [
     targetId: "",
     relatedId: "",
     itemId: "",
+    threadOrdinal: 0,
     entityKindCode: 0,
     factSectionCode: 0,
     factBasisCode: 0,
@@ -247,8 +250,6 @@ const REAL_EFFECTS = [
 function resolvedWire(narration: string, effects: unknown[] = []) {
   return {
     decision: "resolved",
-    threadAudit: [],
-    sceneState: { locationId: "", presentActorIds: [] },
     narration,
     effects,
     summary: narration,
@@ -265,8 +266,6 @@ function resolvedWire(narration: string, effects: unknown[] = []) {
 
 const CHECK_WIRE = {
   decision: "check_required",
-  threadAudit: [],
-  sceneState: { locationId: "", presentActorIds: [] },
   narration: "",
   effects: [],
   summary: "",

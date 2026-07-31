@@ -74,7 +74,7 @@ describe("campaign catalog", () => {
           lane: "gameplay",
           provider: "gemini",
           model: "gemini-3.6-flash",
-          schemaName: "turn_decision_v2",
+          schemaName: "turn_decision_v3",
           generationPhase: "decision",
           attemptKind: "initial",
           reservedAt: "2026-07-29T12:00:00.000Z",

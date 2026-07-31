@@ -254,10 +254,10 @@ describe("prompt suite V1", () => {
       "updating only a broader related thread is not sufficient",
     );
     expect(adjudicationPromptDocument(context, action).text).toContain(
-      "presentActorIds lists every other actor physically present there at the end of the turn",
+      "threadOrdinal: for update_thread and resolve_thread, the thread's 1-based number",
     );
     expect(adjudicationPromptDocument(context, action).text).toContain(
-      "an actor who left must be omitted and moved with move_entity instead",
+      "Enumerate every actor narration says accompanies, follows, arrives, or remains with the party and move each one",
     );
     for (const prompt of [adjudication, resolution]) {
       expect(prompt).toContain("OBJECTIVE CONTINUITY GATE — RUN BEFORE RETURN");
@@ -330,7 +330,7 @@ describe("prompt suite V1", () => {
     expect(GAMEPLAY_CONTRACT.content).toContain("One entity ID is one physical body");
     expect(GAMEPLAY_CONTRACT.content).toContain("a copy or identity claimant is a distinct entity");
     expect(GAMEPLAY_CONTRACT.content).toContain(
-      "Judge each thread against its own immutable objective, never the latest scene",
+      "Judge the thread against its own immutable objective, never the latest scene",
     );
     expect(RESOLVED_TURN_AUDIT.content).toContain(
       "Installing a reusable item transfers it from its former owner",
@@ -342,7 +342,7 @@ describe("prompt suite V1", () => {
       "Create an important item at its first confirmed appearance",
     );
     expect(adjudicationPromptDocument(context, action).text).toContain(
-      "exactly one entry per active thread listed in context",
+      "Emit update_thread or resolve_thread only for a thread this turn actually changed",
     );
     expect(adjudicationPromptDocument(context, action).text).toContain(
       "Closing the last active thread requires a successor",
@@ -352,7 +352,7 @@ describe("prompt suite V1", () => {
     expect(RESOLVED_TURN_AUDIT.content).toContain("IMPORTANT OBJECT AUDIT");
     expect(RESOLVED_TURN_AUDIT.content).toContain("NPC MOVEMENT AUDIT");
     expect(adjudicationPromptDocument(context, action).text).toContain(
-      "sceneState: locationId is the exact location containing the player character",
+      "Emit one for the player character and for every other actor whose containing location changed this turn",
     );
     expect(adjudicationPromptDocument(context, action).text).toContain(
       "Use the smallest important containing place the narration actually reaches",
@@ -647,7 +647,7 @@ describe("prompt suite V1", () => {
     );
     expect(FINAL_RESOLVED_COMMIT_GATE.content).toContain("exact item custody or quantity");
     expect(FINAL_RESOLVED_COMMIT_GATE.content).toContain(
-      "threadAudit covers every active thread exactly once",
+      "every active thread this turn materially changed has its update_thread or resolve_thread",
     );
     expect(FINAL_RESOLVED_COMMIT_GATE.content).toContain(
       "a capsule freshness count above zero requires explicit review",
@@ -838,7 +838,7 @@ describe("prompt suite V1", () => {
     // Retrieval links now travel on the audit entry rather than a separate
     // lifecycle effect, so the contract states it once.
     expect(adjudicationPromptDocument(context, action).text).toContain(
-      'references is the complete related entity ID list, or the single value "$unchanged"',
+      'references=the complete related entity ID list or the single value "$unchanged"',
     );
     expect(RESOLVED_TURN_AUDIT.content).toContain("kind, severity, subject, and body location");
     expect(RESOLVED_TURN_AUDIT.content).toContain(

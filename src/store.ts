@@ -1445,17 +1445,11 @@ export class StateStore {
       loaded.threads,
       loaded.chronicle,
       previousOperations,
-      // Appeals are append-only corrections and never reconcile threads or the
-      // scene, so they carry no declarations to reconcile against.
+      // Appeals are append-only corrections and never close or open a thread,
+      // so they pass no thread list and skip the lifecycle review signal.
       turnKind === "appeal"
         ? {}
-        : {
-            ...(committed.resolved.threadAudit
-              ? { threadAudit: committed.resolved.threadAudit }
-              : {}),
-            ...(committed.resolved.sceneState ? { sceneState: committed.resolved.sceneState } : {}),
-            playerId: loaded.manifest.playerId,
-          },
+        : { threads: loaded.threads, playerId: loaded.manifest.playerId },
     );
     if (turnKind === "appeal") assertAppealOperations(transaction.operations, loaded.entities);
     const { manifest, entities, threads, chronicle } = transaction;
@@ -2083,9 +2077,9 @@ If omissions are reported, only listed actor inventories are closed lists.
 PLAYER TRAITS / CAPABILITY CONTRACTS — BOUNDED REMINDER
 ${continuityPlayerTraits}
 
-ACTIVE THREADS — AUDIT EACH BY ITS NUMBER
+ACTIVE THREADS — ADDRESS EACH BY ITS NUMBER
 ${continuityActiveThreads}
-Use these exact numbers in threadAudit; the application resolves each one to its thread, so never copy a thread ID. Newer linked player-known facts are a review signal, not automatic progress. Reconcile only material changes to the objective, constraints, or remaining choices.
+Use these exact numbers as threadOrdinal on update_thread and resolve_thread; the application resolves each one to its thread, so never copy a thread ID. Newer linked player-known facts are a review signal, not automatic progress. Reconcile only material changes to the objective, constraints, or remaining choices.
 
 DM-ONLY CAUSAL CONSTRAINTS — AUTHORITATIVE; NEVER REVEAL MERELY BECAUSE THEY APPEAR HERE
 ${continuitySecrets}

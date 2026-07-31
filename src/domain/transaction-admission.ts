@@ -1,21 +1,17 @@
-import type { Entity, SceneState, StateOperation, Thread, ThreadAuditEntry } from "../schemas.js";
+import type { Entity, StateOperation, Thread } from "../schemas.js";
 import { collectOperationDurableTextViolations } from "./durable-state-policy.js";
 import { assertDeterministicConsistency } from "./operation-consistency.js";
-import { collectMutatedSubjects } from "./operation-references.js";
 import { newTagPolicyViolation } from "./tag-policy.js";
 import { collectRepeatedAbstractInventoryCredits } from "./transaction-normalization.js";
 import type { DomainViolationCollector } from "./violations.js";
 
 /**
- * Reconciliation the model declared for this turn.
+ * Campaign context an admission check needs beyond the operation list.
  *
- * These are not state operations: they are the closed-form claims the
- * application reconciles against authoritative state. Absent for appeals and
- * for replayed ledgers committed before the V2 contract.
+ * `threads` present means this is a live gameplay turn rather than an appeal or
+ * a replayed ledger, which is what gates the thread-lifecycle review signal.
  */
 export interface TransactionDeclarations {
-  readonly threadAudit?: readonly ThreadAuditEntry[];
-  readonly sceneState?: SceneState;
   readonly threads?: readonly Thread[];
   readonly playerId?: string;
 }
@@ -70,39 +66,6 @@ function collectNewOperationTagViolations(
       if (!existing.has(tag))
         collectNewTagViolations(collector, `Entity ${operation.targetId}`, tag);
     }
-  }
-}
-
-/**
- * The one thread-audit claim worth rejecting here.
- *
- * Ordinal addressing removed the misnamed-thread class entirely, and an
- * out-of-range number is caught during derivation. An omitted thread already
- * behaves as "unchanged" and is counted rather than failed. What remains is a
- * claim the turn itself contradicts: declaring a thread unchanged with no
- * reason while this same turn changed a record that thread links.
- */
-function collectThreadAuditViolations(
-  audit: readonly ThreadAuditEntry[],
-  operations: readonly StateOperation[],
-  threads: readonly Thread[],
-  collector: DomainViolationCollector,
-): void {
-  const active = threads.filter((thread) => thread.status === "active");
-  if (active.length === 0) return;
-  // Only records this turn actually wrote. Counting every reference made the
-  // question "did anything this thread links change?" true whenever the turn
-  // moved into a linked location or re-declared the thread's own links.
-  const changedSubjects = collectMutatedSubjects(operations);
-  for (const entry of audit) {
-    if (entry.verdict !== "unchanged" || entry.text.trim() !== "") continue;
-    const thread = active[entry.threadIndex - 1];
-    const touched = thread?.relatedEntityIds.filter((id) => changedSubjects.has(id)) ?? [];
-    if (touched.length === 0) continue;
-    collector.add(
-      "thread_audit_unjustified_unchanged",
-      `Thread number ${entry.threadIndex} is declared unchanged although this turn changed ${touched.sort().join(", ")}; state the reason in that audit entry`,
-    );
   }
 }
 
@@ -166,23 +129,10 @@ export function admitOperations(
       `A ${operation.basis} fact on ${operation.targetId} must name the source record it came from`,
     );
   }
-  // A present audit means the turn was produced under the V2 contract, which
-  // always supplies one. Appeals and pre-V2 replayed ledgers declare nothing
-  // and are reconciled by their own rules.
-  if (declarations.threadAudit !== undefined && declarations.threads) {
-    collectThreadAuditViolations(
-      declarations.threadAudit,
-      operations,
-      declarations.threads,
-      collector,
-    );
+  // Gameplay turns only. Appeals and replayed ledgers pass no thread list and
+  // are reconciled by their own rules.
+  if (declarations.threads) {
     collectThreadSuccessorViolations(operations, declarations.threads, collector);
-    if (declarations.sceneState === undefined) {
-      collector.add(
-        "scene_state_required",
-        "A resolved turn must declare the end-of-turn location containing the player character",
-      );
-    }
   }
   assertDeterministicConsistency([...operations], entities, collector);
 }

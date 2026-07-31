@@ -886,7 +886,6 @@ export class DungeonEngine implements GameEngine {
       narration: resolved.narration,
       summary: resolved.turnSummary,
       operations: committedResult.operations,
-      ...(resolved.threadAudit ? { threadAudit: resolved.threadAudit } : {}),
       ...(check ? { check } : {}),
       ...(automaticOutcome ? { automaticOutcome } : {}),
       ...(committedResult.domainSignals.length

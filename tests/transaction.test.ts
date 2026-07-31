@@ -303,10 +303,10 @@ describe("transaction boundary", () => {
     );
   });
 
-  it("derives movement from the declared end-of-turn scene", async () => {
+  it("moves an actor only when the turn says so with move_entity", async () => {
     const store = await createTestStore();
     const loaded = await store.load();
-    const thread = loaded.threads[0]!;
+    const origin = loaded.manifest.currentLocationId;
 
     const result = await store.commitTurnWithResult({
       action: "I lead Mara out to the watch post.",
@@ -328,11 +328,9 @@ describe("transaction boundary", () => {
               playerKnowledge: [],
             },
           },
+          { type: "move_entity", targetId: "player:hero", locationId: "location:watch-post" },
+          { type: "move_entity", targetId: "npc:mara-venn", locationId: "location:watch-post" },
         ],
-        // Narration moved both actors but supplied no movement effect. The
-        // declaration is what the application reconciles against.
-        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
-        sceneState: { locationId: "location:watch-post", presentActorIds: ["npc:mara-venn"] },
       },
       provider: "fake",
       model: "fake-model",
@@ -347,150 +345,17 @@ describe("transaction boundary", () => {
     const after = await store.load();
     expect(after.manifest.currentLocationId).toBe(destination);
     expect(after.entities.get("npc:mara-venn")?.location).toBe(destination);
-  });
-
-  it("treats an unaudited thread as unchanged while still requiring a scene", async () => {
-    const loaded = await (await createTestStore()).load();
-    let thrown: unknown;
-    try {
-      applyTransaction(
-        [],
-        1,
-        loaded.manifest,
-        loaded.entities,
-        loaded.threads,
-        loaded.chronicle,
-        [],
-        { threadAudit: [], playerId: loaded.manifest.playerId },
-      );
-    } catch (error) {
-      thrown = error;
-    }
-
-    // An omission behaves as "unchanged" and is measured, not rejected: making
-    // it fatal cost a bounded repair on every turn of the first V2 autoplay.
-    const message = (thrown as Error).message;
-    expect(message).not.toContain("thread audit omitted");
-    expect(message).toContain("must declare the end-of-turn location");
-  });
-
-  it("requires a reason before accepting an unchanged verdict on a changed thread", async () => {
-    const store = await createTestStore();
-    const loaded = await store.load();
-    const thread = loaded.threads[0]!;
-    const linked = { ...thread, relatedEntityIds: ["npc:mara-venn"] };
-    const declare = (text: string) =>
-      applyTransaction(
-        [{ type: "add_condition", targetId: "npc:mara-venn", condition: "shaken" }],
-        1,
-        loaded.manifest,
-        loaded.entities,
-        [linked],
-        loaded.chronicle,
-        [],
-        {
-          threadAudit: [{ threadIndex: 1, verdict: "unchanged", text }],
-          sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
-          playerId: loaded.manifest.playerId,
-        },
-      );
-
-    // The thread stays unchanged either way, so an unstated reason is recorded
-    // for review rather than spending the turn's one bounded correction.
-    const unexplained = declare("");
-    expect(unexplained.signals.map((signal) => signal.code)).toEqual([
-      "thread_audit_unjustified_unchanged",
-    ]);
-
-    const explained = declare("Mara's nerves do not change the missing-caravan question.");
-    expect(explained.signals).toEqual([]);
-  });
-
-  it("does not treat placing something inside a thread-linked location as changing that thread", async () => {
-    const store = await createTestStore();
-    const loaded = await store.load();
-    const thread = loaded.threads[0]!;
-    const room = loaded.manifest.currentLocationId;
-    // A seed may link its threads to the rooms the player occupies, so a turn
-    // that only puts a new record inside one must not read as thread progress.
-    const linked = { ...thread, relatedEntityIds: [room] };
-    const result = applyTransaction(
-      [
-        {
-          type: "create_entity",
-          entity: {
-            id: "npc:travelling-tinker",
-            kind: "person",
-            name: "Travelling Tinker",
-            status: "alive",
-            location: room,
-            tags: ["merchant"],
-            description: "A tinker sheltering from the rain.",
-            establishedFacts: [],
-            secrets: [],
-            playerKnowledge: [],
-            traits: [],
-            conditions: [],
-            inventory: [],
-          },
-        },
-      ],
-      1,
-      loaded.manifest,
-      loaded.entities,
-      [linked],
-      loaded.chronicle,
-      [],
-      {
-        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
-        sceneState: { locationId: room, presentActorIds: [] },
-        playerId: loaded.manifest.playerId,
-      },
-    );
-
-    expect(result.signals).toEqual([]);
-  });
-
-  it("does not treat a new thread's related-entity links as records it changed", async () => {
-    const store = await createTestStore();
-    const loaded = await store.load();
-    const linked = { ...loaded.threads[0]!, relatedEntityIds: ["npc:mara-venn"] };
-    const result = applyTransaction(
-      // Linking a record from another thread is retrieval metadata, not a write
-      // to the record itself.
-      [
-        {
-          type: "create_thread",
-          threadId: "thread:tinker-rumor",
-          title: "The tinker's rumor",
-          summary: "A tinker hints at something on the north road.",
-          relatedEntityIds: ["npc:mara-venn"],
-        },
-      ],
-      1,
-      loaded.manifest,
-      loaded.entities,
-      [linked],
-      loaded.chronicle,
-      [],
-      {
-        threadAudit: [{ threadIndex: 1, verdict: "unchanged", text: "" }],
-        sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
-        playerId: loaded.manifest.playerId,
-      },
-    );
-
-    expect(result.signals).toEqual([]);
+    expect(after.manifest.currentLocationId).not.toBe(origin);
   });
 
   it("observes a closure that leaves no successor without blocking the turn", async () => {
     const loaded = await (await createTestStore()).load();
-    const thread = loaded.threads[0]!;
-    const audit = [{ threadIndex: 1, verdict: "resolved" as const, text: "Answered." }];
-    const declarations = {
-      threadAudit: audit,
-      sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
-      playerId: loaded.manifest.playerId,
+    const declarations = { threads: loaded.threads, playerId: loaded.manifest.playerId };
+    const closure: StateOperation = {
+      type: "resolve_thread",
+      threadId: "$thread:1",
+      outcome: "Answered.",
+      status: "resolved",
     };
     const apply = (operations: StateOperation[]) =>
       applyTransaction(
@@ -504,13 +369,15 @@ describe("transaction boundary", () => {
         declarations,
       );
 
-    // Lifecycle is derived from the audit, so the closure needs no operation.
     // A campaign with no active thread is perfectly readable by a later turn, so
     // whether the fiction left something open is a judgment recorded for review
     // rather than a reason to spend the turn's one bounded correction.
-    expect(apply([]).signals.map((signal) => signal.code)).toEqual(["thread_successor_required"]);
+    expect(apply([closure]).signals.map((signal) => signal.code)).toEqual([
+      "thread_successor_required",
+    ]);
     expect(
       apply([
+        closure,
         {
           type: "create_thread",
           threadId: "generated:auto",
@@ -526,10 +393,6 @@ describe("transaction boundary", () => {
     const store = await createTestStore();
     const loaded = await store.load();
     const thread = loaded.threads[0]!;
-    const declarations = {
-      threadAudit: [{ threadIndex: 1, verdict: "unchanged" as const, text: "" }],
-      sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
-    };
 
     await store.commitTurnWithResult({
       action: "I ask Mara what she heard.",
@@ -547,7 +410,6 @@ describe("transaction boundary", () => {
             sourceId: "npc:mara-venn",
           },
         ],
-        ...declarations,
       },
       provider: "fake",
       model: "fake-model",
@@ -580,12 +442,12 @@ describe("transaction boundary", () => {
       loaded.threads,
       loaded.chronicle,
       [],
-      { ...declarations, playerId: loaded.manifest.playerId },
+      { threads: loaded.threads, playerId: loaded.manifest.playerId },
     );
     expect(unsourced.signals.map((signal) => signal.code)).toContain("fact_source_required");
   });
 
-  it("resolves thread verdicts by number so an ID can never be mistyped", async () => {
+  it("resolves a thread ordinal to its ID so an ID can never be mistyped", async () => {
     const store = await createTestStore();
     const loaded = await store.load();
     const thread = loaded.threads[0]!;
@@ -595,10 +457,11 @@ describe("transaction boundary", () => {
       resolved: {
         narration: "The road gives up one more detail.",
         turnSummary: "The hero narrowed the lead.",
-        operations: [],
-        // No thread ID anywhere in the model's output.
-        threadAudit: [{ threadIndex: 1, verdict: "progressed", text: "A courier was seen." }],
-        sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
+        // No thread ID anywhere in the model's output: only its number in the
+        // active-thread list the context printed.
+        operations: [
+          { type: "update_thread", threadId: "$thread:1", summary: "A courier was seen." },
+        ],
       },
       provider: "fake",
       model: "fake-model",
@@ -619,20 +482,42 @@ describe("transaction boundary", () => {
 
     expect(() =>
       applyTransaction(
-        [],
+        [{ type: "update_thread", threadId: "$thread:9", summary: "Nowhere." }],
         1,
         loaded.manifest,
         loaded.entities,
         loaded.threads,
         loaded.chronicle,
         [],
-        {
-          threadAudit: [{ threadIndex: 9, verdict: "progressed", text: "Nowhere." }],
-          sceneState: { locationId: loaded.manifest.currentLocationId, presentActorIds: [] },
-          playerId: loaded.manifest.playerId,
-        },
+        { threads: loaded.threads, playerId: loaded.manifest.playerId },
       ),
     ).toThrow(/outside the 1 active thread\(s\) supplied in context/u);
+  });
+
+  it("reports an out-of-range ordinal once instead of also as an unknown thread", async () => {
+    const loaded = await (await createTestStore()).load();
+    let violations: readonly { code: string }[] = [];
+    try {
+      applyTransaction(
+        [{ type: "update_thread", threadId: "$thread:9", summary: "Nowhere." }],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        loaded.threads,
+        loaded.chronicle,
+        [],
+        { threads: loaded.threads, playerId: loaded.manifest.playerId },
+      );
+    } catch (error) {
+      violations = (error as { violations?: readonly { code: string }[] }).violations ?? [];
+    }
+
+    // The unresolved hint stays on the operation so admission sees the whole
+    // transaction, which puts it in front of reference normalization too. A
+    // turn gets one bounded correction, so one fault must cost one message.
+    expect(violations.map((violation) => violation.code)).toEqual([
+      "thread_ordinal_out_of_range",
+    ]);
   });
 
   it("classifies how a reference missed without repeating what it said", async () => {

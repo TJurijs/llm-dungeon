@@ -243,7 +243,7 @@ describe("bounded campaign context policy", () => {
     expect(checkpoint.content).toContain("PLAYER TRAITS / CAPABILITY CONTRACTS — BOUNDED REMINDER");
     expect(checkpoint.content).toContain('- "Keen-eyed"');
     expect(checkpoint.content).toContain('- "Patient"');
-    expect(checkpoint.content).toContain("ACTIVE THREADS — AUDIT EACH BY ITS NUMBER");
+    expect(checkpoint.content).toContain("ACTIVE THREADS — ADDRESS EACH BY ITS NUMBER");
     expect(checkpoint.content).toContain(
       `[${activeThread.id}] immutable objective="Travelers have stopped arriving from the north."; current summary="Arlen is comparing the missing travelers' last known routes."; updated@1; newer linked player-known facts=0`,
     );

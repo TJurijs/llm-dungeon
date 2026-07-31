@@ -9,12 +9,11 @@ import type {
 } from "./violations.js";
 import {
   StateOperationSchema,
+  threadOrdinalReference,
   type ChronicleEvent,
   type Entity,
-  type SceneState,
   type StateOperation,
   type Thread,
-  type ThreadAuditEntry,
 } from "../schemas.js";
 import { allocateGeneratedId, allocateTurnScopedId, canonicalEntityName } from "./ids.js";
 
@@ -701,96 +700,51 @@ export function collectRepeatedAbstractInventoryCredits(
  * bounded correction can address a complete violation set.
  */
 /**
- * Turn the declared end-of-turn scene into movement.
+ * The active threads an ordinal refers to, in the order context lists them.
  *
- * Narration routinely relocates actors while the effect list does not, and no
- * check can read narration. A declared scene is part of the same structured
- * transaction, so converting it into movement is deterministic normalization
- * of the kind already applied to a created item's supplied owner. Presence is
- * authoritative inbound only: an omitted actor states no destination, so their
- * placement is left alone.
- */
-function synthesizeDeclaredScene(
-  operations: StateOperation[],
-  playerId: string,
-  scene: SceneState,
-  collector?: DomainViolationCollector,
-): StateOperation[] {
-  const declaredMovers = [playerId, ...scene.presentActorIds].filter(
-    (id, index, all) => all.indexOf(id) === index,
-  );
-  const explicitDestinations = new Map(
-    operations.flatMap((operation) =>
-      operation.type === "move_entity" ? [[operation.targetId, operation.locationId] as const] : [],
-    ),
-  );
-  const synthesized: StateOperation[] = [];
-  for (const targetId of declaredMovers) {
-    const explicit = explicitDestinations.get(targetId);
-    if (explicit !== undefined) {
-      if (explicit !== scene.locationId) {
-        const message = `${targetId} is moved to ${explicit} but the declared end-of-turn scene places them at ${scene.locationId}`;
-        if (!collector) rejectDomainChange(message, "scene_movement_conflict");
-        collector.add("scene_movement_conflict", message, { subjects: [targetId] });
-      }
-      continue;
-    }
-    synthesized.push({ type: "move_entity", targetId, locationId: scene.locationId });
-  }
-  return synthesized;
-}
-
-/**
- * The active threads an audit ordinal refers to, in the order context lists
- * them. Both sides read the same array, so the numbering cannot drift.
+ * Both the prompt projection and this resolver read the same filtered array, so
+ * the numbering cannot drift between what the model was shown and what the
+ * application resolves.
  */
 export function auditableThreads(threads: readonly Thread[]): Thread[] {
   return threads.filter((thread) => thread.status === "active");
 }
 
 /**
- * Turn declared verdicts into thread operations.
+ * Rewrite `$thread:N` references to the authoritative thread ID.
  *
- * Lifecycle is derived, never supplied, so a declaration and its operations
- * cannot disagree. Resolution is by ordinal: the model never reproduces a
- * generated ID, which removes the transcription errors that mandatory
- * per-thread auditing would otherwise multiply.
+ * This is the whole reason the ordinal exists: the model never reproduces a
+ * generated ID, so the transcription errors that per-thread ID copying
+ * multiplied cannot occur, and the only remaining failure is a number outside
+ * the list — which is a range check rather than a matching problem.
+ *
+ * A literal ID passes through untouched, so appeals, replayed pre-ordinal
+ * ledgers, and pending commits prepared by an older revision keep resolving
+ * through normalizeReferences exactly as before.
  */
-export function threadAuditOperations(
-  audit: readonly ThreadAuditEntry[],
+function resolveThreadOrdinals(
+  operations: StateOperation[],
   threads: readonly Thread[],
   collector?: DomainViolationCollector,
 ): StateOperation[] {
   const active = auditableThreads(threads);
-  const operations: StateOperation[] = [];
-  for (const entry of audit) {
-    const thread = active[entry.threadIndex - 1];
+  return operations.map((operation) => {
+    if (operation.type !== "update_thread" && operation.type !== "resolve_thread") return operation;
+    const ordinal = threadOrdinalReference(operation.threadId);
+    if (ordinal === undefined) return operation;
+    const thread = active[ordinal - 1];
     if (thread === undefined) {
-      const message = `Audited thread number ${entry.threadIndex} is outside the ${active.length} active thread(s) supplied in context`;
-      if (!collector) rejectDomainChange(message, "thread_audit_index_out_of_range");
-      collector.add("thread_audit_index_out_of_range", message);
-      continue;
+      const message = `Thread number ${ordinal} is outside the ${active.length} active thread(s) supplied in context`;
+      if (!collector) rejectDomainChange(message, "thread_ordinal_out_of_range");
+      // The unresolved hint stays on the operation so admission still sees the
+      // whole transaction, which means reference normalization would report it
+      // a second time as an unknown thread. One fault, one message.
+      collector.add("thread_ordinal_out_of_range", message, { subjects: [operation.threadId] });
+      collector.markFailedSubject(operation.threadId);
+      return operation;
     }
-    if (entry.verdict === "unchanged") continue;
-    operations.push(
-      entry.verdict === "progressed"
-        ? StateOperationSchema.parse({
-            type: "update_thread",
-            threadId: thread.id,
-            summary: entry.text,
-            ...(entry.relatedEntityIds === undefined
-              ? {}
-              : { relatedEntityIds: entry.relatedEntityIds }),
-          })
-        : StateOperationSchema.parse({
-            type: "resolve_thread",
-            threadId: thread.id,
-            outcome: entry.text,
-            status: entry.verdict,
-          }),
-    );
-  }
-  return operations;
+    return { ...operation, threadId: thread.id };
+  });
 }
 
 /**
@@ -835,31 +789,13 @@ export function prepareOperations(
   threads: Thread[],
   chronicle: ChronicleEvent[],
   collector?: DomainViolationCollector,
-  declarations: {
-    readonly playerId?: string;
-    readonly sceneState?: SceneState;
-    readonly threadAudit?: readonly ThreadAuditEntry[];
-  } = {},
 ): StateOperation[] {
-  const supplied = [
-    ...StateOperationSchema.array().parse(operations),
-    ...(declarations.threadAudit === undefined
-      ? []
-      : threadAuditOperations(declarations.threadAudit, threads, collector)),
-  ];
-  const validated =
-    declarations.sceneState && declarations.playerId
-      ? [
-          ...supplied,
-          ...synthesizeDeclaredScene(
-            supplied,
-            declarations.playerId,
-            declarations.sceneState,
-            collector,
-          ),
-        ]
-      : supplied;
-  const nearMisses = normalizeNearMissCreatedEntityReferences(validated, entities);
+  const supplied = resolveThreadOrdinals(
+    StateOperationSchema.array().parse(operations),
+    threads,
+    collector,
+  );
+  const nearMisses = normalizeNearMissCreatedEntityReferences(supplied, entities);
   const coalesced = coalesceDuplicateLocationCreates(nearMisses, entities);
   const physical = normalizeCreatedItemOwnership(coalesced, entities);
   const referenced = normalizeReferences(

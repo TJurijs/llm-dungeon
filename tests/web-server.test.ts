@@ -43,7 +43,7 @@ class WebFakeProvider implements LlmProvider {
       (data as typeof setupFixture).campaignTitle = `Campaign ${this.model}`;
     } else if (request.schemaName.startsWith("connection_campaign_setup_")) {
       data = JSON.parse(request.prompt.slice(request.prompt.indexOf("{")));
-    } else if (request.schemaName.startsWith("connection_gameplay_contract_v2_")) {
+    } else if (request.schemaName.startsWith("connection_gameplay_contract_v3_")) {
       const marker = request.schemaName.endsWith("_ru")
         ? "Проверка схемы выполнена."
         : "Schema enforcement verified.";
@@ -88,7 +88,7 @@ class SensitiveWebProvider extends WebFakeProvider {
   override async generateStructured<T>(
     request: StructuredRequest<T>,
   ): Promise<StructuredResult<T>> {
-    if (request.schemaName === "turn_decision_v2") {
+    if (request.schemaName === "turn_decision_v3") {
       return {
         data: request.schema.parse({
           kind: "check_required",
@@ -107,7 +107,7 @@ class SensitiveWebProvider extends WebFakeProvider {
         model: this.model,
       };
     }
-    if (request.schemaName === "turn_resolution_v2") {
+    if (request.schemaName === "turn_resolution_v3") {
       return {
         data: request.schema.parse({
           narration: "Mara gives you a guarded but useful answer.",
@@ -956,7 +956,7 @@ describe("multi-campaign Web server", () => {
       maxConcurrentCampaignOperations: 2,
       providerFactory: (config) =>
         new WebFakeProvider(config.model, async (request) => {
-          if (!holdTurns || request.schemaName !== "turn_decision_v2") return;
+          if (!holdTurns || request.schemaName !== "turn_decision_v3") return;
           started += 1;
           active += 1;
           maximumActive = Math.max(maximumActive, active);
@@ -1006,7 +1006,7 @@ describe("multi-campaign Web server", () => {
       },
       providerFactory: (config, environment) =>
         new WebFakeProvider(config.model, (request) => {
-          if (request.schemaName === "turn_decision_v2") {
+          if (request.schemaName === "turn_decision_v3") {
             turnModels.push(`${config.model}:${environment.GEMINI_API_KEY ?? "missing"}`);
           }
         }),

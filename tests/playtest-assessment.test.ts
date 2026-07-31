@@ -136,7 +136,7 @@ function call(overrides: Partial<PlaytestCallRecord> = {}): PlaytestCallRecord {
     actor: "candidate",
     phase: "decision",
     sequence: 1,
-    schemaName: "turn_decision_v2",
+    schemaName: "turn_decision_v3",
     provider: "fake",
     model: "candidate",
     route: "direct",

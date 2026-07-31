@@ -458,7 +458,7 @@ describe("turn engine", () => {
     const provider = new FakeProvider([[], resolved]);
     const result = await new DungeonEngine(store, provider).play("I greet Mara.");
     expect(provider.calls).toBe(2);
-    expect(provider.requests[1]?.schemaName).toBe("repair_turn_decision_v2");
+    expect(provider.requests[1]?.schemaName).toBe("repair_turn_decision_v3");
     expect(result.turn).toBe(1);
   });
 
@@ -612,7 +612,7 @@ describe("turn engine", () => {
     expect(request.prompt).toContain("CURRENT STATE RECONCILIATION");
     expect(request.prompt).toContain("Do not infer expiration");
     expect(request.prompt).toContain("Do not repeat an already-applied operation");
-    expect(request.protocolVersion).toBe(2);
+    expect(request.protocolVersion).toBe(3);
     expect(request.wireSchema).toBeDefined();
     expect(request.jsonSchema).toBeDefined();
     expect(request.decodeResponse).toBeDefined();
@@ -773,7 +773,7 @@ describe("turn engine", () => {
 
     expect(provider.calls).toBe(3);
     expect(provider.requests[2]).toMatchObject({
-      schemaName: "domain_repair_turn_resolution_v2",
+      schemaName: "domain_repair_turn_resolution_v3",
       generationPhase: "repair",
       repairOfPhase: "locked_resolution",
       attemptKind: "domain_repair",
@@ -816,7 +816,7 @@ describe("turn engine", () => {
     );
 
     expect(provider.calls).toBe(3);
-    expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v2");
+    expect(provider.requests[2]?.schemaName).toBe("domain_repair_turn_resolution_v3");
     expect(provider.requests[2]).toMatchObject({
       generationPhase: "repair",
       repairOfPhase: "locked_resolution",

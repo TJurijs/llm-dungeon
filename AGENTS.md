@@ -47,7 +47,7 @@ observable behavior and documented invariants during refactors.
   certification, narrative quality, or recommendation eligibility. English and
   Russian results remain independent. The API command is a placeholder, not an
   invitation to design a public API during unrelated work.
-- The application is V1 and the gameplay contract is V2. The npm package is private and
+- The application is V1 and the gameplay contract is V3. The npm package is private and
   intentionally has no public module exports; do not infer an API surface from
   internal TypeScript modules.
 - Administrative appeals append a new non-fiction review turn. They never
@@ -68,15 +68,21 @@ observable behavior and documented invariants during refactors.
   from terminal and HTTP presentation.
 - `src/types.ts` contains reusable interfaces, including `GameEngine` and
   `LlmProvider`.
-- `src/llm/gameplay-protocol.ts` is the exact Gameplay Contract V2 wire
+- `src/llm/gameplay-protocol.ts` is the exact Gameplay Contract V3 wire
   contract. Every provider must use the same schema and deterministic decoder.
-  V2 removes `update_thread` and `resolve_thread` as effects and adds two
-  required declarations to every resolved turn: `threadAudit`, a closed set
-  over the active threads from which the application derives thread
-  operations, and `sceneState`, the end-of-turn location and present actors
-  from which it derives movement. A declaration that disagrees with its
-  operations is unrepresentable rather than merely invalid. `add_fact` also
-  carries `factBasisCode` and, for reported or inferred evidence, its source.
+  V3 removes the `threadAudit` and `sceneState` declarations V2 added and
+  returns thread lifecycle to ordinary `update_thread` and `resolve_thread`
+  effects. V2 asked for the same fact twice, as a declaration and as an
+  operation, then checked that the two agreed; five of the eleven rules that
+  ever forced a repair were that disagreement, and the mandatory audit produced
+  no thread closure in 120 measured turns. One channel cannot disagree with
+  itself. What V2 got right was addressing an existing thread by its position in
+  the context list instead of a transcribed ID, so V3 keeps that as
+  `threadOrdinal` and drops the second channel around it. The decoder emits the
+  ordinal as a `$thread:N` reference hint and the transaction resolves it, which
+  keeps the decoder free of campaign state. Movement comes only from
+  `move_entity`. `add_fact` also carries `factBasisCode` and, for reported or
+  inferred evidence, its source.
 - `src/llm/structured-generation.ts` owns bounded transient/schema recovery;
   `src/llm/structured-error.ts` classifies structured failures.
 - `src/input-budget.ts` owns the phase-aware application input preflight. Input
@@ -202,7 +208,7 @@ terminal / web
    ↙       ↘
 StateStore  StructuredClient → LlmProvider
    ↓              ↓
-transaction    Gameplay Contract V2
+transaction    Gameplay Contract V3
 ```
 
 Presentation code may depend on the engine; the engine must not depend on CLI or
@@ -342,7 +348,7 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
 
 ## Protocol and provider invariants
 
-- Gameplay Contract V2 is strict and flat. Provider output constraints, wire
+- Gameplay Contract V3 is strict and flat. Provider output constraints, wire
   Zod schema, decoder, and domain Zod schema form one chain; do not bypass a
   layer. DeepSeek's documented JSON Object mode receives the exact schema and a
   deterministic example in the prompt, then relies on the same strict local
@@ -386,7 +392,7 @@ a current passing result for another language.
 - Gemini intentionally receives a compatible projection of the same schema; its
   adapter omits unsupported/high-complexity annotations while local Zod limits
   remain authoritative.
-- Post-roll resolution, appeal, and domain-correction requests use the same V2
+- Post-roll resolution, appeal, and domain-correction requests use the same V3
   wire object with the provider schema additionally locking `decision` to
   `resolved`; only adjudication and the connection probe expose the full union.
 - API keys come only from process memory, environment variables, or `.env`.
@@ -406,7 +412,7 @@ a current passing result for another language.
 
 Changing the wire format is not a casual refactor. If a change is unavoidable:
 
-1. deliberately increment `GAMEPLAY_PROTOCOL_VERSION` and its schema names (V1 to V2 is the worked example);
+1. deliberately increment `GAMEPLAY_PROTOCOL_VERSION` and its schema names (V2 to V3 is the worked example);
 2. update every provider and the connection probe;
 3. update prompts, wire/domain codecs, telemetry, and tests together;
 4. retain readable failure diagnostics;

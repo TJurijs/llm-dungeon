@@ -1326,7 +1326,7 @@ export class PlaytestRunner {
           Date.now() - visibleStarted,
           store,
           signals,
-          this.threadAuditSummary(result, activeThreadsBeforeTurn),
+          this.threadActivitySummary(result, activeThreadsBeforeTurn),
         );
         turnRecords.push(record);
         await appendPlaytestJsonLine(turnsPath, record);
@@ -1667,25 +1667,36 @@ export class PlaytestRunner {
   }
 
   /**
-   * Summarize declared thread verdicts against the threads that were active
-   * before the turn committed.
+   * Count thread lifecycle for the turn from the operations it committed.
+   *
+   * Under V2 these counts came from the threadAudit declaration. Reading them
+   * from the committed ledger instead measures what actually happened to the
+   * campaign rather than what the model said about it, and it keeps producing
+   * the same three numbers so a V3 run stays comparable with the V2 runs on
+   * disk. Thread closure is the measurement the audit was supposed to earn and
+   * never did.
    */
-  private threadAuditSummary(
+  private threadActivitySummary(
     result: TurnResult,
     activeBefore: readonly string[],
   ): PlaytestTurnRecord["threadAudit"] {
-    const audit = result.threadAudit;
-    if (audit === undefined) return undefined;
-    const declared = new Set(audit.map((entry) => entry.threadIndex));
+    const touched = new Set<string>();
+    let progressed = 0;
+    let closed = 0;
+    for (const operation of result.operations) {
+      if (operation.type === "update_thread") {
+        touched.add(operation.threadId);
+        progressed += 1;
+      }
+      if (operation.type === "resolve_thread") {
+        touched.add(operation.threadId);
+        closed += 1;
+      }
+    }
     return {
-      unchanged: audit.filter((entry) => entry.verdict === "unchanged").length,
-      progressed: audit.filter((entry) => entry.verdict === "progressed").length,
-      closed: audit.filter((entry) => entry.verdict === "resolved" || entry.verdict === "failed")
-        .length,
-      omitted: activeBefore.filter((_id, index) => !declared.has(index + 1)).length,
-      // Ordinal addressing makes a misnamed thread unrepresentable, so this
-      // now only counts a number outside the supplied list.
-      invented: audit.filter((entry) => entry.threadIndex > activeBefore.length).length,
+      unchanged: activeBefore.filter((id) => !touched.has(id)).length,
+      progressed,
+      closed,
     };
   }
 

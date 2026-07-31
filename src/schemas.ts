@@ -307,6 +307,25 @@ const RelationshipOperationSchema = z.object({
   summary: z.string().min(1),
 });
 
+/**
+ * How a turn addresses a thread that already exists.
+ *
+ * The wire supplies a 1-based position in the active-thread list printed in
+ * context, which normalization rewrites to the authoritative ID. An ordinal
+ * rather than an ID because reproducing a long generated ID is a transcription
+ * task with a measured error rate, and a number cannot be misspelled. The
+ * literal ID form stays accepted so appeals, replayed ledgers, and pre-ordinal
+ * pending commits keep resolving.
+ */
+export const THREAD_ORDINAL_PREFIX = "$thread:";
+
+/** `$thread:3` -> 3. Undefined for any other reference form. */
+export function threadOrdinalReference(reference: string): number | undefined {
+  if (!reference.startsWith(THREAD_ORDINAL_PREFIX)) return undefined;
+  const ordinal = Number(reference.slice(THREAD_ORDINAL_PREFIX.length));
+  return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : undefined;
+}
+
 const ThreadOperationSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("create_thread"),
@@ -398,60 +417,10 @@ export const CheckSpecSchema = CheckSpecInputSchema.superRefine((check, ctx) => 
   severeFailureStakes: check.severeFailureStakes ?? check.failureStakes,
 }));
 
-/**
- * One declared disposition for one active thread.
- *
- * Thread updates were previously optional effects, so silence and "nothing
- * changed" were indistinguishable and omission could not be detected. The
- * audit is a closed set over the active threads: every thread gets an explicit
- * verdict, and the application derives the thread operations from it, which
- * makes a declaration/operation mismatch impossible rather than merely invalid.
- */
-export const ThreadAuditEntrySchema = z.object({
-  /**
-   * 1-based position in the active-thread list supplied in context.
-   *
-   * An ordinal rather than an ID because reproducing a long generated ID many
-   * times per turn is a transcription task with a real error rate: mandatory
-   * per-thread ID copying multiplied reference failures roughly eightfold.
-   * A number cannot be misspelled.
-   */
-  threadIndex: z.number().int().positive().max(20),
-  verdict: z.enum(["unchanged", "progressed", "resolved", "failed"]),
-  /** Rolling summary, closure outcome, or the reason a thread is unchanged. */
-  text: z.string().default(""),
-  relatedEntityIds: z.array(ReferenceIdHintSchema).optional(),
-});
-
-/**
- * The declared end-of-turn scene.
- *
- * Narration routinely moves actors while the effect list does not. Code cannot
- * read narration, but it can require the same generation to state where the
- * scene ended and then reconcile that declaration against authoritative
- * placement deterministically.
- */
-export const SceneStateSchema = z.object({
-  locationId: ReferenceIdHintSchema,
-  /**
-   * Actors physically present at the end of the turn. Authoritative inbound
-   * only: a declared presence moves an actor here, while omission is a review
-   * signal because the destination of a departure is not stated.
-   */
-  presentActorIds: z.array(ReferenceIdHintSchema).max(20).default([]),
-});
-
 export const ResolvedTurnSchema = z.object({
   narration: z.string().min(1),
   turnSummary: z.string().min(1),
   operations: z.array(StateOperationSchema).max(40),
-  /**
-   * Absent means the turn predates the V2 contract; the wire always supplies
-   * it, so a declared-but-empty audit is a coverage violation rather than a
-   * silent opt-out.
-   */
-  threadAudit: z.array(ThreadAuditEntrySchema).max(20).optional(),
-  sceneState: SceneStateSchema.optional(),
 });
 
 export const TurnDecisionSchema = z.discriminatedUnion("kind", [
@@ -526,8 +495,6 @@ export const QuestionAnswerSchema = z
 export type Entity = z.infer<typeof EntitySchema>;
 export type Fact = z.infer<typeof FactSchema>;
 export type FactBasis = z.infer<typeof FactBasisSchema>;
-export type ThreadAuditEntry = z.infer<typeof ThreadAuditEntrySchema>;
-export type SceneState = z.infer<typeof SceneStateSchema>;
 export type Thread = z.infer<typeof ThreadSchema>;
 export type ChronicleEvent = z.infer<typeof ChronicleEventSchema>;
 export type GameState = z.infer<typeof ManifestSchema>;

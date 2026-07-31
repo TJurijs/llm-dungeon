@@ -34,19 +34,10 @@ const answerRequest = {
   prompt: "prompt",
 };
 
-/**
- * A resolved V2 turn always declares its thread audit and end-of-turn scene.
- * Callers that commit against the shared fixture campaign pass its active
- * thread and current location.
- */
-function resolvedWire(
-  effects: unknown[] = [],
-  declarations: { threadAudit?: unknown[]; sceneState?: unknown } = {},
-) {
+/** A resolved V3 turn: one channel, so effects carry the whole transaction. */
+function resolvedWire(effects: unknown[] = []) {
   return {
     decision: "resolved",
-    threadAudit: declarations.threadAudit ?? [],
-    sceneState: declarations.sceneState ?? { locationId: "", presentActorIds: [] },
     narration: "Schema enforcement verified.",
     summary: "Schema enforcement verified.",
     effects,
@@ -67,6 +58,7 @@ function effect(overrides: Record<string, unknown>) {
     targetId: "",
     relatedId: "",
     itemId: "",
+    threadOrdinal: 0,
     entityKindCode: 0,
     factSectionCode: 0,
     factBasisCode: 0,
@@ -82,7 +74,7 @@ function effect(overrides: Record<string, unknown>) {
 }
 
 const gameplayRequest = {
-  schemaName: "turn_decision_v2",
+  schemaName: "turn_decision_v3",
   schema: TurnDecisionSchema,
   wireSchema: WireTurnSchema,
   jsonSchema: GAMEPLAY_WIRE_JSON_SCHEMA,
@@ -95,7 +87,7 @@ const gameplayRequest = {
 describe("provider adapters", () => {
   it("locks provider schemas to resolved responses after the application rolls", () => {
     const request = resolvedGameplayRequest({
-      schemaName: "turn_resolution_v2",
+      schemaName: "turn_resolution_v3",
       schema: TurnDecisionSchema,
       decodeResponse: decodeTurnDecision,
       system: "system",
@@ -646,7 +638,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "openai",
-      protocolVersion: 2,
+      protocolVersion: 3,
       data: { kind: "resolved", operations: [] },
     });
   });
@@ -742,7 +734,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "anthropic",
-      protocolVersion: 2,
+      protocolVersion: 3,
       data: { kind: "resolved", operations: [] },
     });
   });
@@ -754,7 +746,7 @@ describe("provider adapters", () => {
       expect(body.thinking).toEqual({ type: "disabled" });
       expect(body).not.toHaveProperty("temperature");
       expect(body.messages[0].content).toContain("DEEPSEEK JSON OUTPUT CONTRACT");
-      expect(body.messages[0].content).toContain("Schema name: turn_decision_v2");
+      expect(body.messages[0].content).toContain("Schema name: turn_decision_v3");
       expect(body.messages[0].content).toContain(
         '\"decision\":{\"type\":\"string\",\"enum\":[\"resolved\",\"check_required\"]',
       );
@@ -762,12 +754,9 @@ describe("provider adapters", () => {
         "Required fields apply independently to every object inside an array",
       );
       expect(body.messages[0].content).toContain(
-        "$.effects[]: kind, targetId, relatedId, itemId, entityKindCode, factSectionCode, factBasisCode, lifecycleCode, name, status, text, quantity, tags, references",
+        "$.effects[]: kind, targetId, relatedId, itemId, threadOrdinal, entityKindCode, factSectionCode, factBasisCode, lifecycleCode, name, status, text, quantity, tags, references",
       );
       expect(body.messages[0].content).toContain("$.modifiers[]: label, value");
-      expect(body.messages[0].content).toContain(
-        "$.threadAudit[]: threadIndex, verdictCode, text, references",
-      );
       expect(body.messages[0].content).toContain("Example JSON object with the required shape:");
       return new Response(
         JSON.stringify({
@@ -788,7 +777,7 @@ describe("provider adapters", () => {
     );
     await expect(provider.generateStructured(gameplayRequest)).resolves.toMatchObject({
       provider: "deepseek",
-      protocolVersion: 2,
+      protocolVersion: 3,
       structuredMode: "json_object_local_schema",
       data: { kind: "resolved", operations: [] },
       usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
@@ -1394,7 +1383,7 @@ describe("provider adapters", () => {
     );
     const result = await provider.generateStructured(gameplayRequest);
     expect(result.structuredMode).toBe("exact_schema");
-    expect(result.protocolVersion).toBe(2);
+    expect(result.protocolVersion).toBe(3);
     expect(result.data).toMatchObject({
       kind: "resolved",
       operations: [
@@ -1438,22 +1427,7 @@ describe("provider adapters", () => {
                           text: "A practical timber foreman.",
                           tags: ["foreman"],
                         }),
-                      ],
-                      {
-                        threadAudit: [
-                          {
-                            threadIndex: 1,
-                            verdictCode: 1,
-                            text: "",
-                            references: ["$unchanged"],
-                          },
-                        ],
-                        sceneState: {
-                          locationId: "location:crooked-crown",
-                          presentActorIds: [],
-                        },
-                      },
-                    ),
+                      ]),
                   ),
                 },
               },
@@ -1670,62 +1644,68 @@ describe("provider adapters", () => {
   it("uses explicit sentinels without losing intentional empty list updates", () => {
     expect(
       decodeTurnDecision(
-        resolvedWire(
-          [
-            effect({
-              kind: "set_entity_state",
-              targetId: "npc:mara-venn",
-              name: "Mara",
-              tags: ["$unchanged"],
-            }),
-          ],
-          {
-            // Thread lifecycle is declared, not emitted as an effect, and the
-            // application derives the operation from the verdict.
-            threadAudit: [
-              {
-                threadIndex: 1,
-                verdictCode: 2,
-                text: "The road is open.",
-                references: [],
-              },
-              {
-                threadIndex: 2,
-                verdictCode: 3,
-                text: "The caravan was found intact.",
-                references: ["$unchanged"],
-              },
-            ],
-            sceneState: { locationId: "location:crooked-crown", presentActorIds: [] },
-          },
-        ),
+        resolvedWire([
+          effect({
+            kind: "set_entity_state",
+            targetId: "npc:mara-venn",
+            name: "Mara",
+            tags: ["$unchanged"],
+          }),
+          // Thread lifecycle is an ordinary effect again, addressed by the
+          // thread's number in context. The domain owns the thread list, so the
+          // decoder emits the ordinal as a reference hint and resolves nothing.
+          effect({ kind: "update_thread", threadOrdinal: 1, text: "The road is open." }),
+          effect({
+            kind: "resolve_thread",
+            threadOrdinal: 2,
+            lifecycleCode: 2,
+            text: "The caravan was never found.",
+            references: ["$unchanged"],
+          }),
+        ]),
       ),
     ).toMatchObject({
       kind: "resolved",
-      operations: [{ type: "set_entity_state", targetId: "npc:mara-venn", name: "Mara" }],
-      // Lifecycle is derived in the domain, which owns the thread list, so the
-      // decoder carries verdicts by number and emits no thread operations.
-      threadAudit: [
-        { threadIndex: 1, verdict: "progressed", relatedEntityIds: [] },
-        { threadIndex: 2, verdict: "resolved" },
+      operations: [
+        { type: "set_entity_state", targetId: "npc:mara-venn", name: "Mara" },
+        { type: "update_thread", threadId: "$thread:1", summary: "The road is open." },
+        {
+          type: "resolve_thread",
+          threadId: "$thread:2",
+          status: "failed",
+          outcome: "The caravan was never found.",
+        },
       ],
     });
     // A retained-links sentinel leaves the durable references untouched.
     expect(
       decodeTurnDecision(
-        resolvedWire([], {
-          threadAudit: [
-            {
-              threadIndex: 1,
-              verdictCode: 2,
-              text: "Still open.",
-              references: ["$unchanged"],
-            },
-          ],
-          sceneState: { locationId: "location:crooked-crown", presentActorIds: [] },
-        }),
-      ).threadAudit?.[0],
+        resolvedWire([
+          effect({
+            kind: "update_thread",
+            threadOrdinal: 1,
+            text: "Still open.",
+            references: ["$unchanged"],
+          }),
+        ]),
+      ).operations[0],
     ).not.toHaveProperty("relatedEntityIds");
+    // One thread, one effect: the only duplicate representation a single
+    // channel can still express.
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire([
+          effect({ kind: "update_thread", threadOrdinal: 1, text: "First." }),
+          effect({ kind: "update_thread", threadOrdinal: 1, text: "Second." }),
+        ]),
+      ),
+    ).toThrow(/addressed at most once/);
+    // An ordinal is required: a thread effect cannot fall back to an ID.
+    expect(() =>
+      decodeTurnDecision(
+        resolvedWire([effect({ kind: "update_thread", targetId: "thread:road", text: "By ID." })]),
+      ),
+    ).toThrow(/1-based number/);
     expect(() =>
       decodeTurnDecision(
         resolvedWire(

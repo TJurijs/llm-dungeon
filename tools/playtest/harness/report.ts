@@ -669,7 +669,12 @@ export function renderPlaytestReport(data: PlaytestReportData): string {
       ...(job.technicalReasons.length === 0
         ? []
         : [`- Technical reasons: ${job.technicalReasons.join("; ")}`]),
-      `- Thread verdicts: unchanged=${job.threadAudit.unchanged}, progressed=${job.threadAudit.progressed}, closed=${job.threadAudit.closed}, unaudited=${job.threadAudit.omitted}, named-but-absent=${job.threadAudit.invented}`,
+      // unaudited/named-but-absent are V2-only and stay in the line only while
+      // a run recorded under that contract can still be reported.
+      `- Thread lifecycle: unchanged=${job.threadAudit.unchanged}, progressed=${job.threadAudit.progressed}, closed=${job.threadAudit.closed}` +
+        (job.threadAudit.omitted || job.threadAudit.invented
+          ? `, unaudited=${job.threadAudit.omitted}, named-but-absent=${job.threadAudit.invented}`
+          : ""),
       ...(job.scenarioSignals.length === 0
         ? []
         : [

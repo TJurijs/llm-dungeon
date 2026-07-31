@@ -75,12 +75,11 @@ export function applyTransaction(
       threadsInput,
       chronicleInput,
       collector,
-      declarations,
     );
-    admitOperations(prepared, entitiesInput, previousOperations, collector, {
-      ...declarations,
-      threads: declarations.threads ?? threadsInput,
-    });
+    // Passed through unchanged: an absent thread list is how an appeal or a
+    // replayed ledger says "not a gameplay turn", so defaulting it here would
+    // silently re-enable the lifecycle signal for both.
+    admitOperations(prepared, entitiesInput, previousOperations, collector, declarations);
 
     const manifest = structuredClone(manifestInput);
     const entities = new Map(

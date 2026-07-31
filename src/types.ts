@@ -6,7 +6,6 @@ import type {
   ResolvedTurn,
   SetupResult,
   StateOperation,
-  ThreadAuditEntry,
 } from "./schemas.js";
 import type { LanguageCode } from "./language.js";
 import type { SetupRequirements } from "./setup-requirements.js";
@@ -223,11 +222,6 @@ export interface CampaignStateSnapshotRead {
 }
 
 export interface TurnResult {
-  /**
-   * Thread verdicts the turn declared. Kept on the result so the omission rate
-   * stays measurable now that an omission is a signal rather than a rejection.
-   */
-  threadAudit?: readonly ThreadAuditEntry[];
   turn: number;
   kind: Exclude<TurnKind, "opening">;
   appealTargetTurn?: number;

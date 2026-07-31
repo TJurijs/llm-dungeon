@@ -13,6 +13,7 @@ import {
   type RecordCertificationInput,
 } from "../src/model-assessment-catalog.js";
 import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
+import type { StateOperation } from "../src/schemas.js";
 import {
   PlaytestCallRecordSchema,
   PlaytestTurnRecordSchema,
@@ -99,29 +100,21 @@ function certificationConfig(overrides: Partial<PlaytestRunConfig> = {}): Playte
 const FIXTURE_SCENE_LOCATION = "location:lantern-market";
 
 /**
- * The V2 declarations a real model supplies on every resolved turn.
+ * The thread operation a real model supplies on a turn that advances one.
  *
- * Every runner fixture must carry these. `admitOperations` gates the whole
- * thread-audit, scene-state, and successor block behind a present audit, so a
- * fixture that declares nothing silently skips the exact code path a real model
- * exercises each turn — which is how the harness loop came to have no coverage
- * of the contract that caused every observed run failure.
- *
- * The canonical setup declares one active thread linked to seven records,
- * including the player and both locations, so this also exercises the
- * changed-subject predicate against a heavily linked thread.
+ * Every runner fixture carries it so the harness loop exercises the ordinal
+ * path a real model takes — the reference form that replaced the V2 audit, and
+ * the one whose resolution runs inside the transaction rather than the decoder.
+ * A fixture that emits no thread operation silently skips it.
  */
-function declarations(turn: number) {
-  return {
-    threadAudit: [
-      {
-        threadIndex: 1,
-        verdict: "progressed" as const,
-        text: `Turn ${turn} added one confirmed detail about the missing ledger while every earlier lead, suspect, and place stays open.`,
-      },
-    ],
-    sceneState: { locationId: FIXTURE_SCENE_LOCATION, presentActorIds: [] },
-  };
+function threadProgress(turn: number): StateOperation[] {
+  return [
+    {
+      type: "update_thread",
+      threadId: "$thread:1",
+      summary: `Turn ${turn} added one confirmed detail about the missing ledger while every earlier lead, suspect, and place stays open.`,
+    },
+  ];
 }
 
 function resolved(turn: number) {
@@ -129,8 +122,7 @@ function resolved(turn: number) {
     kind: "resolved" as const,
     narration: `The controlled scene resolves turn ${turn} without adding unsupported state.`,
     turnSummary: `Controlled certification turn ${turn} completed.`,
-    operations: [],
-    ...declarations(turn),
+    operations: threadProgress(turn),
   };
 }
 
@@ -293,7 +285,7 @@ class RunnerFakeProvider implements LlmProvider {
         };
       } else if (request.schemaName.includes("campaign_setup")) {
         value = CERTIFICATION_CANONICAL_SETUPS.en;
-      } else if (request.schemaName.includes("turn_resolution_v2")) {
+      } else if (request.schemaName.includes("turn_resolution_v3")) {
         // The domain correction arrives on this schema, so an armed repair stays
         // invalid and the turn exhausts its one bounded correction.
         if (this.uncommittableRepairsRemaining > 0) {
@@ -302,7 +294,6 @@ class RunnerFakeProvider implements LlmProvider {
             narration: `The correction for decision ${this.decisionCount} still names an absent record.`,
             turnSummary: `Decision ${this.decisionCount} remained uncommittable.`,
             operations: uncommittableOperations(),
-            ...declarations(this.decisionCount),
           };
           return {
             data: request.schema.parse(value),
@@ -317,30 +308,24 @@ class RunnerFakeProvider implements LlmProvider {
           narration: `The locked outcome resolves decision ${this.decisionCount}.`,
           turnSummary: `Locked outcome ${this.decisionCount} completed.`,
           operations: ending
-            ? [
+            ? // A terminal turn closes the thread rather than progressing it, so
+              // the successor rule has nothing to observe on an ending campaign.
+              ([
                 {
                   type: "end_campaign",
                   status: "dead",
                   reason: "The locked severe failure is fatal.",
                 },
-              ]
-            : [],
-          // A terminal turn closes the thread rather than progressing it, so the
-          // successor rule has nothing to observe on an ending campaign.
-          ...(ending
-            ? {
-                threadAudit: [
-                  {
-                    threadIndex: 1,
-                    verdict: "failed" as const,
-                    text: "The ledger question closes unanswered with the campaign.",
-                  },
-                ],
-                sceneState: { locationId: FIXTURE_SCENE_LOCATION, presentActorIds: [] },
-              }
-            : declarations(this.decisionCount)),
+                {
+                  type: "resolve_thread",
+                  threadId: "$thread:1",
+                  outcome: "The ledger question closes unanswered with the campaign.",
+                  status: "failed",
+                },
+              ] as StateOperation[])
+            : threadProgress(this.decisionCount),
         };
-      } else if (request.schemaName.includes("turn_decision_v2")) {
+      } else if (request.schemaName.includes("turn_decision_v3")) {
         this.decisionCount += 1;
         if (this.uncommittableOnDecision === this.decisionCount) {
           this.uncommittableRepairsRemaining = 1;
@@ -349,7 +334,6 @@ class RunnerFakeProvider implements LlmProvider {
             narration: `Decision ${this.decisionCount} narrates an effect on a record that does not exist.`,
             turnSummary: `Decision ${this.decisionCount} could not be committed.`,
             operations: uncommittableOperations(),
-            ...declarations(this.decisionCount),
           };
           return {
             data: request.schema.parse(value),
@@ -1380,7 +1364,7 @@ describe("playtest runner", () => {
       actor: "candidate",
       phase: "decision",
       sequence: existingCalls.length + 1,
-      schemaName: "turn_decision_v2",
+      schemaName: "turn_decision_v3",
       provider: candidateProfile.key.provider,
       model: candidateProfile.key.model,
       route: candidateProfile.key.route,
@@ -1475,7 +1459,7 @@ describe("playtest runner", () => {
       timestamp: "2026-07-19T00:01:00.000Z",
       phase: "decision",
       sequence: existingCalls.length + 1,
-      schemaName: "turn_decision_v2",
+      schemaName: "turn_decision_v3",
       success: false,
       failureKind: "wire_schema_violation",
       failureOwner: "candidate_model",
@@ -1488,7 +1472,7 @@ describe("playtest runner", () => {
       timestamp: "2026-07-19T00:01:00.001Z",
       phase: "decision",
       sequence: existingCalls.length + 2,
-      schemaName: "turn_decision_v2",
+      schemaName: "turn_decision_v3",
       success: false,
       finishReason: "MAX_TOKENS",
       truncated: true,
@@ -1503,7 +1487,7 @@ describe("playtest runner", () => {
       timestamp: "2026-07-19T00:01:00.002Z",
       phase: "repair",
       sequence: existingCalls.length + 3,
-      schemaName: "repair_turn_decision_v2",
+      schemaName: "repair_turn_decision_v3",
       success: true,
       repairKind: "schema",
     });

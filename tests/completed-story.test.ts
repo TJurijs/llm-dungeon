@@ -215,7 +215,7 @@ describe("completed campaign story", () => {
 
     expect(result.state).toMatchObject({ turn: 1, status: "ended" });
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
-      "turn_decision_v2",
+      "turn_decision_v3",
       "completed_campaign_story_v1",
     ]);
     const storyRequest = provider.requests[1]!;
@@ -267,7 +267,7 @@ describe("completed campaign story", () => {
     expect(result.state.status).toBe("ended");
     expect(await store.completedStory()).toMatchObject({ story: words(450) });
     expect(base.requests.map((request) => request.schemaName)).toEqual([
-      "turn_decision_v2",
+      "turn_decision_v3",
       "completed_campaign_story_v1",
     ]);
     expect(await store.campaignBudget()).toMatchObject({
@@ -336,7 +336,7 @@ describe("completed campaign story", () => {
     expect(await engine.completedStory()).toBeUndefined();
     await expect(engine.generateCompletedStory()).resolves.toMatchObject({ story: words(400) });
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
-      "turn_decision_v2",
+      "turn_decision_v3",
       "completed_campaign_story_v1",
       "completed_campaign_story_v1",
     ]);
@@ -455,11 +455,11 @@ describe("completed campaign story", () => {
     });
 
     await engine.play("I burn the letter and retire.");
-    expect(provider.requests.map((request) => request.schemaName)).toEqual(["turn_decision_v2"]);
+    expect(provider.requests.map((request) => request.schemaName)).toEqual(["turn_decision_v3"]);
     expect(await engine.completedStory()).toBeUndefined();
     await engine.generateCompletedStory();
     expect(provider.requests.map((request) => request.schemaName)).toEqual([
-      "turn_decision_v2",
+      "turn_decision_v3",
       "completed_campaign_story_v1",
     ]);
   });

@@ -484,24 +484,18 @@ export const DOMAIN_RULES = {
     redacted: "An initial thread referenced an entity that was not included",
   }),
 
-  // ------------------------------------------------- declared reconciliation
-  thread_audit_index_out_of_range: rule({
+  // ---------------------------------------------------------- thread ordinals
+  // What is left of the V2 declaration section. The audit channel asked for
+  // thread lifecycle twice — once as a verdict, once as the operations derived
+  // from it — and five of the eleven rules that ever forced a repair were the
+  // two disagreeing. V3 keeps the ordinal, which is the part that worked, and
+  // drops the second channel, which is what removed the disagreement class.
+  thread_ordinal_out_of_range: rule({
     disposition: "reject",
     phases: ["adjudication", "resolution"],
-    redacted: "A thread audit entry numbered a thread that context never listed",
+    redacted: "A thread effect numbered a thread that context never listed",
     prompt:
-      "Audit active threads by their number in the context list, never by ID or title. The application resolves the number, so a thread cannot be misnamed; only a number outside the list is an error.",
-  }),
-  // The state is identical whether or not the reason is written: the thread
-  // stays unchanged either way. Spending the turn's one bounded correction to
-  // extract a sentence killed runs without protecting any invariant, so this
-  // is observed for review instead.
-  thread_audit_unjustified_unchanged: rule({
-    disposition: "signal",
-    phases: ["adjudication", "resolution"],
-    redacted: "A thread was declared unchanged although records linked to it changed on this turn",
-    prompt:
-      "If you declare a thread unchanged while this turn changed one of its linked records, give the brief reason in that entry's text.",
+      "Address an existing thread by its number in the context list using threadOrdinal, never by ID or title. The application resolves the number, so a thread cannot be misnamed; only a number outside the list is an error.",
   }),
   // A campaign with no active thread is perfectly readable by a later turn, so
   // this is a judgment about whether the fiction left something open. It cost a
@@ -512,18 +506,6 @@ export const DOMAIN_RULES = {
     redacted: "An active campaign was left with no active thread after a closure",
     prompt:
       "Closing the last active thread requires a successor: create_thread for the danger, obligation, or question the ending leaves open. Solving one objective never makes the remaining situation disappear.",
-  }),
-  scene_state_required: rule({
-    disposition: "reject",
-    phases: ["adjudication", "resolution"],
-    redacted: "A resolved turn did not declare its end-of-turn scene",
-    prompt:
-      "Declare the end-of-turn scene: the exact location containing the player character when the turn ends, and every other actor physically present there. The application derives the movement effects from that declaration, so it must match the narrated end state rather than the starting scene.",
-  }),
-  scene_movement_conflict: rule({
-    disposition: "reject",
-    phases: ["adjudication", "resolution"],
-    redacted: "A movement effect contradicted the declared end-of-turn scene",
   }),
   // A fact whose basis is reported but names no source is fully readable; the
   // missing provenance is an evidence-discipline judgment. Recorded for review
