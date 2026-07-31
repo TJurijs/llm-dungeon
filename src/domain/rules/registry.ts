@@ -56,10 +56,16 @@ export const DOMAIN_RULES = {
     prompt:
       "Square brackets mark ID boundaries in context and are not part of the ID. For every existing-state reference, copy only the characters inside one bracketed authoritative ID, emit them without brackets, and never shorten, reconstruct, or guess one from a display name.",
   }),
+  // The one reference failure still reaching real runs, and the only rule with
+  // measured repairs that said nothing to the model. It arises from the declared
+  // end-of-turn scene: narration arrives somewhere new, the scene names that
+  // place, and no such location exists for the derived movement to resolve.
   unknown_location_reference: rule({
     disposition: "reject",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "An effect referenced a location that does not exist",
+    prompt:
+      "A scene or movement may name only a location that already exists under its authoritative ID, or one this same turn creates with create_entity of kind location. When narration arrives somewhere not yet established, create that place in this effect list first; otherwise the destination cannot be resolved and the turn is returned.",
   }),
   unknown_item_reference: rule({
     disposition: "reject",

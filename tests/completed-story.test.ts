@@ -488,7 +488,11 @@ describe("completed campaign story", () => {
     expect(provider.requests[0]?.schemaName).toBe("completed_campaign_story_v1");
     expect(provider.requests[0]?.prompt).toContain("Lead 1 was investigated");
     expect(provider.requests[0]?.prompt).toContain("Lead 100 was investigated");
-  });
+    // One hundred sequential commits to a real temporary store take well under a
+    // second alone, but the default five is wall clock and this file runs beside
+    // sixty others. The assertions above are about what survives the budget, not
+    // about speed, so a contention timeout was only ever a false failure.
+  }, 30_000);
 
   it("allows an archived read-only campaign to retry only the independent artifact", async () => {
     const dataRoot = await temporaryDataRoot();
