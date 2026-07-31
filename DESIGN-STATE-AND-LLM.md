@@ -410,6 +410,11 @@ readable, and it is why a campaign survives without the model. The problem is
 that each record's *type* permits states the domain forbids, so 97 rules do work
 the type could do.
 
+> **Correction (after M6 shipped).** §3.1 below was written from the rule list.
+> Measured against the committed snapshots it is substantially wrong, and §6's
+> M7 and M9 were withdrawn because of it. See §3.6 for what the data says and
+> what replaces them. The original text is kept so the error is inspectable.
+
 ### 3.1 Entity is one type with kind-dependent legal fields
 
 `EntitySchema` carries `kind: person|location|item|faction|creature|event|other`
@@ -521,6 +526,96 @@ implementation disappear, and setup repairs start reporting rule codes for free.
 
 `setup_player_id` (the initial player must be `player:hero`) is the one genuine
 setup-only rule, and it should be a type: `playerId` is a constant, not an input.
+
+### 3.6 What the snapshots actually contain — and why M7 and M9 were withdrawn
+
+Before starting M7 I measured the assumptions in §3.1 against the final state
+snapshot of all 53 jobs. Two of them are false.
+
+```bash
+python3 - <<'PY'
+import os,glob,re,collections
+kinds=collections.Counter(); inv=collections.Counter(); loc=collections.Counter()
+cond=collections.Counter(); trait=collections.Counter(); multi=[]; nonitem=collections.Counter()
+for j in sorted(glob.glob('playtests/runs/*/jobs/*')):
+    st=sorted(glob.glob(os.path.join(j,'states','turn-*.txt')))
+    if not st: continue
+    txt=open(st[-1]).read(); ek={}; bl=[]
+    for b in txt.split('\n---\n'):
+        i=re.search(r"^id: '?([^'\n]+?)'?$",b,re.M); k=re.search(r"^kind: (\S+)$",b,re.M)
+        if i and k: ek[i.group(1)]=k.group(1); bl.append((i.group(1),k.group(1),b))
+    own=collections.defaultdict(set)
+    for eid,k,b in bl:
+        kinds[k]+=1
+        if re.search(r"^location: ",b,re.M): loc[k]+=1
+        m=re.search(r"^inventory:\n((?:  - entityId:[\s\S]*?)(?=^\w|\Z))",b,re.M)
+        if m:
+            inv[k]+=1
+            for e in re.finditer(r"entityId: '?([^'\n]+?)'?\n",m.group(1)):
+                own[e.group(1)].add(eid)
+                if ek.get(e.group(1))!='item': nonitem[ek.get(e.group(1),'?')]+=1
+        if re.search(r"^conditions:\n  - ",b,re.M): cond[k]+=1
+        if re.search(r"^traits:\n  - ",b,re.M): trait[k]+=1
+    multi += [(i,sorted(o)) for i,o in own.items() if len(o)>1]
+print('kinds        ',dict(kinds)); print('holds inventory',dict(inv)); print('has location ',dict(loc))
+print('conditions   ',dict(cond)); print('traits       ',dict(trait))
+print('non-item in an inventory:',dict(nonitem) or 'NONE')
+print('items held by >1 owner at once:',len(multi), multi[:3])
+PY
+```
+
+```
+kinds         {'item': 398, 'location': 318, 'person': 229, 'other': 5, 'faction': 14}
+holds inventory {'location': 78, 'person': 132, 'other': 2}
+has location  {'person': 217, 'location': 206, 'other': 5, 'faction': 12}
+conditions    {'person': 83, 'location': 37, 'item': 49, 'faction': 2, 'other': 1}
+traits        {'person': 144, 'item': 111, 'location': 42, 'faction': 2, 'other': 2}
+non-item in an inventory: NONE
+items held by >1 owner at once: 27 [('item:silver-marks', ['npc:mara-venn', 'player:hero']), ...]
+```
+
+**M7 is withdrawn: an item entity is a fungible type, not a physical object.**
+`item:silver-marks` is held by the player *and* by Mara Venn in the same
+snapshot — 27 such cases, plus 61 inventory entries with quantity above 1. A
+`placement` sum type with one owner cannot express that, so it would break
+currency and consumables. The rules I claimed it would kill —
+`multiple_inventory_owners`, `inventory_duplicate_ownership` — exist precisely
+*because* multi-owner is legitimate for fungibles and must happen only through a
+conserved transfer. Meanwhile the sum type's other arm is dead: no item carries
+a world `location` in any snapshot, because a loose object is modelled as an
+entry in a *location's* inventory (78 locations hold one). `item_dual_placement`
+guards a state that is expressible and has never occurred.
+
+The real missing distinction is fungibility, and nothing in the schema carries
+it: `owned_item_credit_requires_transfer`, `repeated_abstract_inventory_credit`,
+`inventory_duplicate_ownership`, and `non_atomic_item_transfer` are all trying
+to infer uniqueness from behaviour. The honest fix is a `stacking:
+"unique" | "fungible"` discriminator the model sets at creation — which makes
+uniqueness checkable instead of inferred, but needs a new wire field and
+therefore another protocol change.
+
+**M9 is withdrawn: the kinds are not separable, and branding would not have
+worked anyway.** Conditions appear on locations (37) and items (49), not just
+actors; traits appear on items (111) and locations (42); inventories are held by
+locations (78) and by `other` (2). The union arms would be near-identical, so
+splitting `Entity` touches everything that reads an entity and buys almost
+nothing.
+
+The deeper error is in §3.1's claim that these rules "die at the type level."
+They cannot. `not_a_location`, `non_location_parent`, `inventory_non_item` and
+`not_an_item` are runtime facts about a model-supplied string: whether the ID
+resolves to an entity of the right kind. A TypeScript brand is erased before any
+model output exists. **What the data does support is that the containment
+relation is totally uniform** — person→location 217, location→location 206,
+faction→location 12, other→location 5, and *zero* non-location containers, and
+zero non-item records in 423 inventory entries. That uniformity is what makes
+those four rules eliminable, but only by changing how the reference is
+*expressed*: an ordinal into a kind-scoped context list, the way M6 did for
+threads. That is a protocol change, not a schema change.
+
+Both mistakes have one cause: I read the rule registry and inferred the shape of
+the data from it, instead of reading the data. The registry describes what
+someone once feared, and the corpus describes what happens.
 
 ### 3.5 What Q1 comes to
 
@@ -901,10 +996,11 @@ none of the others can be shown not to have made the model record less.
 
 | # | Change | Rules affected | Cost |
 | --- | --- | --- | --- |
-| M6 | Delete `threadAudit` and `sceneState`; restore `update_thread`/`resolve_thread` as ordinal-addressed operations. | 6 declared-reconciliation rules removed | Protocol change: version bump, all six adapters, probe, prompts, codecs, telemetry, tests. Retires profiles and certification. |
-| M7 | `Placement` as a sum type on `ItemEntity`. | 5–8 unrepresentable | Domain schema + Markdown codec + a read migration for existing saves. |
-| M8 | Setup as `applyTransaction` over an empty campaign. | 14 removed | Deletes ~200 lines from `store.ts`; setup repairs gain rule codes. |
-| M9 | `Entity` as a discriminated union on `kind`. | 6 unrepresentable | Widest blast radius in `src/`; do it after M7 proves the pattern. |
+| M6 | **DONE.** Deleted `threadAudit` and `sceneState`; restored `update_thread`/`resolve_thread` as ordinal-addressed operations. | 97 → 94 | Shipped as protocol V3. Gate green; the three new guards were mutation-checked. Awaiting the paid comparison run in §8. |
+| ~~M7~~ | ~~`Placement` as a sum type on `ItemEntity`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Items are fungible types held by several owners at once (27 cases, 61 stacked entries); a single-owner sum type cannot express currency. |
+| M8 | Setup as `applyTransaction` over an empty campaign. | 14 removed | Deletes ~200 lines from `store.ts`; setup repairs gain rule codes. **Now the highest-value remaining schema change.** |
+| ~~M9~~ | ~~`Entity` as a discriminated union on `kind`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Conditions, traits and inventories span nearly every kind, so the arms are near-identical; and the four reference rules are runtime facts a type brand cannot touch. |
+| M10 | Kind-scoped ordinals for entity, location and item references, extending the M6 pattern. | up to 15 reference rules | Protocol change. The containment relation is totally uniform in the corpus (zero non-location containers, zero non-item inventory entries), which is what makes it safe. Replaces what M7/M9 were trying to do. |
 
 M6 is the highest-value single change and also the only one that is a protocol
 change. Per AGENTS.md that means a deliberate `GAMEPLAY_PROTOCOL_VERSION`
