@@ -205,7 +205,7 @@ export const DOMAIN_RULES = {
     phases: ["setup", ...ALL_GAMEPLAY_PHASES],
     redacted: "A new tag encoded mutable or epistemic state",
     prompt:
-      "Tags are enduring language-neutral machine taxonomy in lowercase ASCII kebab-case, never translated and never mutable or epistemic state. Never introduce any of these exact tags: active, alarmed, armed, confined, discovered, guarding, hidden, holding, idle, in-transit, known, missing, undiscovered, unknown. Represent current situations with status, conditions, location, inventory, and facts, and what has or has not been learned with player knowledge, facts, and threads. An unchanged legacy tag may be retained or removed.",
+      "Tags are enduring machine taxonomy, never mutable or epistemic state. Never tag discovered, guarding, hidden, holding, idle, in-transit, known, missing, undiscovered, unknown, or any similar marker; represent placement with location and inventory, activity and condition with status and conditions, and what has or has not been learned with player knowledge, facts, and threads.",
   }),
   // Normalized: pruned with the reserved tags above rather than rewritten. A
   // canonicalized token would invent taxonomy the model never chose.
@@ -467,11 +467,15 @@ export const DOMAIN_RULES = {
     disposition: "reject",
     phases: ["setup"],
     redacted: "An initial inventory referenced an item that was not included",
+    prompt:
+      "Every initial inventory entry must name an item that also appears in the entity list of this same response. Add the item record first; an inventory entry cannot introduce it.",
   }),
   setup_inventory_non_item: rule({
     disposition: "reject",
     phases: ["setup"],
     redacted: "An initial inventory entry was not an item",
+    prompt:
+      "Only records of kind item may appear in an initial inventory. A person, place, faction, or creature is never an inventory entry.",
   }),
   setup_inventory_multiple_owners: rule({
     disposition: "reject",
@@ -482,6 +486,8 @@ export const DOMAIN_RULES = {
     disposition: "reject",
     phases: ["setup"],
     redacted: "An initial inventoried item also carried a world location",
+    prompt:
+      "An initial item is either carried or loose, never both: if it appears in an inventory, it must not also carry a world location. Give a carried item no location at all.",
   }),
   setup_inventory_cycle: rule({
     disposition: "reject",
