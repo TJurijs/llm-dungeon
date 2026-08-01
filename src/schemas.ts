@@ -161,19 +161,49 @@ export const EntitySchema = z.object({
   relationships: z.array(RelationshipSchema).default([]),
 });
 
-export const ThreadSchema = z.object({
-  id: SafeIdSchema,
-  title: z.string().min(1),
-  /** Immutable initial problem/goal; absent only in legacy Markdown until read migration. */
-  objective: z.string().min(1).optional(),
-  /** Application-owned lifecycle turns; optional only for legacy Markdown. */
-  createdTurn: z.number().int().nonnegative().optional(),
-  updatedTurn: z.number().int().nonnegative().optional(),
-  closedTurn: z.number().int().nonnegative().optional(),
-  summary: z.string().min(1),
-  status: z.enum(["active", "resolved", "failed"]),
-  relatedEntityIds: z.array(SafeIdSchema).default([]),
-});
+export const ThreadSchema = z
+  .object({
+    id: SafeIdSchema,
+    title: z.string().min(1),
+    /** Immutable initial problem/goal; absent only in legacy Markdown until read migration. */
+    objective: z.string().min(1).optional(),
+    /** Application-owned lifecycle turns; optional only for legacy Markdown. */
+    createdTurn: z.number().int().nonnegative().optional(),
+    updatedTurn: z.number().int().nonnegative().optional(),
+    closedTurn: z.number().int().nonnegative().optional(),
+    summary: z.string().min(1),
+    status: z.enum(["active", "resolved", "failed"]),
+    relatedEntityIds: z.array(SafeIdSchema).default([]),
+  })
+  /**
+   * The same ordering constraints FactSchema already states in its type.
+   *
+   * Facts got these as a refinement and have no temporal rules; threads got six
+   * rules instead, policing fields the wire cannot supply and only
+   * transaction-application.ts writes. Stating them here makes the ordinary
+   * case unrepresentable, and the rules that remain are declared `invariant`:
+   * reaching one means our own code or an edited save produced it, and no model
+   * correction can help.
+   */
+  .superRefine((thread, context) => {
+    if (
+      thread.createdTurn !== undefined &&
+      thread.updatedTurn !== undefined &&
+      thread.updatedTurn < thread.createdTurn
+    ) {
+      context.addIssue({ code: "custom", message: "updatedTurn cannot precede createdTurn" });
+    }
+    if (
+      thread.closedTurn !== undefined &&
+      thread.updatedTurn !== undefined &&
+      thread.closedTurn < thread.updatedTurn
+    ) {
+      context.addIssue({ code: "custom", message: "closedTurn cannot precede updatedTurn" });
+    }
+    if (thread.status === "active" && thread.closedTurn !== undefined) {
+      context.addIssue({ code: "custom", message: "an active thread cannot have closedTurn" });
+    }
+  });
 
 export const ChronicleEventSchema = z.object({
   id: SafeIdSchema,

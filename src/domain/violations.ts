@@ -1,6 +1,6 @@
 import type { StateOperation } from "../schemas.js";
 import { visitOperationReferences } from "./operation-references.js";
-import { DomainValidationError } from "./validation-error.js";
+import { CampaignInvariantError, DomainValidationError } from "./validation-error.js";
 import { DOMAIN_RULES, type DomainViolationCode } from "./rules/registry.js";
 
 /**
@@ -58,6 +58,7 @@ export function formatDomainViolations(violations: readonly DomainViolation[]): 
 export class DomainViolationCollector {
   private readonly violations: DomainViolation[] = [];
   private readonly signalled: DomainViolation[] = [];
+  private readonly invariants: DomainViolation[] = [];
   private readonly seen = new Set<string>();
   private readonly failedSubjects = new Set<string>();
 
@@ -75,18 +76,25 @@ export class DomainViolationCollector {
     } = {},
   ): void {
     const fingerprint = `${code}\u0000${message}`;
-    // The registry decides whether a rule blocks. Hard-coding that at each
-    // check is what let a judgment-quality observation spend a turn's single
-    // bounded correction; reading the declared disposition keeps the ladder
-    // honest and makes adding a review-only rule safe.
-    const blocking = DOMAIN_RULES[code].disposition !== "signal";
+    // The registry decides what a rule does. Hard-coding that at each check is
+    // what let a judgment-quality observation spend a turn's single bounded
+    // correction; reading the declared disposition keeps the ladder honest and
+    // makes adding a review-only rule safe.
+    const disposition = DOMAIN_RULES[code].disposition;
+    const blocking = disposition !== "signal";
     if (!this.seen.has(fingerprint)) {
       this.seen.add(fingerprint);
-      (blocking ? this.violations : this.signalled).push({
+      const violation = {
         code,
         message,
         ...(options.detail === undefined ? {} : { detail: options.detail }),
-      });
+      };
+      // Three lanes, because a correctable model fault and an application
+      // defect are different failures that happen to be found by the same
+      // pass. Only the first is worth asking a model about.
+      if (disposition === "invariant") this.invariants.push(violation);
+      else if (blocking) this.violations.push(violation);
+      else this.signalled.push(violation);
     }
     // A review-only rule must not poison dependent operations: the records it
     // named are still usable, so cascade suppression stays with real failures.
@@ -130,7 +138,20 @@ export class DomainViolationCollector {
     return this.signalled;
   }
 
+  /** Rules only an application defect or an externally edited save can trip. */
+  invariantFailures(): readonly DomainViolation[] {
+    return this.invariants;
+  }
+
   assertNone(): void {
+    // Invariants first. If the campaign is already inconsistent, whatever the
+    // model got wrong on top of that is not the interesting fault, and asking
+    // it to try again cannot help.
+    if (this.invariants.length > 0) {
+      throw new CampaignInvariantError(formatDomainViolations(this.invariants), {
+        violations: this.invariants,
+      });
+    }
     if (this.violations.length === 0) return;
     throw new DomainValidationError(formatDomainViolations(this.violations), {
       violations: this.violations,

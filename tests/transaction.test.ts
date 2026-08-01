@@ -5,6 +5,10 @@ import {
   inventoryOwnershipSnapshot,
 } from "../src/domain/state-consistency.js";
 import { TransactionValidationError, applyTransaction } from "../src/domain/transaction.js";
+import {
+  CampaignInvariantError,
+  DomainValidationError,
+} from "../src/domain/validation-error.js";
 import type { Entity, StateOperation } from "../src/schemas.js";
 import { createTestStore } from "./helpers.js";
 
@@ -600,5 +604,70 @@ describe("transaction boundary", () => {
     brokenEntities.set("broken", undefined as unknown as Entity);
     expect(() => apply([], brokenEntities)).toThrow(TypeError);
     expect(() => apply([], brokenEntities)).not.toThrow(TransactionValidationError);
+  });
+});
+
+describe("invariant failures", () => {
+  it("never routes an application-owned fault to the model correction path", async () => {
+    const loaded = await (await createTestStore()).load();
+    // A thread stamped with a turn ahead of the campaign. Only
+    // transaction-application.ts writes these, and the wire has no field for
+    // them, so no model response could have caused it and none can fix it.
+    const impossible = [{ ...loaded.threads[0]!, createdTurn: 99 }];
+
+    let thrown: unknown;
+    try {
+      applyTransaction(
+        [],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        impossible,
+        loaded.chronicle,
+        [],
+        { threads: impossible, playerId: loaded.manifest.playerId },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    // DomainValidationError is the marker for "eligible for an LLM
+    // domain-correction attempt", and applyTransaction only wraps that type
+    // into TransactionValidationError. An invariant must be neither.
+    expect(thrown).toBeInstanceOf(CampaignInvariantError);
+    expect(thrown).not.toBeInstanceOf(DomainValidationError);
+    expect(thrown).not.toBeInstanceOf(TransactionValidationError);
+    expect((thrown as CampaignInvariantError).violations.map((v) => v.code)).toContain(
+      "thread_future_created",
+    );
+  });
+
+  it("cannot be cleared by a valid model response, because it is about the save", async () => {
+    const loaded = await (await createTestStore()).load();
+    const impossible = [{ ...loaded.threads[0]!, createdTurn: 99 }];
+
+    // A perfectly ordinary, applicable transaction. It still fails, because
+    // the fault is in the campaign rather than in the response — which is the
+    // whole reason asking a model to try again is the wrong move.
+    let thrown: unknown;
+    try {
+      applyTransaction(
+        [{ type: "add_condition", targetId: "npc:mara-venn", condition: "shaken" }],
+        1,
+        loaded.manifest,
+        loaded.entities,
+        impossible,
+        loaded.chronicle,
+        [],
+        { threads: impossible, playerId: loaded.manifest.playerId },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignInvariantError);
+    expect((thrown as CampaignInvariantError).violations.map((v) => v.code)).toEqual([
+      "thread_future_created",
+    ]);
   });
 });

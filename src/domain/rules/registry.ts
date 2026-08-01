@@ -18,13 +18,28 @@ export type RulePhase = "setup" | "adjudication" | "resolution" | "appeal";
 /**
  * What happens when a rule matches.
  *
+ * Two questions, not one. The first is whether committing leaves state a later
+ * turn cannot correctly read. The second — which the ladder used to leave
+ * implicit — is who can fix it.
+ *
  * - `normalize`: the intended end state already holds or is unambiguous, so
  *   deterministic code rewrites the transaction and the turn proceeds.
- * - `reject`: the transaction contradicts authoritative state. Admission
- *   collects it for one bounded correction.
+ * - `reject`: the transaction contradicts authoritative state, and the model
+ *   that produced it can produce a different one. Admission collects it for
+ *   one bounded correction.
  * - `signal`: recorded for telemetry and review; never blocks a turn.
+ * - `invariant`: violated only by an application defect or a save edited
+ *   outside the application. No model action can repair it, so it is never
+ *   sent as a correction: spending the turn's one bounded correction asking a
+ *   model to fix our bug wastes the budget and then fails anyway. It fails the
+ *   turn, is reported in its own lane, and leaves the save untouched.
+ *
+ * `invariant` is not a weaker `reject`. Markdown-first state is
+ * human-editable by design, so these checks are the only thing standing
+ * between an edited save and a corrupted campaign. They are correctly
+ * blocking and were only ever addressed to the wrong party.
  */
-export type RuleDisposition = "normalize" | "reject" | "signal";
+export type RuleDisposition = "normalize" | "reject" | "signal" | "invariant";
 
 export interface DomainRule {
   readonly disposition: RuleDisposition;
@@ -123,7 +138,7 @@ export const DOMAIN_RULES = {
     redacted: "A supersession targeted a fact that is not active on that entity",
   }),
   state_unknown_entity: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "Committed state referenced an entity that does not exist",
   }),
@@ -207,7 +222,7 @@ export const DOMAIN_RULES = {
     redacted: "A generated fact ID collided with an existing fact",
   }),
   fact_id_duplicate: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "Committed state contained duplicate fact IDs",
   }),
@@ -323,37 +338,37 @@ export const DOMAIN_RULES = {
     redacted: "A generated thread ID collided with an existing thread",
   }),
   thread_id_duplicate: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "Committed state contained duplicate thread IDs",
   }),
   thread_future_created: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A thread carried a creation turn in the future",
   }),
   thread_future_updated: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A thread carried an update turn in the future",
   }),
   thread_future_closed: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A thread carried a closure turn in the future",
   }),
   thread_updated_before_created: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A thread was updated before it was created",
   }),
   thread_closed_before_update: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A thread was closed before its latest update",
   }),
   thread_active_with_closure: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "An active thread carried a closure turn",
   }),
@@ -363,12 +378,12 @@ export const DOMAIN_RULES = {
     redacted: "A generated chronicle event ID collided with an existing event",
   }),
   chronicle_id_duplicate: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "Committed state contained duplicate chronicle event IDs",
   }),
   chronicle_future_turn: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "A chronicle event carried a turn in the future",
   }),
@@ -387,12 +402,12 @@ export const DOMAIN_RULES = {
 
   // -------------------------------------------------------- campaign coherence
   current_location_not_location: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "The current campaign location was not a location entity",
   }),
   player_location_mismatch: rule({
-    disposition: "reject",
+    disposition: "invariant",
     phases: ALL_GAMEPLAY_PHASES,
     redacted: "The player's location disagreed with the campaign's current location",
   }),

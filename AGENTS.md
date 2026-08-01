@@ -263,9 +263,17 @@ design decision, not cleanup; a fifth pinned entry appearing is the same.
   first. A turn gets one bounded correction, so reporting a single fault makes
   a multi-fault response unrepairable and every added check counterproductive.
   Preserve this when adding rules.
-- Every rule declares one disposition, decided by one question: does committing
-  this transaction leave state a later turn cannot correctly read? `reject` when
-  yes — unresolvable references, ID collisions, containment cycles, inventory
+- Every rule declares one disposition, decided by two questions. Does committing
+  this transaction leave state a later turn cannot correctly read, and can the
+  model that produced it fix that? `invariant` when no model action can: the rule
+  polices a field only the application writes, or coherence between two
+  application-maintained copies. It is never sent as a correction, because
+  spending the turn's one bounded repair on our own defect wastes the budget and
+  then fails anyway; it throws `CampaignInvariantError`, which `applyTransaction`
+  deliberately does not wrap, and is ranked in its own lane. It is not a weaker
+  `reject` — Markdown state is human-editable by design, so these are the only
+  thing between an edited save and a corrupted campaign. `reject` when the state
+  would be unreadable and the model can fix it — unresolvable references, ID collisions, containment cycles, inventory
   arithmetic, temporal ordering. `normalize` when no and deterministic code can
   produce the intended state. `signal` when no and the rule is a judgment about
   DM quality. An operation whose complete effect already holds is dropped from
