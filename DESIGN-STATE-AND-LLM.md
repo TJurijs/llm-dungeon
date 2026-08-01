@@ -1006,6 +1006,34 @@ wire layer, and it is why the domain layer must keep policing field discipline
 even after §3's changes. Fix the *domain* schema (free) and leave the wire flat
 (expensive).
 
+### 5.6 Why ordinals stop at threads
+
+M10 proposed extending M6's ordinal to entity, location and item references,
+eliminating the fifteen-rule references section. It does not work, and the
+reason is the property that made it work for threads.
+
+An ordinal is an index into a list the application printed. Threads are safe
+because the *active* thread list is small, capped at 20 in the wire schema, and
+projected in full every turn: every addressable thread always has a number.
+Entities are not. The DM context is a bounded relevance projection - entities
+at the location, parent locations, inventory-linked and thread-linked records,
+inside 36,000 units - and AGENTS.md is explicit that anything outside it stays
+reachable: "Exact durable IDs and full entity names in the submitted input
+reactivate cold records without fuzzy or LLM retrieval."
+
+Measured over the most recent 40-turn run, comparing the campaign's entities
+against `contextObservation.durableEntityIds`, records existed outside the
+projection on **35 of 39 turns, up to 9 at once**. Under kind-scoped ordinals
+they would have no number, so the model could never touch them again - a
+campaign would accumulate permanently unreachable state, silently. Exact IDs
+are how a cold record comes back, and the fifteen reference rules are the price
+of that. They are not eliminable this way.
+
+This also retroactively justifies where M6 drew the line. Ordinals were kept
+for threads and nothing else, not as a partial step toward M10, but because
+threads are the one reference class whose complete addressable set is always in
+front of the model.
+
 ### 5.5 Rule-derived prompt sentences should be earned
 
 Per §2.6: four of the 15 prompted rules have ever fired, and five of the nine
@@ -1048,7 +1076,7 @@ none of the others can be shown not to have made the model record less.
 | ~~M7~~ | ~~`Placement` as a sum type on `ItemEntity`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Items are fungible types held by several owners at once (27 cases, 61 stacked entries); a single-owner sum type cannot express currency. |
 | ~~M8~~ | ~~Setup as `applyTransaction` over an empty campaign.~~ | — | **Withdrawn — premise refuted. See §3.7.** Setup IDs are model-authoritative verbatim; gameplay IDs are application-allocated from a hint. And the "duplicate" rules are not duplicates: the same invariant has a different owner at setup than at commit. |
 | ~~M9~~ | ~~`Entity` as a discriminated union on `kind`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Conditions, traits and inventories span nearly every kind, so the arms are near-identical; and the four reference rules are runtime facts a type brand cannot touch. |
-| M10 | Kind-scoped ordinals for entity, location and item references, extending the M6 pattern. | up to 15 reference rules | Protocol change. The containment relation is totally uniform in the corpus (zero non-location containers, zero non-item inventory entries), which is what makes it safe. Replaces what M7/M9 were trying to do. |
+| ~~M10~~ | ~~Kind-scoped ordinals for entity, location and item references.~~ | - | **Withdrawn - premise refuted. See section 5.6.** An ordinal indexes the context projection, and on 35 of 39 turns records existed outside it. They would become unaddressable, breaking cold-record reactivation by exact ID. |
 
 M6 is the highest-value single change and also the only one that is a protocol
 change. Per AGENTS.md that means a deliberate `GAMEPLAY_PROTOCOL_VERSION`
