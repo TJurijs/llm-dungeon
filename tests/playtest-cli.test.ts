@@ -93,7 +93,7 @@ describe("playtest terminal commands", () => {
     ).buildRunConfig.bind(cli);
 
     const config = await build(
-      "certification-v1",
+      "tuning-v1",
       {
         candidate: "openai:gpt-5.6-terra@direct",
         judge: "gemini:gemini-3.5-flash@direct",
@@ -106,7 +106,7 @@ describe("playtest terminal commands", () => {
     );
 
     expect(config).toMatchObject({
-      package: { id: "certification-v1", version: 3 },
+      package: { id: "tuning-v1", version: 1 },
       languages: ["en", "ru"],
       repetitions: 2,
       globalWorkerLimit: 1,
@@ -137,7 +137,7 @@ describe("playtest terminal commands", () => {
     ).buildRunConfig.bind(cli);
 
     const config = await build(
-      "certification-v1",
+      "tuning-v1",
       {
         candidate: "gemini:gemini-3.5-flash@direct",
         languages: ["en"],
@@ -258,10 +258,8 @@ describe("playtest terminal commands", () => {
         "packages",
         "calibrate",
         "probe",
-        "promote",
         "replay",
         "run",
-        "certify",
         "matrix",
         "resume",
         "judge",
@@ -376,7 +374,7 @@ describe("playtest terminal commands", () => {
         "llm-dungeon-playtest",
         "playtest",
         "matrix",
-        "certification-v1",
+        "tuning-v1",
         "--candidate",
         "gemini:gemini-3.5-flash",
         "--candidate",
@@ -387,7 +385,7 @@ describe("playtest terminal commands", () => {
         "openrouter:qwen/qwen3.7-plus",
       ]);
       expect(matrix).toHaveBeenCalledWith(
-        "certification-v1",
+        "tuning-v1",
         expect.objectContaining({
           candidate: ["gemini:gemini-3.5-flash", "openai:gpt-5.6-terra"],
         }),

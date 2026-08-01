@@ -4,120 +4,68 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../tools/playtest/harness/packages.js";
 
 const fingerprintA = "a".repeat(64);
 const fingerprintB = "b".repeat(64);
-const metricsHash = "c".repeat(64);
 const target = { provider: "openai" as const, model: "gpt-5.6-terra", route: "direct" };
 
+/**
+ * The catalog holds calibration evidence and nothing else.
+ *
+ * It used to hold certification too — a per-language technical and quality
+ * verdict — and most of this file tested that. Certification was removed as a
+ * feature, so those tests went with it rather than being kept alive against a
+ * verdict nothing can produce.
+ */
 describe("model assessment catalog", () => {
-  it("provides language-specific release assessments on a fresh installation", async () => {
+  it("reports an uncalibrated route on a fresh installation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-shipped-"));
     const catalog = new ModelAssessmentCatalog(root);
     await expect(
-      catalog.effective({ provider: "gemini", model: "gemini-3.5-flash", route: "direct" }, "en"),
-    ).resolves.toMatchObject({
-      adapterStatus: "uncalibrated",
-      technicalStatus: "inconclusive",
-      recoveryCount: 0,
-      qualityStatus: "unrated",
-      certificationCurrent: false,
-    });
+      catalog.effective({ provider: "gemini", model: "gemini-3.5-flash", route: "direct" }),
+    ).resolves.toMatchObject({ adapterStatus: "uncalibrated" });
     await expect(
-      catalog.effective(
-        { provider: "deepseek", model: "deepseek-v4-flash", route: "direct" },
-        "ru",
-      ),
-    ).resolves.toMatchObject({
-      adapterStatus: "uncalibrated",
-      technicalStatus: "inconclusive",
-      recoveryCount: 0,
-      qualityStatus: "unrated",
-      certificationCurrent: false,
-    });
+      catalog.effective({ provider: "deepseek", model: "deepseek-v4-flash", route: "direct" }),
+    ).resolves.toMatchObject({ adapterStatus: "uncalibrated" });
   });
 
-  it("keeps calibration, technical, quality, and recommendation results separate", async () => {
+  it("records calibration and keeps recommendation a separate question", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-"));
     const catalog = new ModelAssessmentCatalog(root, () => new Date("2026-07-19T00:00:00.000Z"));
-    expect(await catalog.effective(target, "en")).toMatchObject({
+    expect(await catalog.effective(target)).toMatchObject({
       adapterStatus: "uncalibrated",
-      technicalStatus: "inconclusive",
-      qualityStatus: "unrated",
-      recommendation: { eligible: false },
+      recommendation: { eligible: false, reasons: ["adapter_not_calibrated"] },
     });
+
     await catalog.recordCalibration({
       ...target,
       status: "calibrated",
       adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
       profileFingerprint: fingerprintA,
-      evidence: { source: "calibration", reference: "calibrations/run-a" },
+      evidence: { source: "calibration", reference: "calibrations/openai-terra" },
     });
-    await catalog.recordCertification({
-      ...target,
-      language: "en",
-      packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      profileFingerprint: fingerprintA,
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 3,
-      qualityStatus: "high",
-      candidateMetricsHash: metricsHash,
-      evidence: {
-        source: "certification",
-        reference: "playtests/runs/cert-a",
-        packageId: "certification-v1",
-        packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      },
-    });
-    expect(await catalog.effective(target, "en")).toMatchObject({
+
+    expect(await catalog.effective(target)).toMatchObject({
       adapterStatus: "calibrated",
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 3,
-      qualityStatus: "high",
-      certificationCurrent: true,
+      profileFingerprint: fingerprintA,
       recommendation: { eligible: true, reasons: [] },
+      evidence: [{ source: "calibration", reference: "calibrations/openai-terra" }],
     });
   });
 
-  it("invalidates certification when the frozen profile fingerprint changes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-stale-"));
-    const catalog = new ModelAssessmentCatalog(root, () => new Date("2026-07-19T00:00:00.000Z"));
-    await catalog.recordCalibration({
-      ...target,
-      status: "calibrated",
-      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
-      profileFingerprint: fingerprintA,
-      evidence: { source: "calibration", reference: "calibrations/a" },
-    });
-    await catalog.recordCertification({
-      ...target,
-      language: "en",
-      packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      profileFingerprint: fingerprintA,
-      technicalStatus: "clean",
-      qualityStatus: "high",
-      candidateMetricsHash: metricsHash,
-      evidence: { source: "certification", reference: "playtests/a" },
-    });
-    await catalog.recordCalibration({
-      ...target,
-      status: "calibrated",
-      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
-      profileFingerprint: fingerprintB,
-      evidence: { source: "calibration", reference: "calibrations/b" },
-    });
-    expect(await catalog.effective(target, "en")).toMatchObject({
-      certificationCurrent: false,
-      technicalStatus: "inconclusive",
-      qualityStatus: "unrated",
-      recommendation: { eligible: false, reasons: ["certification_profile_stale"] },
-    });
+  it("refuses calibrated status without a frozen profile fingerprint", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-unfrozen-"));
+    const catalog = new ModelAssessmentCatalog(root);
+    await expect(
+      catalog.recordCalibration({
+        ...target,
+        status: "calibrated",
+        evidence: { source: "calibration", reference: "calibrations/unfrozen" },
+      }),
+    ).rejects.toThrow("frozen profile fingerprint");
   });
 
-  it("falls back to current shipped evidence while preserving stale local upgrade history", async () => {
+  it("retires calibration recorded against a superseded adapter revision", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-upgrade-"));
     const catalog = new ModelAssessmentCatalog(root);
     const shippedTarget = {
@@ -146,23 +94,6 @@ describe("model assessment catalog", () => {
                 },
                 updatedAt: "2026-07-18T00:00:00.000Z",
               },
-              certifications: [
-                {
-                  language: "en",
-                  packageId: "certification-v1",
-                  packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-                  profileFingerprint: fingerprintA,
-                  technicalStatus: "unstable",
-                  recoveryCount: 9,
-                  qualityStatus: "low",
-                  candidateMetricsHash: metricsHash,
-                  evidence: {
-                    source: "certification",
-                    reference: "playtests/pre-upgrade-local",
-                  },
-                  certifiedAt: "2026-07-18T00:00:00.000Z",
-                },
-              ],
             },
           ],
         },
@@ -171,14 +102,11 @@ describe("model assessment catalog", () => {
       )}\n`,
     );
 
-    await expect(catalog.effective(shippedTarget, "en")).resolves.toMatchObject({
-      // Shipped profiles were calibrated against the retired adapter revision.
+    // Shipped profiles were calibrated against the retired adapter revision, so
+    // neither the local nor the shipped record is current.
+    await expect(catalog.effective(shippedTarget)).resolves.toMatchObject({
       adapterStatus: "uncalibrated",
       profileFingerprint: shipped!.adapter!.profileFingerprint,
-      technicalStatus: "inconclusive",
-      recoveryCount: 0,
-      qualityStatus: "unrated",
-      certificationCurrent: false,
     });
 
     await catalog.recordCalibration({
@@ -194,6 +122,7 @@ describe("model assessment catalog", () => {
         adapter?: { adapterRevision?: number; profileFingerprint?: string };
       }>;
     };
+    // Writing an unrelated route must not rewrite the stale local history.
     expect(
       persisted.models.find((model) => model.model === shippedTarget.model)?.adapter,
     ).toMatchObject({
@@ -202,87 +131,51 @@ describe("model assessment catalog", () => {
     });
   });
 
-  it("prefers current local calibration and certification over shipped evidence", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-local-current-"));
+  it("still loads a record written while certification existed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-legacy-"));
     const catalog = new ModelAssessmentCatalog(root);
-    const shippedTarget = {
-      provider: "gemini" as const,
-      model: "gemini-3.5-flash",
-      route: "direct",
-    };
-    await catalog.recordCalibration({
-      ...shippedTarget,
-      status: "calibrated",
-      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
-      profileFingerprint: fingerprintB,
-      evidence: { source: "calibration", reference: "calibrations/current-local" },
-    });
-    await catalog.recordCertification({
-      ...shippedTarget,
-      language: "en",
-      packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      profileFingerprint: fingerprintB,
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 1,
-      qualityStatus: "medium",
-      candidateMetricsHash: metricsHash,
-      evidence: { source: "certification", reference: "playtests/current-local" },
-    });
-
-    await expect(catalog.effective(shippedTarget, "en")).resolves.toMatchObject({
+    await mkdir(path.dirname(catalog.filePath), { recursive: true });
+    // A user's config file predates the removal. Its certifications array is
+    // discarded, not rejected: refusing to load would strand the calibration
+    // sitting next to it.
+    await writeFile(
+      catalog.filePath,
+      `${JSON.stringify({
+        version: 1,
+        models: [
+          {
+            ...target,
+            adapter: {
+              status: "calibrated",
+              adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
+              profileFingerprint: fingerprintA,
+              evidence: { source: "calibration", reference: "calibrations/legacy" },
+              updatedAt: "2026-07-18T00:00:00.000Z",
+            },
+          },
+        ],
+      })}\n`,
+    );
+    await expect(catalog.effective(target)).resolves.toMatchObject({
       adapterStatus: "calibrated",
-      profileFingerprint: fingerprintB,
-      technicalStatus: "playable_with_recovery",
-      recoveryCount: 1,
-      qualityStatus: "medium",
-      certificationCurrent: true,
-    });
-  });
-
-  it("rejects diagnostic packages as authoritative certification evidence", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-package-"));
-    const catalog = new ModelAssessmentCatalog(root);
-    await catalog.recordCalibration({
-      ...target,
-      status: "calibrated",
-      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
       profileFingerprint: fingerprintA,
-      evidence: { source: "calibration", reference: "calibrations/a" },
     });
-    await expect(
-      catalog.recordCertification({
-        ...target,
-        language: "en",
-        packageId: "mechanics-v1",
-        packageVersion: "1",
-        profileFingerprint: fingerprintA,
-        technicalStatus: "clean",
-        qualityStatus: "high",
-        candidateMetricsHash: metricsHash,
-        evidence: { source: "certification", reference: "playtests/mechanics" },
-      }),
-    ).rejects.toThrow("Only certification-v1");
   });
 
-  it("keeps Gemini 3.6 Flash product-recommended with shipped certification evidence", async () => {
+  it("keeps Gemini 3.6 Flash product-recommended without any run evidence", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-gemini-"));
     const catalog = new ModelAssessmentCatalog(root);
-    const effective = await catalog.effective(
-      { provider: "gemini", model: "gemini-3.6-flash", route: "direct" },
-      "ru",
-    );
-    // The product-recommended default survives a lapsed certification; only
-    // the evidence-backed quality rating falls back until a fresh run.
-    expect(effective.recommendation).toMatchObject({
-      eligible: true,
-      reasons: ["product_recommended_default"],
+    // Recommendation is a product decision. It used to require a current
+    // certification, which would have made every route permanently ineligible
+    // once certification was removed.
+    await expect(
+      catalog.effective({ provider: "gemini", model: "gemini-3.6-flash", route: "direct" }),
+    ).resolves.toMatchObject({
+      recommendation: { eligible: true, reasons: ["product_recommended_default"] },
     });
-    expect(effective.qualityStatus).toBe("unrated");
-    expect(effective.certificationCurrent).toBe(false);
   });
 
-  it("serializes concurrent in-process assessment writes without losing either route", async () => {
+  it("serializes concurrent in-process writes without losing either route", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-concurrent-"));
     const first = new ModelAssessmentCatalog(root);
     const second = new ModelAssessmentCatalog(root);
@@ -303,10 +196,10 @@ describe("model assessment catalog", () => {
         evidence: { source: "calibration", reference: "calibrations/gemini" },
       }),
     ]);
-    await expect(first.effective(target, "en")).resolves.toMatchObject({
+    await expect(first.effective(target)).resolves.toMatchObject({
       adapterStatus: "calibrated",
     });
-    await expect(second.effective(gemini, "ru")).resolves.toMatchObject({
+    await expect(second.effective(gemini)).resolves.toMatchObject({
       adapterStatus: "calibrated",
     });
   });

@@ -53,7 +53,6 @@ export * from "./harness/audit.js";
 export * from "./harness/failure-attribution.js";
 export * from "./harness/judge.js";
 export * from "./harness/manifest.js";
-export * from "./harness/promote.js";
 export * from "./harness/replay.js";
 export * from "./harness/report.js";
 export * from "./harness/runner.js";
@@ -127,14 +126,11 @@ export function createUnifiedPlaytestRunner(
           route: target.route,
         }),
       preflightTarget: async (target, language) => {
-        const effective = await assessments.effective(
-          {
+        const effective = await assessments.effective({
             provider: target.config.provider,
             model: target.config.model,
             route: target.route,
-          },
-          language,
-        );
+          });
         if (
           effective.adapterStatus !== "calibrated" ||
           effective.profileFingerprint !== target.executionProfileFingerprint

@@ -26,7 +26,7 @@ import {
 import { playtestPlayerPrompt, playtestPlayerSystemPrompt } from "./prompts/playtest-player.js";
 import { assessCoverage, buildMechanicalAudit } from "./harness/audit.js";
 import { playtestJudgePrompt, playtestJudgeSystemPrompt } from "./harness/judge.js";
-import { CERTIFICATION_PACKAGE } from "./harness/packages.js";
+import { TUNING_PACKAGE } from "./harness/packages.js";
 
 export const PROMPT_PHASES = [
   "dm-system",
@@ -185,14 +185,14 @@ export function inspectPrompt(phase: PromptPhase, language: LanguageCode): Promp
     case "judge":
       system = playtestJudgeSystemPrompt(language);
       prompt = playtestJudgePrompt({
-        playtestPackage: CERTIFICATION_PACKAGE,
+        playtestPackage: TUNING_PACKAGE,
         language,
         transcript: "<PLAYER-FACING TRANSCRIPT>",
         turns: [],
         startingState: "<STARTING DM STATE>",
         finalState: "<FINAL DM STATE>",
         mechanicalAudit: buildMechanicalAudit([]),
-        coverage: assessCoverage(CERTIFICATION_PACKAGE, []),
+        coverage: assessCoverage(TUNING_PACKAGE, []),
       });
       sections = [
         "judge-policy",

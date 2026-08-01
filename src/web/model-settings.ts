@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { PROVIDER_COMPATIBILITY_FINGERPRINT } from "../connection-probe.js";
 import { loadProjectEnv, reloadProjectEnv } from "../env.js";
-import { LANGUAGES, type LanguageCode } from "../language.js";
+import { type LanguageCode } from "../language.js";
 import {
   PUBLIC_LLM_PROVIDER_DEFINITIONS,
   RECOMMENDED_MODEL_SELECTION,
@@ -19,7 +19,6 @@ import {
 } from "../llm-model-catalog.js";
 import { atomicWriteJson } from "../persistence/files.js";
 import { withSerializedFileLock } from "../persistence/lock.js";
-import type { ModelLanguageQualityRatings } from "../model-quality.js";
 import { ModelAssessmentCatalog } from "../model-assessment-catalog.js";
 import { ModelExecutionProfileStore } from "../model-execution-profile-store.js";
 import type { FrozenModelExecutionProfile } from "../model-execution-profile.js";
@@ -28,7 +27,6 @@ import { modelCostRating } from "../model-cost.js";
 import type {
   ModelAdapterStatus,
   ModelEvidenceReference,
-  ModelLanguageTechnicalStatuses,
   ModelRecommendationEligibility,
 } from "../model-status.js";
 import {
@@ -299,7 +297,7 @@ export class ModelSettingsService {
     return loadProviderConfig(this.providerConfigPath);
   }
 
-  async provider(config: ProviderConfig, language: LanguageCode): Promise<LlmProvider> {
+  async provider(config: ProviderConfig): Promise<LlmProvider> {
     const route = config.provider === "openrouter" ? "openrouter" : "direct";
     const profile = await this.executionProfiles.get({
       provider: config.provider,
@@ -309,14 +307,11 @@ export class ModelSettingsService {
     const assessment =
       profile === undefined
         ? undefined
-        : await this.modelAssessments.effective(
-            {
-              provider: config.provider,
-              model: config.model,
-              route,
-            },
-            language,
-          );
+        : await this.modelAssessments.effective({
+            provider: config.provider,
+            model: config.model,
+            route,
+          });
     const currentProfile =
       assessment?.adapterStatus === "calibrated" &&
       assessment.profileFingerprint === profile?.fingerprint
@@ -397,33 +392,21 @@ export class ModelSettingsService {
 
   async presentedAssessment(selection: ModelSelection): Promise<{
     adapterStatus: ModelAdapterStatus;
-    technicalStatus: ModelLanguageTechnicalStatuses;
-    technicalRecoveries: Partial<Record<LanguageCode, number>>;
-    quality: ModelLanguageQualityRatings;
     recommendationEligibility: ModelRecommendationEligibility;
     evidence: ModelEvidenceReference[];
-    certificationCurrent: Partial<Record<LanguageCode, boolean>>;
     profileFingerprint?: string;
     reasoningDescription?: string;
   }> {
-    const languages = Object.keys(LANGUAGES) as LanguageCode[];
     const route = selection.provider === "openrouter" ? "openrouter" : "direct";
-    const assessments = await Promise.all(
-      languages.map(async (language) => ({
-        language,
-        assessment: await this.modelAssessments.effective(
-          {
-            provider: selection.provider,
-            model: selection.model,
-            route,
-          },
-          language,
-        ),
-      })),
-    );
-    const first = assessments[0]?.assessment;
+    // Calibration is per route, not per language: the per-language split existed
+    // only because certification produced a verdict for each one.
+    const assessment = await this.modelAssessments.effective({
+      provider: selection.provider,
+      model: selection.model,
+      route,
+    });
     const activeProfile =
-      first?.profileFingerprint === undefined
+      assessment.profileFingerprint === undefined
         ? undefined
         : await this.executionProfiles.get({
             provider: selection.provider,
@@ -431,48 +414,16 @@ export class ModelSettingsService {
             route,
           });
     const reasoningDescription =
-      activeProfile !== undefined && activeProfile.fingerprint === first?.profileFingerprint
+      activeProfile !== undefined && activeProfile.fingerprint === assessment.profileFingerprint
         ? describeReasoningPolicy(activeProfile.reasoning)
         : undefined;
-    const eligible =
-      assessments.length > 0 &&
-      assessments.every(({ assessment }) => assessment.recommendation.eligible);
-    const reasons = [
-      ...new Set(assessments.flatMap(({ assessment }) => assessment.recommendation.reasons)),
-    ];
-    const evidence = [
-      ...new Map(
-        assessments
-          .flatMap(({ assessment }) => assessment.evidence)
-          .map((item) => [JSON.stringify(item), item]),
-      ).values(),
-    ];
-    const recommendationEvidence = assessments
-      .map(({ assessment }) => assessment.recommendation.evidence)
-      .find((item) => item !== undefined);
     return {
-      adapterStatus: first?.adapterStatus ?? "uncalibrated",
-      technicalStatus: Object.fromEntries(
-        assessments.map(({ language, assessment }) => [language, assessment.technicalStatus]),
-      ) as ModelLanguageTechnicalStatuses,
-      technicalRecoveries: Object.fromEntries(
-        assessments.map(({ language, assessment }) => [language, assessment.recoveryCount]),
-      ),
-      quality: Object.fromEntries(
-        assessments.map(({ language, assessment }) => [language, assessment.qualityStatus]),
-      ) as ModelLanguageQualityRatings,
-      recommendationEligibility: {
-        eligible,
-        reasons,
-        ...(recommendationEvidence === undefined ? {} : { evidence: recommendationEvidence }),
-      },
-      evidence,
-      certificationCurrent: Object.fromEntries(
-        assessments.map(({ language, assessment }) => [language, assessment.certificationCurrent]),
-      ),
-      ...(first?.profileFingerprint === undefined
+      adapterStatus: assessment.adapterStatus,
+      recommendationEligibility: assessment.recommendation,
+      evidence: assessment.evidence,
+      ...(assessment.profileFingerprint === undefined
         ? {}
-        : { profileFingerprint: first.profileFingerprint }),
+        : { profileFingerprint: assessment.profileFingerprint }),
       ...(reasoningDescription === undefined ? {} : { reasoningDescription }),
     };
   }
@@ -579,8 +530,6 @@ export class ModelSettingsService {
                   compatibilityStatus: model.state,
                   status: model.state,
                   adapterStatus: assessment.adapterStatus,
-                  technicalStatus: assessment.technicalStatus,
-                  technicalRecoveries: assessment.technicalRecoveries,
                   enabled: model.enabled,
                   available:
                     model.state === "compatible" && model.enabled && Boolean(keys[provider.id]),
@@ -604,7 +553,6 @@ export class ModelSettingsService {
                             fingerprint: model.test.testFingerprint,
                           },
                     assessment: assessment.evidence,
-                    certificationCurrent: assessment.certificationCurrent,
                     ...(assessment.profileFingerprint === undefined
                       ? {}
                       : { profileFingerprint: assessment.profileFingerprint }),
@@ -618,7 +566,6 @@ export class ModelSettingsService {
                           : ("not_allowed" as const),
                       }),
                   ...(pricing === undefined ? {} : { pricing }),
-                  quality: assessment.quality,
                   ...(speed === undefined ? {} : { speed }),
                   ...(speedEstimate === undefined ? {} : { speedEstimate }),
                   ...(cost === undefined ? {} : { cost }),

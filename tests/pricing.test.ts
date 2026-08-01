@@ -5,7 +5,6 @@ import {
   openRouterModelId,
   parseOpenRouterPrices,
 } from "../src/pricing.js";
-import { modelQualityRating, modelQualityRatings } from "../src/model-quality.js";
 import { modelCostRating } from "../src/model-cost.js";
 
 describe("model price estimates", () => {
@@ -55,17 +54,6 @@ describe("model price estimates", () => {
       inputPerMillion: 1,
       outputPerMillion: 4,
       estimated50TurnsUsd: 0.92,
-    });
-  });
-
-  it("keeps uncertified quality explicitly unrated", () => {
-    expect(modelQualityRating("gemini", "gemini-3.5-flash")).toBe("unrated");
-    expect(modelQualityRating("openrouter", "qwen/qwen3.7-plus", "ru")).toBe("unrated");
-    expect(modelQualityRating("deepseek", "deepseek-v4-pro")).toBe("unrated");
-    expect(modelQualityRating("openai", "unknown-model")).toBe("unrated");
-    expect(modelQualityRatings("gemini", "gemini-3.5-flash")).toEqual({
-      en: "unrated",
-      ru: "unrated",
     });
   });
 

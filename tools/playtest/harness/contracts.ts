@@ -3,10 +3,8 @@ import { LanguageCodeSchema } from "../../../src/language.js";
 import { CheckResultSchema } from "../../../src/mechanics.js";
 import {
   ModelAdapterStatusSchema,
-  ModelQualityStatusSchema,
   ModelTechnicalGameplayStatusSchema,
   type ModelAdapterStatus,
-  type ModelQualityStatus,
   type ModelTechnicalGameplayStatus,
 } from "../../../src/model-status.js";
 import {
@@ -110,14 +108,25 @@ export type SimulatedPlayerAction = z.infer<typeof SimulatedPlayerActionSchema>;
 
 export const AdapterStatusSchema = ModelAdapterStatusSchema;
 export const TechnicalGameplayStatusSchema = ModelTechnicalGameplayStatusSchema;
-export const QualityStatusSchema = ModelQualityStatusSchema;
+/**
+ * A judge's per-run label. It was once promoted into authoritative model
+ * metadata by certification; nothing promotes it now, so it lives here as run
+ * evidence and nowhere else.
+ */
+export const QualityStatusSchema = z.enum([
+  "high",
+  "medium",
+  "low",
+  "unrated",
+  "awaiting_judgment",
+]);
 export type AdapterStatus = ModelAdapterStatus;
 export type TechnicalGameplayStatus = ModelTechnicalGameplayStatus;
-export type QualityStatus = ModelQualityStatus;
+export type QualityStatus = z.infer<typeof QualityStatusSchema>;
 export { FailureOwnerSchema };
 export type { FailureOwner };
 
-export const PlaytestPurposeSchema = z.enum(["certification", "autoplay", "stress", "tuning"]);
+export const PlaytestPurposeSchema = z.enum(["autoplay", "stress", "tuning"]);
 
 export const LocalizedTextSchema = z.record(LanguageCodeSchema, z.string().trim().min(1));
 export const LocalizedSetupSchema = z.record(LanguageCodeSchema, SetupResultSchema);

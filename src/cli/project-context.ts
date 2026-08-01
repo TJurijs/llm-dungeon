@@ -163,7 +163,6 @@ export class CliProjectContext {
 
   private async calibratedExecutionProfile(
     config: ProviderConfig,
-    language: LanguageCode,
   ): Promise<FrozenModelExecutionProfile | undefined> {
     const route = config.provider === "openrouter" ? "openrouter" : "direct";
     const profile = await this.executionProfiles().get({
@@ -172,14 +171,11 @@ export class CliProjectContext {
       route,
     });
     if (!profile) return undefined;
-    const assessment = await this.modelAssessments().effective(
-      {
-        provider: config.provider,
-        model: config.model,
-        route,
-      },
-      language,
-    );
+    const assessment = await this.modelAssessments().effective({
+      provider: config.provider,
+      model: config.model,
+      route,
+    });
     return assessment.adapterStatus === "calibrated" &&
       assessment.profileFingerprint === profile.fingerprint
       ? profile
@@ -206,10 +202,9 @@ export class CliProjectContext {
       config = await this.providerConfig();
       await catalog.updateProviderConfig(campaignId, config);
     }
-    const language = (await store.readManifest()).language;
     return new DungeonEngine(
       store,
-      this.createProvider(config, await this.calibratedExecutionProfile(config, language)),
+      this.createProvider(config, await this.calibratedExecutionProfile(config)),
     );
   }
 
@@ -231,7 +226,7 @@ export class CliProjectContext {
         created.store,
         this.createProvider(
           selectedConfig,
-          await this.calibratedExecutionProfile(selectedConfig, campaignLanguage),
+          await this.calibratedExecutionProfile(selectedConfig),
         ),
       ),
     };
@@ -239,7 +234,6 @@ export class CliProjectContext {
 
   async createSetupSession(): Promise<CliSetupSession> {
     const config = await this.providerConfig();
-    const language = await this.language();
     // Setup generation does not read or mutate campaign state. The disposable
     // store keeps the engine boundary intact without reserving a campaign that
     // the user may reject during preview.
@@ -247,7 +241,7 @@ export class CliProjectContext {
       config,
       engine: new DungeonEngine(
         new StateStore(path.join(this.paths.dataRoot, ".setup-preview")),
-        this.createProvider(config, await this.calibratedExecutionProfile(config, language)),
+        this.createProvider(config, await this.calibratedExecutionProfile(config)),
       ),
     };
   }

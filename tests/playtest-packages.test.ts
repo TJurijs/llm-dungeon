@@ -15,10 +15,10 @@ import { hashPlaytestValue } from "../tools/playtest/harness/files.js";
 import {
   ADVERSARIAL_BOUNDARIES_PACKAGE,
   CAMPAIGN_AUTOPLAY_PACKAGE,
-  CERTIFICATION_CANONICAL_SETUPS,
-  CERTIFICATION_CANONICAL_WORLD_RULES,
-  CERTIFICATION_PACKAGE,
-  CERTIFICATION_SCRIPT,
+  CANONICAL_SETUPS,
+  CANONICAL_WORLD_RULES,
+  TUNING_PACKAGE,
+  CANONICAL_SCRIPT,
   MECHANICS_PACKAGE,
   PERSISTENCE_SOAK_PACKAGE,
   TUNING_PACKAGE,
@@ -38,19 +38,19 @@ const candidate = {
 };
 
 describe("versioned playtest packages", () => {
-  it("registers exactly the six initial packages behind defensive copies", () => {
+  it("registers exactly the five diagnostic packages behind defensive copies", () => {
     const packages = listPlaytestPackages();
     expect(packages.map((playtestPackage) => playtestPackage.id)).toEqual([
-      "certification-v1",
       "campaign-autoplay-v1",
       "persistence-soak-v1",
       "adversarial-boundaries-v1",
       "mechanics-v1",
       "tuning-v1",
     ]);
-    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([3, 2, 1, 1, 1, 1]);
+    expect(packages.map((playtestPackage) => playtestPackage.version)).toEqual([2, 1, 1, 1, 1]);
+    // No package updates authoritative model metadata any more: certification
+    // was the only one that could, and it was removed as a feature.
     expect(packages.map((playtestPackage) => playtestPackage.purpose)).toEqual([
-      "certification",
       "autoplay",
       "stress",
       "stress",
@@ -58,7 +58,7 @@ describe("versioned playtest packages", () => {
       "tuning",
     ]);
     packages[0]!.description.en = "mutated copy";
-    expect(getPlaytestPackage("certification-v1").description.en).not.toBe("mutated copy");
+    expect(getPlaytestPackage("campaign-autoplay-v1").description.en).not.toBe("mutated copy");
     expect(() => getPlaytestPackage("missing-v1")).toThrow("Unknown playtest package");
   });
 
@@ -82,12 +82,12 @@ describe("versioned playtest packages", () => {
     expect(PERSISTENCE_SOAK_PACKAGE.playerProfiles).toEqual(["long-term-planner"]);
     expect(ADVERSARIAL_BOUNDARIES_PACKAGE.playerProfiles).toEqual(["rule-challenger", "chaotic"]);
     expect(MECHANICS_PACKAGE.playerProfiles).toContain("combat-focused");
-    expect(CERTIFICATION_PACKAGE.playerProfiles).toEqual([]);
+    expect(TUNING_PACKAGE.playerProfiles).toEqual([]);
   });
 
   it("ships one bilingual canonical certification state that passes production setup validation", () => {
     for (const language of ["en", "ru"] as const) {
-      const setup = validateInitialSetup(CERTIFICATION_CANONICAL_SETUPS[language]);
+      const setup = validateInitialSetup(CANONICAL_SETUPS[language]);
       expect(setup.player.id).toBe("player:hero");
       expect(setup.entities.filter((entity) => entity.kind === "location")).toHaveLength(2);
       expect(setup.entities.filter((entity) => entity.kind === "person")).toHaveLength(3);
@@ -120,31 +120,18 @@ describe("versioned playtest packages", () => {
         { id: "thread:missing-ledger-turn-0", title: "Missing Ledger", status: "active" },
       ]);
 
-      const continuation = CERTIFICATION_PACKAGE.terminalContinuation;
-      expect(continuation?.afterTurn).toBe(7);
-      const continuationSetup = validateInitialSetup(continuation!.startingState.setups[language]!);
-      expect(continuationSetup.player).toMatchObject({
-        location: "location:old-sluice",
-        inventory: expect.arrayContaining([
-          { entityId: "item:moonleaf-tonic", quantity: 1 },
-          { entityId: "item:customs-ledger", quantity: 1 },
-        ]),
-      });
-      expect(continuationSetup.threads).toMatchObject([
-        { id: "thread:missing-ledger-turn-0", status: "active" },
-      ]);
     }
   });
 
   it("freezes bilingual world and DM style into every canonical package and its hash", () => {
-    expect(CERTIFICATION_CANONICAL_WORLD_RULES.en).toContain("Canonical World & DM Style");
-    expect(CERTIFICATION_CANONICAL_WORLD_RULES.ru).toContain("Канонический мир и стиль ведущего");
+    expect(CANONICAL_WORLD_RULES.en).toContain("Canonical World & DM Style");
+    expect(CANONICAL_WORLD_RULES.ru).toContain("Канонический мир и стиль ведущего");
 
-    for (const playtestPackage of [CERTIFICATION_PACKAGE, TUNING_PACKAGE]) {
+    for (const playtestPackage of [TUNING_PACKAGE]) {
       expect(playtestPackage.startingState.kind).toBe("canonical");
       if (playtestPackage.startingState.kind !== "canonical")
         throw new Error("expected canonical package");
-      expect(playtestPackage.startingState.worldRules).toEqual(CERTIFICATION_CANONICAL_WORLD_RULES);
+      expect(playtestPackage.startingState.worldRules).toEqual(CANONICAL_WORLD_RULES);
       expect(Object.keys(playtestPackage.startingState.worldRules).sort()).toEqual(["en", "ru"]);
 
       const changed = structuredClone(playtestPackage);
@@ -155,23 +142,23 @@ describe("versioned playtest packages", () => {
     }
 
     const { worldRules: _omitted, ...missingRules } =
-      CERTIFICATION_PACKAGE.startingState.kind === "canonical"
-        ? CERTIFICATION_PACKAGE.startingState
+      TUNING_PACKAGE.startingState.kind === "canonical"
+        ? TUNING_PACKAGE.startingState
         : (() => {
             throw new Error("expected canonical package");
           })();
     expect(() =>
       PlaytestPackageSchema.parse({
-        ...CERTIFICATION_PACKAGE,
+        ...TUNING_PACKAGE,
         startingState: missingRules,
       }),
     ).toThrow();
     expect(() =>
       PlaytestPackageSchema.parse({
-        ...CERTIFICATION_PACKAGE,
+        ...TUNING_PACKAGE,
         startingState: {
-          ...CERTIFICATION_PACKAGE.startingState,
-          worldRules: { en: CERTIFICATION_CANONICAL_WORLD_RULES.en },
+          ...TUNING_PACKAGE.startingState,
+          worldRules: { en: CANONICAL_WORLD_RULES.en },
         },
       }),
     ).toThrow();
@@ -182,15 +169,15 @@ describe("versioned playtest packages", () => {
       const root = await mkdtemp(path.join(tmpdir(), `llm-dungeon-cert-${language}-`));
       const store = new StateStore(root);
       await store.createGame({
-        setup: CERTIFICATION_CANONICAL_SETUPS[language],
+        setup: CANONICAL_SETUPS[language],
         worldRules: "Deterministic certification world rules.",
         language,
       });
       const loaded = await store.load();
       expect(loaded.threads.map((thread) => thread.id)).toEqual(["thread:missing-ledger-turn-0"]);
       const packageReferences = JSON.stringify({
-        coverage: CERTIFICATION_PACKAGE.coverageRequirements,
-        script: CERTIFICATION_PACKAGE.scriptedTurns,
+        coverage: TUNING_PACKAGE.coverageRequirements,
+        script: TUNING_PACKAGE.scriptedTurns,
       });
       expect(packageReferences).toContain("thread:missing-ledger-turn-0");
       expect(packageReferences).not.toContain('"thread:missing-ledger"');
@@ -198,29 +185,29 @@ describe("versioned playtest packages", () => {
   });
 
   it("defines ten deterministic branch-aware certification turns and exact check anchors", () => {
-    expect(CERTIFICATION_SCRIPT).toHaveLength(10);
-    expect(CERTIFICATION_SCRIPT.map((turn) => turn.turn)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(CERTIFICATION_SCRIPT.map((turn) => turn.naturalRoll)).toEqual([
+    expect(CANONICAL_SCRIPT).toHaveLength(10);
+    expect(CANONICAL_SCRIPT.map((turn) => turn.turn)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(CANONICAL_SCRIPT.map((turn) => turn.naturalRoll)).toEqual([
       42, 55, 100, 64, 71, 82, 1, 36, 49, 93,
     ]);
-    expect(CERTIFICATION_SCRIPT[2]).toMatchObject({ checkPolicy: "required", naturalRoll: 100 });
-    expect(CERTIFICATION_SCRIPT[6]).toMatchObject({
+    expect(CANONICAL_SCRIPT[2]).toMatchObject({ checkPolicy: "required", naturalRoll: 100 });
+    expect(CANONICAL_SCRIPT[6]).toMatchObject({
       checkPolicy: "required",
       naturalRoll: 1,
       expectedFailureCampaignStatus: "none",
     });
-    expect(CERTIFICATION_SCRIPT[6]?.branches[0]?.action.en).toContain("explicitly not lethal");
-    expect(CERTIFICATION_SCRIPT[0]?.checkPolicy).toBe("forbidden");
-    expect(CERTIFICATION_SCRIPT[8]?.checkPolicy).toBe("forbidden");
-    expect(CERTIFICATION_SCRIPT[3]?.branches).toHaveLength(2);
-    expect(CERTIFICATION_SCRIPT[7]?.branches).toHaveLength(2);
-    expect(CERTIFICATION_SCRIPT[9]?.branches).toHaveLength(2);
-    for (const turn of CERTIFICATION_SCRIPT) {
+    expect(CANONICAL_SCRIPT[6]?.branches[0]?.action.en).toContain("explicitly not lethal");
+    expect(CANONICAL_SCRIPT[0]?.checkPolicy).toBe("forbidden");
+    expect(CANONICAL_SCRIPT[8]?.checkPolicy).toBe("forbidden");
+    expect(CANONICAL_SCRIPT[3]?.branches).toHaveLength(2);
+    expect(CANONICAL_SCRIPT[7]?.branches).toHaveLength(2);
+    expect(CANONICAL_SCRIPT[9]?.branches).toHaveLength(2);
+    for (const turn of CANONICAL_SCRIPT) {
       expect(turn.branches.at(-1)?.when.kind).toBe("always");
       expect(turn.coverageRequirementIds.length).toBeGreaterThan(0);
     }
-    expect(CERTIFICATION_PACKAGE).toMatchObject({
-      purpose: "certification",
+    expect(TUNING_PACKAGE).toMatchObject({
+      purpose: "tuning",
       turnDriver: { kind: "scripted" },
       turns: { minimum: 10, maximum: 10, default: 10 },
       rollPolicy: { kind: "scripted" },
@@ -309,8 +296,8 @@ describe("versioned playtest packages", () => {
     expect(manifest.config.tuningVariable).toBe("prompt: adjudication-prompt-reconciliation-block");
     expect(() =>
       PlaytestPackageSchema.parse({
-        ...CERTIFICATION_PACKAGE,
-        scriptedTurns: CERTIFICATION_SCRIPT.slice(1),
+        ...TUNING_PACKAGE,
+        scriptedTurns: CANONICAL_SCRIPT.slice(1),
       }),
     ).toThrow(/exactly its default number of turns/);
   });

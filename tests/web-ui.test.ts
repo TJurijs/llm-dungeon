@@ -533,7 +533,6 @@ describe("web UI copy", () => {
     expect(setup).not.toContain("pricingEstimateHint");
     expect(setup).toContain('api("setSessionKey"');
     expect(setup).toContain("dataset.providerKeyForm");
-    expect(setup).toContain("modelQualityCopy");
     expect(setup).toContain("modelSpeedCopy");
     expect(setup).toContain('provider.id === "openai" && model.keyAccess === "not_allowed"');
     expect(setup).toContain('createElement("span", "model-key-restriction", "(!)")');
@@ -564,12 +563,7 @@ describe("web UI copy", () => {
     expect(UI_COPY.ru.speedSlow).toBe("Медленная");
     expect(setup).toContain("if (!model.known)");
     expect(setup).toContain('t(model.status === "untested" ? "testModel" : "retestModel")');
-    expect(setup).toContain('${supported ? "is-supported" : "is-unsupported"}');
-    expect(setup).toContain("model.quality?.[language]");
     expect(setup).not.toContain("model.adapterStatus");
-    expect(setup).toContain("model.technicalStatus?.[language]");
-    expect(setup).toContain('const primaryLanguage = "en"');
-    expect(setup).toContain('createElement("details", "model-language-details")');
     expect(setup).toContain('presentedModel.status === "stale" && !model.known');
     expect(setup).toContain('statusBadge.dataset.llmAction = "test"');
     expect(setup).toContain(
@@ -577,14 +571,6 @@ describe("web UI copy", () => {
     );
     expect(setup).not.toContain('["calibration", "legendCalibration"]');
     expect(styles).toContain(".model-protocol-retest");
-    expect(setup).toContain('const summary = createElement("summary", "model-language-summary");');
-    expect(setup).toContain("summary.append(technicalGroup, qualityGroup);");
-    expect(setup).not.toContain("`+${additionalLanguages.length}`");
-    expect(setup).toContain("createTechnicalSignal(model, language)");
-    expect(setup).toContain("createQualitySignal(model, language)");
-    expect(compactSetup).toContain(
-      'recoveries >= 5 ? "recovery-high" : recoveries >= 2 ? "recovery-medium" : "recovery-low"',
-    );
     expect(styles).toContain(".technical-playable_with_recovery.recovery-low");
     expect(styles).toContain(".technical-playable_with_recovery.recovery-medium");
     expect(styles).toContain(".technical-playable_with_recovery.recovery-high");

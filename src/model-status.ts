@@ -18,23 +18,13 @@ export const ModelTechnicalGameplayStatusSchema = z.enum([
 ]);
 export type ModelTechnicalGameplayStatus = z.infer<typeof ModelTechnicalGameplayStatusSchema>;
 
-export const ModelQualityStatusSchema = z.enum([
-  "high",
-  "medium",
-  "low",
-  "unrated",
-  "awaiting_judgment",
-]);
-export type ModelQualityStatus = z.infer<typeof ModelQualityStatusSchema>;
-
 export type ModelLanguageTechnicalStatuses = Partial<
   Record<LanguageCode, ModelTechnicalGameplayStatus>
 >;
-export type ModelLanguageQualityStatuses = Partial<Record<LanguageCode, ModelQualityStatus>>;
 
 export const ModelEvidenceReferenceSchema = z
   .object({
-    source: z.enum(["calibration", "certification", "legacy_evaluation"]),
+    source: z.enum(["calibration", "legacy_evaluation"]),
     reference: z.string().trim().min(1).max(500),
     packageId: z.string().trim().min(1).max(100).optional(),
     packageVersion: z.string().trim().min(1).max(100).optional(),

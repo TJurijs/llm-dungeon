@@ -390,8 +390,8 @@ Repeat `--truncation-evidence` when exact-baseline diagnostics prove separate
 phase limits. The command rejects a different provider, model, route, profile
 fingerprint, reduced request ceiling, or non-truncation failure; it freezes a
 raised profile only when the evidence-implied minimum passes the complete
-calibration suite. A changed profile fingerprint makes older certification
-evidence stale until certification is rerun explicitly.
+calibration suite. A changed profile fingerprint makes older evidence for that
+route stale until it is recalibrated explicitly.
 
 ## License
 

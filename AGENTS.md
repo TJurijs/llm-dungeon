@@ -44,8 +44,8 @@ observable behavior and documented invariants during refactors.
   provider/model is retired from public selection.
 - `gemini-3.6-flash` is the recommended and default model. A language-specific
   compatibility probe is necessary for selection but is not calibration,
-  certification, narrative quality, or recommendation eligibility. English and
-  Russian results remain independent. The API command is a placeholder, not an
+  narrative quality, or recommendation eligibility. English and Russian results
+  remain independent. The API command is a placeholder, not an
   invitation to design a public API during unrelated work.
 - The application is V1 and the gameplay contract is V3. The npm package is private and
   intentionally has no public module exports; do not infer an API surface from
@@ -99,10 +99,11 @@ observable behavior and documented invariants during refactors.
   execution contract, calibration variables, phase budgets, fingerprints, and
   freeze rules. `src/model-execution-profile-store.ts` is the durable authority
   for selected calibrated profiles.
-- `src/model-status.ts` defines separate adapter, technical gameplay, quality,
-  evidence, and recommendation concepts. `src/model-assessment-catalog.ts`
-  persists current calibration and certification evidence without rewriting
-  legacy evaluation history.
+- `src/model-status.ts` defines separate adapter, technical gameplay, evidence,
+  and recommendation concepts. `src/model-assessment-catalog.ts` persists
+  current calibration evidence without rewriting legacy evaluation history. It
+  holds no certification: that feature was removed, so nothing produces an
+  authoritative per-language technical or quality verdict.
 - `src/providers.ts` is the provider facade (adapter construction and
   persisted configuration). `src/providers/` owns the shared chat-completions
   transport, provider-specific schema projections, and the concrete Google
@@ -174,7 +175,7 @@ observable behavior and documented invariants during refactors.
 - `src/mechanics.ts` is the sole d100 calculation authority.
 - `tools/playtest/` is the developer-only playtest harness, physically separate
   from the shipped app. `tools/playtest/harness/` is the single versioned engine
-  for calibration, certification, autoplay, stress, tuning, scheduling,
+  for calibration, autoplay, stress, tuning, scheduling,
   telemetry, assessment, judging, manifests, reports, resume, and focused
   replay. Packages describe experiments; player profiles describe
   simulated-player behavior. The harness may import app modules from `src/`,
@@ -231,7 +232,7 @@ separate one campaign's save format from the engine.
 
 Outside, and never imported by it: terminal and browser presentation, provider
 construction, the campaign catalog manager, the model catalog, assessment and
-certification evidence, the execution-profile store, the connection probe, world
+assessment evidence, the execution-profile store, the connection probe, world
 profiles, and the playtest harness. Multi-campaign management is separate from
 one campaign's state, and that distinction is the one worth keeping clear.
 
@@ -359,10 +360,9 @@ tests. AI judging may assess prose after a run; it is not part of turn commit.
 - Unknown fields, aliases, Markdown fences, array wrappers, and partial JSON fail
   closed. Do not add a schema-less fallback to improve apparent success rates.
 - A protocol change retires prior evidence. Shipped compatibility records the
-  protocol it was probed against, and certification records it too, so a contract
-  change correctly returns curated models to `untested` and certification to
-  not-current until fresh runs. Never fabricate replacement evidence to avoid
-  that state.
+  protocol it was probed against, so a contract change correctly returns curated
+  models to `untested` until fresh runs. Never fabricate replacement evidence to
+  avoid that state.
 
 Keep provider model restrictions visible in connection testing and the Web app.
 Each language-specific connection probe must use both the actual campaign-setup
@@ -370,7 +370,11 @@ schema and the actual gameplay schema. A failure in one language must not erase
 a current passing result for another language.
 
 - Curated models may ship real compatibility or legacy speed/cost evidence with
-  provenance, but never invented calibration or certification results. The
+  provenance, but never invented calibration results. Model speed is not
+  measured here: it carries a third party's published figure with its source
+  URL, the date it was read, and a flag when the route it describes is not the
+  route being shown. An empty speed table is correct until real figures are
+  imported. The
   browser does not expose retest controls for known curated models. Custom model
   tests probe every registered language independently; partial language
   compatibility is valid and must remain visible.
@@ -386,9 +390,6 @@ a current passing result for another language.
   the response proves truncation, using bounded phase-specific steps. Repair
   receives at least the failed phase's budget. Never improve apparent
   calibration by weakening local wire/domain validation.
-- Certification may start only with the selected execution profile frozen by
-  fingerprint. A profile or adapter-revision change makes prior certification
-  stale and requires a fresh `certification-v1` run.
 - Gemini intentionally receives a compatible projection of the same schema; its
   adapter omits unsupported/high-complexity annotations while local Zod limits
   remain authoritative.
@@ -416,9 +417,8 @@ Changing the wire format is not a casual refactor. If a change is unavoidable:
 2. update every provider and the connection probe;
 3. update prompts, wire/domain codecs, telemetry, and tests together;
 4. retain readable failure diagnostics;
-5. invalidate affected profiles and certifications, then run focused live
-   calibration and `certification-v1` only when explicitly authorized with a
-   known cost ceiling.
+5. invalidate affected profiles, then run focused live calibration only when
+   explicitly authorized with a known cost ceiling.
 
 ## Context and prompting invariants
 
@@ -520,10 +520,12 @@ new facts.
   `no_compatible_profile`), technical gameplay status (`clean`,
   `playable_with_recovery`, `unstable`, `unsupported`, `inconclusive`), and
   language-specific quality (`high`, `medium`, `low`, `unrated`,
-  `awaiting_judgment`) are independent authorities. Recommendation eligibility
-  is derived separately and is never equivalent to a connection-schema pass.
-  Gemini 3.6 Flash remains the explicit product-recommended default even when
-  no new paid certification has been authorized.
+  `awaiting_judgment`) are independent. Technical and quality status are now
+  per-run evidence only: certification was the sole path that promoted them
+  into authoritative model metadata, and it was removed. Recommendation
+  eligibility is a product decision and never equivalent to a connection-schema
+  pass: Gemini 3.6 Flash is the explicit product-recommended default, and any
+  other route becomes eligible once its adapter is calibrated.
 - Calibration is non-scored and exercises representative setup, resolved real
   effects, `check_required`, locked resolution, inventory/reference transfer,
   production-sized context, and near-normal output. Variants for one
@@ -536,28 +538,26 @@ new facts.
   `player_driver`, `application`, or `inconclusive`. Judge, player, provider,
   account, adapter, and application failures do not reduce candidate quality or
   technical status; they are excluded or make the result inconclusive.
-- One playtest engine owns `certification-v1`, `campaign-autoplay-v1`,
+- One playtest engine owns `campaign-autoplay-v1`,
   `persistence-soak-v1`, `adversarial-boundaries-v1`, `mechanics-v1`, and
   `tuning-v1`. Do not reintroduce separate evaluation and autoplay runners.
 - The developer terminal surface (`npm run playtest -- playtest ...`) includes `playtest packages`, `playtest calibrate`,
   `playtest replay <diagnostic-bundle>`, and
-  `playtest run <package>`; `playtest certify`, `playtest matrix <package>`, and
+  `playtest run <package>`; `playtest matrix <package>` and
   `playtest resume <run-id>`; plus `playtest judge <run-id>`,
   `playtest report <run-id>`, and `playtest compare <run-id> <run-id>`. Matrix
   jobs are independent combinations of package × candidate × language ×
   optional repetition, never interacting models or concurrent turns inside one
   campaign. Deprecated `evaluate` spellings may remain only as thin routes into
   the playtest engine and must never instantiate the retired evaluator.
-- `certification-v1` is the only package that may update authoritative model
-  technical/quality metadata. It uses one bilingual canonical starting state,
-  ten branch-aware scripted actions, deterministic per-turn rolls, no AI
-  player, deterministic coverage where possible, and one separate final judge
-  call. Its turn-seven fixture explicitly locks the natural-1 consequence as a
-  severe but survivable injury; this evaluation constraint does not weaken
-  lethal stakes in ordinary gameplay. If a committed valid terminal outcome
-  nevertheless ends that fixture, preserve it and use the package's fresh
-  isolated continuation fixture for later coverage rather than resurrecting
-  the campaign. Other packages are diagnostic only.
+- No package updates authoritative model metadata. Every package is
+  diagnostic. `tuning-v1` keeps the bilingual canonical starting state, the ten
+  branch-aware scripted actions, deterministic per-turn rolls, no AI player,
+  deterministic coverage where possible, and one separate final judge call, so
+  the controlled-comparison path survives certification's removal. Its
+  turn-seven fixture explicitly locks the natural-1 consequence as a severe but
+  survivable injury; this fixture constraint does not weaken lethal stakes in
+  ordinary gameplay.
 - Autoplay is an external harness submitting one ordinary player action at a
   time; it never gives the DM tools or autonomous fictional behavior. Packages
   describe experiments, while the ten player profiles below remain optional
@@ -598,7 +598,7 @@ new facts.
   or make the source store resumable through the app. Runs use collision-resistant
   IDs and filesystem locks; resume and publication are idempotent. Preserve existing
   `evaluations/runs/` as legacy evidence and never reinterpret its old quality
-  labels as current certification.
+  labels as current evidence.
 - Parallelism is optional and bounded across independent jobs/campaigns by a
   global worker limit, provider-specific pools, and one reservation-based cost
   manager. Turns within one campaign are always serialized. Support cancellation
@@ -632,7 +632,7 @@ new facts.
 - Failed calls may produce a secret-safe diagnostic bundle with state snapshot,
   prompt/schema hashes, route/profile, response metadata, parsed failure, and
   expected phase. Focused replay is bounded and non-committing. A replay fix is
-  only diagnostic; freeze the changed profile and rerun `certification-v1`.
+  only diagnostic; freeze the changed profile before relying on it.
 - An unjudged autoplay run records an uncommittable turn as `skipped` and
   continues, because its product is a transcript a human reads and one lost turn
   is a gap in it rather than the end of it. Every other package still aborts: its
@@ -650,7 +650,7 @@ new facts.
   repair counts, check rate, invariant status, and per-job artifacts visible.
   AI judging may assess prose, but deterministic code owns mechanics and state
   auditing. Check-rate warnings are review signals, not automatic failures.
-- Never run paid calibration, certification, autoplay, stress, replay, or
+- Never run paid calibration, autoplay, stress, replay, or
   judging without explicit authorization and an understood cost ceiling.
 
 Ten profiles exist and should remain individually selectable:
@@ -728,7 +728,7 @@ on disk rather than trusting what you typed.
 - The World & DM style editor changes only the selected language's creative
   future-campaign profile. It must not expose editing of core prompt, protocol,
   mechanics, or state-authority rules.
-- Prompt inspection, calibration, certification, autoplay, stress, tuning, and
+- Prompt inspection, calibration, autoplay, stress, tuning, and
   judging remain terminal/developer tools; do not expose them through browser
   routes or controls. Static prompt previews
   must never compose live campaign context or secrets.
@@ -779,18 +779,18 @@ For provider/protocol/prompt/state/playtest changes, add focused deterministic
 tests for the affected adapter phase, package, lane, scheduler, or recovery
 path. No paid command is part of the default local gate.
 
-Live `playtest calibrate`, `certify`, `run`, `matrix`, `judge`, or focused replay
+Live `playtest calibrate`, `run`, `matrix`, `judge`, or focused replay
 may run only with explicit authorization, available keys/models, and an agreed
 cost ceiling. Calibrate and freeze the exact provider/model/route profile before
-certification. Use `certification-v1` for authoritative model qualification;
-use autoplay, stress, mechanics, and tuning packages only for diagnostics.
-Canonical speed evidence must use concurrency 1, while concurrent results must
-be labeled loaded latency.
+relying on it. Every package is diagnostic; none qualifies a model. Latency
+measured at concurrency 1 is canonical and concurrent results must be labeled
+loaded, but neither is promoted into the shipped speed figures, which come from
+a third party with provenance.
 
 Historical 9×5 evaluation runs and their same-model judgments are legacy
 evidence only. Preserve their artifacts, but do not use the old matrix, “clean
-quality gate,” or judge scores as current calibration, certification, or
-recommendation authority. Live results are stochastic; one good run never
+quality gate,” or judge scores as current calibration or recommendation
+authority. Live results are stochastic; one good run never
 replaces the deterministic local gate.
 
 ## Handover definition of done

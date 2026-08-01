@@ -428,8 +428,7 @@ export class DungeonWebController {
               409,
               "Choose a provider and model for this campaign before playing",
             );
-          const language = (await store.readManifest()).language;
-          const engine = new DungeonEngine(store, await this.settings.provider(config, language));
+          const engine = new DungeonEngine(store, await this.settings.provider(config));
           return operation(engine, store);
         });
       });
@@ -808,7 +807,7 @@ export class DungeonWebController {
           const draftStore = new StateStore(this.setupDraftRoot(requestId));
           const engine = new DungeonEngine(
             draftStore,
-            await this.settings.provider(config, language),
+            await this.settings.provider(config),
           );
           const generated = await engine.generateSetupWithMetadata({
             premise,
@@ -1004,7 +1003,7 @@ export class DungeonWebController {
           }
           const engine = new DungeonEngine(
             store,
-            await this.settings.provider(config, manifest.language),
+            await this.settings.provider(config),
           );
           const settledActiveSnapshot = metadata.archived && manifest.status === "active";
           return engine.generateCompletedStory(

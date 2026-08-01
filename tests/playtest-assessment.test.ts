@@ -20,14 +20,14 @@ import {
 } from "../tools/playtest/harness/judge.js";
 import {
   CAMPAIGN_AUTOPLAY_PACKAGE,
-  CERTIFICATION_PACKAGE,
-  CERTIFICATION_SCRIPT,
+  TUNING_PACKAGE,
+  CANONICAL_SCRIPT,
 } from "../tools/playtest/harness/packages.js";
 
 function check(turn: number, roll: number) {
   return resolveCheck(
     {
-      name: `Certification check ${turn}`,
+      name: `Scripted check ${turn}`,
       difficulty: 50,
       modifiers: [],
       successStakes: "The intended bounded result succeeds.",
@@ -38,7 +38,7 @@ function check(turn: number, roll: number) {
   );
 }
 
-function certificationTurns(): PlaytestTurnRecord[] {
+function scriptedTurns(): PlaytestTurnRecord[] {
   const operationsByTurn: Record<number, unknown[]> = {
     2: [
       {
@@ -100,7 +100,7 @@ function certificationTurns(): PlaytestTurnRecord[] {
       },
     ],
   };
-  return CERTIFICATION_SCRIPT.map((script) =>
+  return CANONICAL_SCRIPT.map((script) =>
     PlaytestTurnRecordSchema.parse({
       turn: script.turn,
       scriptedTurnId: script.id,
@@ -173,7 +173,7 @@ function validJudgment(turns: PlaytestTurnRecord[]): PlaytestJudgment {
     executiveSummary: "The controlled game remained coherent and persistent.",
     strengths: ["The candidate maintained state authority."],
     issues: [],
-    coverageJudgments: CERTIFICATION_PACKAGE.coverageRequirements
+    coverageJudgments: TUNING_PACKAGE.coverageRequirements
       .filter((requirement) => requirement.mode === "judge")
       .map((requirement) => ({
         requirementId: requirement.id,
@@ -200,8 +200,8 @@ function validJudgment(turns: PlaytestTurnRecord[]): PlaytestJudgment {
 
 describe("playtest deterministic assessment", () => {
   it("audits the complete certification script without narrative heuristics", () => {
-    const turns = certificationTurns();
-    const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
+    const turns = scriptedTurns();
+    const coverage = assessCoverage(TUNING_PACKAGE, turns);
     expect(coverage.deterministicPassed).toBe(true);
     expect(coverage.failed).toBe(0);
     expect(coverage.requiresJudge).toBeGreaterThan(0);
@@ -214,14 +214,14 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("fails exact check, roll, state, and compaction coverage deterministically", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     turns[2] = PlaytestTurnRecordSchema.parse({ ...turns[2]!, check: undefined });
     turns[8] = PlaytestTurnRecordSchema.parse({
       ...turns[8]!,
       operations: [{ type: "add_trait", targetId: "player:hero", trait: "teleportation" }],
     });
     turns[9] = PlaytestTurnRecordSchema.parse({ ...turns[9]!, contextObservation: undefined });
-    const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
+    const coverage = assessCoverage(TUNING_PACKAGE, turns);
     expect(coverage.deterministicPassed).toBe(false);
     expect(coverage.entries.find((entry) => entry.requirementId === "t3-check")?.status).toBe(
       "failed",
@@ -238,8 +238,8 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("separates valid terminal completion and missing coverage from candidate technical health", () => {
-    const terminalTurns = certificationTurns().slice(0, 7);
-    const terminalCoverage = assessCoverage(CERTIFICATION_PACKAGE, terminalTurns, {
+    const terminalTurns = scriptedTurns().slice(0, 7);
+    const terminalCoverage = assessCoverage(TUNING_PACKAGE, terminalTurns, {
       legitimateTerminalTurn: 7,
     });
     expect(terminalCoverage.deterministicPassed).toBe(true);
@@ -249,7 +249,7 @@ describe("playtest deterministic assessment", () => {
     ).toBe("not_exercised");
     expect(
       buildCandidateTechnicalSnapshot({
-        playtestPackage: CERTIFICATION_PACKAGE,
+        playtestPackage: TUNING_PACKAGE,
         adapterStatus: "calibrated",
         executionProfileCurrent: true,
         turns: terminalTurns,
@@ -261,20 +261,22 @@ describe("playtest deterministic assessment", () => {
     ).toMatchObject({
       status: "clean",
       turnsCompleted: 7,
-      turnsRequired: 10,
+      // A diagnostic package does not require every turn, so a legitimate
+      // terminal result at turn 7 completes its own fixture.
+      turnsRequired: 7,
       deterministicCoveragePassed: true,
     });
 
-    const completedTurnsWithCoverageFailure = certificationTurns();
+    const completedTurnsWithCoverageFailure = scriptedTurns();
     completedTurnsWithCoverageFailure[8] = PlaytestTurnRecordSchema.parse({
       ...completedTurnsWithCoverageFailure[8]!,
       operations: [{ type: "add_trait", targetId: "player:hero", trait: "teleportation" }],
     });
-    const failedCoverage = assessCoverage(CERTIFICATION_PACKAGE, completedTurnsWithCoverageFailure);
+    const failedCoverage = assessCoverage(TUNING_PACKAGE, completedTurnsWithCoverageFailure);
     expect(failedCoverage.deterministicPassed).toBe(false);
     expect(
       buildCandidateTechnicalSnapshot({
-        playtestPackage: CERTIFICATION_PACKAGE,
+        playtestPackage: TUNING_PACKAGE,
         adapterStatus: "calibrated",
         executionProfileCurrent: true,
         turns: completedTurnsWithCoverageFailure,
@@ -286,8 +288,8 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("excludes judge, player, route, account, and application failures from candidate technical health", () => {
-    const turns = certificationTurns();
-    const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
+    const turns = scriptedTurns();
+    const coverage = assessCoverage(TUNING_PACKAGE, turns);
     const calls = [
       call(),
       call({ id: "route", success: false, failureKind: "network", failureOwner: "provider_route" }),
@@ -316,7 +318,7 @@ describe("playtest deterministic assessment", () => {
       }),
     ];
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -336,7 +338,7 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("marks candidate-owned failed turns unstable and external failed turns inconclusive", () => {
-    const baseline = certificationTurns();
+    const baseline = scriptedTurns();
     const candidateTurns = [...baseline];
     candidateTurns[8] = PlaytestTurnRecordSchema.parse({
       ...candidateTurns[8]!,
@@ -346,12 +348,12 @@ describe("playtest deterministic assessment", () => {
       error: "invalid authoritative reference",
     });
     const candidate = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns: candidateTurns,
       calls: [call()],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, candidateTurns),
+      coverage: assessCoverage(TUNING_PACKAGE, candidateTurns),
       evidenceComplete: true,
     });
     expect(candidate.status).toBe("unstable");
@@ -366,12 +368,12 @@ describe("playtest deterministic assessment", () => {
       error: "filesystem failure",
     });
     const external = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns: externalTurns,
       calls: [call()],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, externalTurns),
+      coverage: assessCoverage(TUNING_PACKAGE, externalTurns),
       evidenceComplete: true,
     });
     expect(external.status).toBe("inconclusive");
@@ -379,9 +381,9 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("keeps one bounded recovery passable while distinguishing it from a clean run", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -394,7 +396,7 @@ describe("playtest deterministic assessment", () => {
         }),
         call({ id: "repaired", sequence: 2, repairKind: "schema" }),
       ],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      coverage: assessCoverage(TUNING_PACKAGE, turns),
       evidenceComplete: true,
     });
 
@@ -446,9 +448,9 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("reports a recovered content block separately from schema and transient repair", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -461,7 +463,7 @@ describe("playtest deterministic assessment", () => {
         }),
         call({ id: "content-repair", sequence: 2, repairKind: "content" }),
       ],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      coverage: assessCoverage(TUNING_PACKAGE, turns),
       evidenceComplete: true,
     });
 
@@ -475,9 +477,9 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("marks successful recoveries beyond the package limit unstable", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -488,21 +490,21 @@ describe("playtest deterministic assessment", () => {
           repairKind: "domain",
         }),
       ),
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      coverage: assessCoverage(TUNING_PACKAGE, turns),
       evidenceComplete: true,
     });
 
     expect(technical).toMatchObject({
       status: "unstable",
       domainRepairs: 5,
-      reasons: ["candidate-owned domain repairs 5 exceed limit 1"],
+      reasons: ["candidate-owned domain repairs 5 exceed limit 2"],
     });
   });
 
   it("enforces every candidate-owned failure and repair limit", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -542,23 +544,20 @@ describe("playtest deterministic assessment", () => {
         call({ id: "domain-repair-1", sequence: 9, repairKind: "domain" }),
         call({ id: "domain-repair-2", sequence: 10, repairKind: "domain" }),
       ],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      coverage: assessCoverage(TUNING_PACKAGE, turns),
       evidenceComplete: true,
     });
 
     expect(technical.status).toBe("unstable");
-    expect(technical.reasons).toEqual([
-      "candidate-owned schema repairs 2 exceed limit 1",
-      "candidate-owned transient retries 2 exceed limit 1",
-      "candidate-owned domain repairs 2 exceed limit 1",
-      "candidate-owned failures 4 exceed limit 1",
-    ]);
+    // Two schema repairs and two transient retries are within a diagnostic
+    // package's budget; the failure count is not.
+    expect(technical.reasons).toEqual(["candidate-owned failures 4 exceed limit 2"]);
   });
 
   it("does not apply candidate limits to recovered provider-route retries", () => {
-    const turns = certificationTurns();
+    const turns = scriptedTurns();
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -580,7 +579,7 @@ describe("playtest deterministic assessment", () => {
         }),
         call({ id: "route-retry-2", sequence: 4, repairKind: "transient" }),
       ],
-      coverage: assessCoverage(CERTIFICATION_PACKAGE, turns),
+      coverage: assessCoverage(TUNING_PACKAGE, turns),
       evidenceComplete: true,
     });
 
@@ -593,10 +592,10 @@ describe("playtest deterministic assessment", () => {
   });
 
   it("freezes technical status across failed and rerun separate judgments", () => {
-    const turns = certificationTurns();
-    const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
+    const turns = scriptedTurns();
+    const coverage = assessCoverage(TUNING_PACKAGE, turns);
     const technical = buildCandidateTechnicalSnapshot({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       adapterStatus: "calibrated",
       executionProfileCurrent: true,
       turns,
@@ -604,38 +603,40 @@ describe("playtest deterministic assessment", () => {
       coverage,
       evidenceComplete: true,
     });
-    const failedJudge = assessPlaytest("certification", technical, { status: "failed" });
+    const failedJudge = assessPlaytest("tuning", technical, { status: "failed" });
     expect(failedJudge.technical).toEqual(technical);
     expect(failedJudge.qualityStatus).toBe("awaiting_judgment");
 
-    const judgment = playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).parse(
+    const judgment = playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).parse(
       validJudgment(turns),
     );
-    const completed = assessPlaytest("certification", technical, { status: "completed", judgment });
+    const completed = assessPlaytest("tuning", technical, { status: "completed", judgment });
     expect(completed.technical).toEqual(technical);
     expect(completed.qualityStatus).toBe("high");
     const failedRerun = assessPlaytest(
-      "certification",
+      "tuning",
       technical,
       { status: "failed" },
       completed.qualityStatus,
     );
     expect(failedRerun.qualityStatus).toBe("awaiting_judgment");
+    // Quality now follows whether the package is judged at all rather than
+    // whether it was certification. Autoplay is the one that never judges.
     expect(
-      assessPlaytest("stress", technical, { status: "completed", judgment }).qualityStatus,
+      assessPlaytest("autoplay", technical, { status: "completed", judgment }).qualityStatus,
     ).toBe("unrated");
   });
 
   it("uses the expanded blind rubric and complete operation/coverage audits", () => {
-    const turns = certificationTurns();
-    const coverage = assessCoverage(CERTIFICATION_PACKAGE, turns);
+    const turns = scriptedTurns();
+    const coverage = assessCoverage(TUNING_PACKAGE, turns);
     const audit = buildMechanicalAudit(turns);
     const judgment = validJudgment(turns);
     expect(
-      playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse(judgment).success,
+      playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).safeParse(judgment).success,
     ).toBe(true);
     expect(
-      playtestJudgmentSchemaFor(CERTIFICATION_PACKAGE, turns).safeParse({
+      playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).safeParse({
         ...judgment,
         coverageJudgments: judgment.coverageJudgments.slice(1),
       }).success,
@@ -644,7 +645,7 @@ describe("playtest deterministic assessment", () => {
     expect(system).toContain("technical status was frozen");
     expect(system).toContain("NPC continuity");
     const prompt = playtestJudgePrompt({
-      playtestPackage: CERTIFICATION_PACKAGE,
+      playtestPackage: TUNING_PACKAGE,
       language: "en",
       transcript: "A blind candidate transcript.",
       turns,
@@ -657,7 +658,7 @@ describe("playtest deterministic assessment", () => {
     expect(prompt).toContain("DETERMINISTIC COVERAGE (AUTHORITATIVE)");
     expect(prompt).toContain("account for every committed operationIndex");
     expect(
-      renderPlaytestJudgment("certification-v1", judgment, "fake-judge", "judge-model"),
+      renderPlaytestJudgment("tuning-v1", judgment, "fake-judge", "judge-model"),
     ).toContain("NPC continuity");
   });
 });

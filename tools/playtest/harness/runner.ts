@@ -36,7 +36,6 @@ import {
   CandidateTechnicalSnapshotSchema,
   assessPlaytest,
   buildCandidateTechnicalSnapshot,
-  type CandidateTechnicalSnapshot,
 } from "./assessment.js";
 import { assessCoverage, buildMechanicalAudit } from "./audit.js";
 import {
@@ -535,14 +534,6 @@ export class PlaytestRunner {
         `--scenario-seed requires a package with a generated starting state; ${playtestPackage.id} uses a canonical one`,
       );
     }
-    if (playtestPackage.purpose === "certification" && config.judge.policy !== "final") {
-      throw new Error("certification-v1 requires one separate final judge call");
-    }
-    if (playtestPackage.purpose === "certification" && config.repetitions !== 1) {
-      throw new Error(
-        "certification-v1 requires exactly one authoritative repetition per candidate and language",
-      );
-    }
     if (config.judge.policy !== playtestPackage.judgePolicy.kind) {
       throw new Error(`${playtestPackage.id} requires ${playtestPackage.judgePolicy.kind} judging`);
     }
@@ -846,7 +837,7 @@ export class PlaytestRunner {
             ...(config.player ? { player: config.player } : {}),
             judge: config.judge,
             qualityStatus:
-              playtestPackage.purpose === "certification" ? "awaiting_judgment" : "unrated",
+              playtestPackage.purpose === "autoplay" ? "unrated" : "awaiting_judgment",
             ...(playtestPackage.id === "campaign-autoplay-v1"
               ? { completedStory: { status: "pending" as const, attempts: 0 } }
               : {}),
@@ -872,7 +863,7 @@ export class PlaytestRunner {
     job.failureOwner = attribution.owner;
     job.error = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
     job.qualityStatus =
-      manifest.packageSnapshot.purpose === "certification" ? "awaiting_judgment" : "unrated";
+      manifest.packageSnapshot.purpose === "autoplay" ? "unrated" : "awaiting_judgment";
     const coverage = assessCoverage(manifest.packageSnapshot, []);
     const technical = buildCandidateTechnicalSnapshot({
       playtestPackage: manifest.packageSnapshot,
@@ -889,7 +880,6 @@ export class PlaytestRunner {
     await atomicWriteJson(path.join(jobDir, "coverage.json"), coverage);
     await atomicWriteJson(path.join(jobDir, "mechanical-audit.json"), buildMechanicalAudit([]));
     await atomicWriteJson(path.join(jobDir, "technical.json"), technical);
-    await this.recordCertificationIfCurrent(manifest, job, technical);
   }
 
   private async markUnexpectedJudgmentFailure(
@@ -915,7 +905,7 @@ export class PlaytestRunner {
     }
     job.status = "awaiting_judgment";
     job.qualityStatus =
-      manifest.packageSnapshot.purpose === "certification" ? "awaiting_judgment" : "unrated";
+      manifest.packageSnapshot.purpose === "autoplay" ? "unrated" : "awaiting_judgment";
     job.failureOwner = "judge";
     job.error = message;
     CandidateTechnicalSnapshotSchema.parse(
@@ -1495,9 +1485,8 @@ export class PlaytestRunner {
     await atomicWriteJson(path.join(jobDir, "technical.json"), technical);
     job.technicalStatus = technical.status;
     job.completedTurns = turns.filter((turn) => turn.status === "completed").length;
-    if (playtestPackage.purpose === "certification") {
+    if (playtestPackage.purpose !== "autoplay") {
       job.qualityStatus = "awaiting_judgment";
-      await this.recordCertificationIfCurrent(manifest, job, technical);
     }
     this.progress(
       manifest,
@@ -1516,7 +1505,7 @@ export class PlaytestRunner {
     ) {
       await this.ensureJudgeTasks(jobDir, manifest.config, job.completedTurns);
       job.status = "awaiting_judgment";
-      if (playtestPackage.purpose === "certification") job.qualityStatus = "awaiting_judgment";
+      job.qualityStatus = "awaiting_judgment";
     } else if (gameplayFinished) {
       job.status = "completed";
       job.qualityStatus = "unrated";
@@ -2048,62 +2037,6 @@ export class PlaytestRunner {
       delete job.error;
     }
     await atomicWriteJson(path.join(jobDir, "assessment.json"), assessment);
-    if (finalTask?.status === "completed") {
-      await this.recordCertificationIfCurrent(manifest, job, technical);
-    }
-  }
-
-  private async recordCertificationIfCurrent(
-    manifest: PlaytestManifest,
-    job: PlaytestJob,
-    technical: CandidateTechnicalSnapshot,
-  ): Promise<void> {
-    try {
-      await this.recordCertification(manifest, job, technical);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === "Certification requires the currently frozen calibrated execution profile"
-      ) {
-        return;
-      }
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EBUSY" || code === "EACCES") return;
-      throw error;
-    }
-  }
-
-  private async recordCertification(
-    manifest: PlaytestManifest,
-    job: PlaytestJob,
-    technical: CandidateTechnicalSnapshot,
-  ): Promise<void> {
-    if (manifest.packageSnapshot.id !== "certification-v1") return;
-    const catalog =
-      this.dependencies.assessmentCatalog ?? new ModelAssessmentCatalog(this.projectRoot);
-    await catalog.recordCertification({
-      provider: job.candidate.config.provider,
-      model: job.candidate.config.model,
-      route: job.candidate.route,
-      language: job.language,
-      packageId: manifest.packageSnapshot.id,
-      packageVersion: String(manifest.packageSnapshot.version),
-      profileFingerprint: job.candidate.executionProfileFingerprint,
-      technicalStatus: technical.status,
-      recoveryCount: technical.schemaRepairs + technical.contentRepairs + technical.domainRepairs,
-      qualityStatus: job.qualityStatus,
-      candidateMetricsHash: hashPlaytestValue(technical),
-      evidence: {
-        source: "certification",
-        reference: path
-          .join("playtests", "runs", manifest.runId, "jobs", job.id)
-          .replaceAll("\\", "/"),
-        packageId: manifest.packageSnapshot.id,
-        packageVersion: String(manifest.packageSnapshot.version),
-        executionProfileFingerprint: job.candidate.executionProfileFingerprint,
-        recordedAt: this.now().toISOString(),
-      },
-    });
   }
 
   private updateActiveDuration(

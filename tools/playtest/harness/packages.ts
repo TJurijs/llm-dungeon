@@ -12,7 +12,7 @@ function localized(en: string, ru: string): Record<LanguageCode, string> {
   return { en, ru };
 }
 
-const CERTIFICATION_SETUP_EN: SetupResult = SetupResultSchema.parse({
+const CANONICAL_SETUP_EN: SetupResult = SetupResultSchema.parse({
   campaignTitle: "The Lantern Ledger",
   scenarioMarkdown: `# The Lantern Ledger
 
@@ -164,7 +164,7 @@ Lantern Market and the Old Sluice are linked by a failing floodgate, a missing c
   ],
 });
 
-const CERTIFICATION_SETUP_RU: SetupResult = SetupResultSchema.parse({
+const CANONICAL_SETUP_RU: SetupResult = SetupResultSchema.parse({
   campaignTitle: "Фонарная книга",
   scenarioMarkdown: `# Фонарная книга
 
@@ -319,89 +319,12 @@ const CERTIFICATION_SETUP_RU: SetupResult = SetupResultSchema.parse({
   ],
 });
 
-export const CERTIFICATION_CANONICAL_SETUPS: Record<LanguageCode, SetupResult> = {
-  en: CERTIFICATION_SETUP_EN,
-  ru: CERTIFICATION_SETUP_RU,
+export const CANONICAL_SETUPS: Record<LanguageCode, SetupResult> = {
+  en: CANONICAL_SETUP_EN,
+  ru: CANONICAL_SETUP_RU,
 };
 
-function certificationContinuationSetup(language: LanguageCode): SetupResult {
-  const source = CERTIFICATION_CANONICAL_SETUPS[language];
-  const isRussian = language === "ru";
-  return SetupResultSchema.parse({
-    ...structuredClone(source),
-    campaignTitle: isRussian
-      ? "Фонарная книга — проверка продолжения"
-      : "The Lantern Ledger — continuation fixture",
-    openingNarration: isRussian
-      ? "Это новая изолированная проверочная сцена у Старого шлюза. Арен пережил тяжёлый удар, находится в укрытии рядом с Иреном, хранит найденную таможенную книгу и располагает настойкой лунолиста. Предыдущая завершённая кампания не возобновляется."
-      : "This is a fresh isolated coverage scene at the Old Sluice. Aren has survived a severe impact, is sheltered beside Iren, holds the recovered customs ledger, and has one moonleaf tonic. The previously ended campaign is not resumed.",
-    timeLabel: isRussian ? "Поздний вечер, дождь ослабевает" : "Late evening, easing rain",
-    player: {
-      ...structuredClone(source.player),
-      status: isRussian
-        ? "тяжело ранен, но стабилен и в сознании"
-        : "severely injured but stable and conscious",
-      location: "location:old-sluice",
-      establishedFacts: [
-        ...(source.player.establishedFacts ?? []),
-        isRussian
-          ? "Арен пережил удар противовеса; ранение тяжёлое, но в этой проверочной сцене не смертельное."
-          : "Aren survived the counterweight impact; the injury is severe but nonlethal in this coverage fixture.",
-      ],
-      playerKnowledge: [
-        ...(source.player.playerKnowledge ?? []),
-        isRussian
-          ? "Найденная таможенная книга содержит надёжные доказательства махинаций Серика."
-          : "The recovered customs ledger contains durable evidence of Serik's diversion scheme.",
-      ],
-      inventory: [
-        { entityId: "item:silver-marks", quantity: 9 },
-        { entityId: "item:linen-bandage", quantity: 1 },
-        { entityId: "item:moonleaf-tonic", quantity: 1 },
-        { entityId: "item:customs-ledger", quantity: 1 },
-      ],
-    },
-    entities: source.entities.map((entity) => {
-      if (entity.id === "location:old-sluice") {
-        return {
-          ...structuredClone(entity),
-          inventory: (entity.inventory ?? []).filter(
-            (entry) => entry.entityId !== "item:customs-ledger",
-          ),
-        };
-      }
-      if (entity.id === "npc:mara-venn") {
-        return {
-          ...structuredClone(entity),
-          // This is a fresh isolated fixture rather than a replayable snapshot
-          // of the terminal campaign. Keep only the player-owned stacks needed
-          // by turns 8–10 instead of inventing a second owner for the same
-          // durable item records.
-          inventory: [],
-        };
-      }
-      return structuredClone(entity);
-    }),
-  });
-}
-
-const CERTIFICATION_TERMINAL_CONTINUATION_SETUPS: Record<LanguageCode, SetupResult> = {
-  en: certificationContinuationSetup("en"),
-  ru: certificationContinuationSetup("ru"),
-};
-
-const CERTIFICATION_TERMINAL_WARMUP_ACTIONS = Array.from({ length: 7 }, () =>
-  localized(
-    "I remain sheltered beside Iren, protect the recovered ledger, and quietly catch my breath without attempting another consequential action.",
-    "Я остаюсь в укрытии рядом с Иреном, берегу найденную книгу и спокойно перевожу дух, не предпринимая нового значимого действия.",
-  ),
-);
-
-/**
- * Creative world and DM-style context frozen into canonical package evidence.
- * Canonical runs must never inherit a user's mutable global world profile.
- */
-export const CERTIFICATION_CANONICAL_WORLD_RULES: Record<LanguageCode, string> = localized(
+export const CANONICAL_WORLD_RULES: Record<LanguageCode, string> = localized(
   `# Canonical World & DM Style
 
 Lantern Market is a grounded, rain-soaked civic-fantasy setting shaped by trade, old public works, ordinary people, and practical consequences.
@@ -447,7 +370,7 @@ function judged(
   };
 }
 
-const CERTIFICATION_COVERAGE: CoverageRequirement[] = [
+const CANONICAL_COVERAGE: CoverageRequirement[] = [
   deterministic(
     "t1-no-check",
     "Routine observation and cooperation need no check.",
@@ -569,7 +492,7 @@ const CERTIFICATION_COVERAGE: CoverageRequirement[] = [
   ),
   deterministic(
     "t7-nonterminal-stakes",
-    "The certification fixture locks severe failure as survivable rather than terminal.",
+    "The canonical fixture locks severe failure as survivable rather than terminal.",
     "В проверочной сцене тяжёлый провал фиксируется как переживаемый, а не терминальный.",
     { kind: "failure_campaign_status", turn: 7, status: "none" },
   ),
@@ -678,7 +601,7 @@ function branch(
   return { when, action: localized(actionEn, actionRu) };
 }
 
-export const CERTIFICATION_SCRIPT: ScriptedTurn[] = [
+export const CANONICAL_SCRIPT: ScriptedTurn[] = [
   {
     turn: 1,
     id: "cooperative-observation",
@@ -800,7 +723,7 @@ export const CERTIFICATION_SCRIPT: ScriptedTurn[] = [
     ),
     branches: [
       branch(
-        "The warning bell is sounding and the established cracked retaining pin is straining above Iren. In this certification fixture, the danger can cause a severe lasting injury but is explicitly not lethal to me. I make one primary action: pull Iren clear of the counterweight's path before it fails. I do not chase Serik, seize evidence, or perform another independent action.",
+        "The warning bell is sounding and the established cracked retaining pin is straining above Iren. In this canonical fixture, the danger can cause a severe lasting injury but is explicitly not lethal to me. I make one primary action: pull Iren clear of the counterweight's path before it fails. I do not chase Serik, seize evidence, or perform another independent action.",
         "Сигнальный колокол звучит, а установленный ранее треснувший штифт напрягается над Иреном. В этой проверочной сцене опасность может причинить мне тяжёлую длительную травму, но явно не является смертельной. Я совершаю одно основное действие: оттаскиваю Ирена с пути противовеса, пока штифт не отказал. Я не преследую Серика, не хватаю доказательства и не совершаю второго самостоятельного действия.",
       ),
     ],
@@ -890,50 +813,6 @@ export const CERTIFICATION_SCRIPT: ScriptedTurn[] = [
     ],
   },
 ];
-
-export { CERTIFICATION_PACKAGE_VERSION } from "../../../src/certification-version.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../../../src/certification-version.js";
-
-export const CERTIFICATION_PACKAGE: PlaytestPackage = PlaytestPackageSchema.parse({
-  id: "certification-v1",
-  version: CERTIFICATION_PACKAGE_VERSION,
-  purpose: "certification",
-  description: localized(
-    "Passable ten-turn certification of core gameplay behavior; long-horizon discovery belongs to extended playtests.",
-    "Проходимая десятиходовая сертификация основного игрового поведения; долгосрочные проблемы выявляются в расширенных плейтестах.",
-  ),
-  startingState: {
-    kind: "canonical",
-    setups: CERTIFICATION_CANONICAL_SETUPS,
-    worldRules: CERTIFICATION_CANONICAL_WORLD_RULES,
-  },
-  turnDriver: { kind: "scripted" },
-  turns: { minimum: 10, maximum: 10, default: 10 },
-  playerProfiles: [],
-  rollPolicy: { kind: "scripted" },
-  checkpoints: [{ turn: 10, assessCoverage: true, judge: true }],
-  coverageRequirements: CERTIFICATION_COVERAGE,
-  judgePolicy: { kind: "final", rubricVersion: 1 },
-  technicalRequirements: {
-    requireAllTurns: true,
-    requireInvariantPass: true,
-    maxSchemaRepairs: 1,
-    maxTransientRetries: 1,
-    maxDomainRepairs: 1,
-    maxCandidateFailures: 1,
-  },
-  limits: { maxCostUsd: 5, maxDurationMs: 60 * 60 * 1000, maxFailures: 1 },
-  scriptedTurns: CERTIFICATION_SCRIPT,
-  terminalContinuation: {
-    afterTurn: 7,
-    startingState: {
-      kind: "canonical",
-      setups: CERTIFICATION_TERMINAL_CONTINUATION_SETUPS,
-      worldRules: CERTIFICATION_CANONICAL_WORLD_RULES,
-    },
-    warmupActions: CERTIFICATION_TERMINAL_WARMUP_ACTIONS,
-  },
-});
 
 const GENERATED_START = {
   kind: "generated" as const,
@@ -1172,22 +1051,21 @@ export const TUNING_PACKAGE = diagnosticPackage({
   ),
   startingState: {
     kind: "canonical",
-    setups: CERTIFICATION_CANONICAL_SETUPS,
-    worldRules: CERTIFICATION_CANONICAL_WORLD_RULES,
+    setups: CANONICAL_SETUPS,
+    worldRules: CANONICAL_WORLD_RULES,
   },
   turnDriver: { kind: "scripted" },
   turns: { minimum: 10, maximum: 10, default: 10 },
   playerProfiles: [],
   rollPolicy: { kind: "scripted" },
   checkpoints: [{ turn: 10, assessCoverage: true, judge: true }],
-  coverageRequirements: CERTIFICATION_COVERAGE,
+  coverageRequirements: CANONICAL_COVERAGE,
   judgePolicy: { kind: "final", rubricVersion: 1 },
-  scriptedTurns: CERTIFICATION_SCRIPT,
+  scriptedTurns: CANONICAL_SCRIPT,
   tuningVariableLimit: 1,
 });
 
 const PLAYTEST_PACKAGES = [
-  CERTIFICATION_PACKAGE,
   CAMPAIGN_AUTOPLAY_PACKAGE,
   PERSISTENCE_SOAK_PACKAGE,
   ADVERSARIAL_BOUNDARIES_PACKAGE,

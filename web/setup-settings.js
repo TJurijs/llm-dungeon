@@ -521,75 +521,6 @@ export function createSetupSettingsController(dependencies) {
     return t(key || "costUnknown");
   }
 
-  function modelQualityCopy(model, language) {
-    const rating = model.quality?.[language];
-    const key = {
-      low: "qualityLow",
-      medium: "qualityMedium",
-      high: "qualityHigh",
-      awaiting_judgment: "qualityAwaiting",
-    }[rating];
-    return t(key || "qualityUnrated");
-  }
-
-  function modelTechnicalCopy(model, language) {
-    const key = {
-      clean: "technicalClean",
-      playable_with_recovery: "technicalRecovery",
-      unstable: "technicalUnstable",
-      unsupported: "technicalUnsupported",
-    }[model.technicalStatus?.[language]];
-    return t(key || "technicalInconclusive");
-  }
-
-  function createTechnicalSignal(model, language) {
-    const technical = model.technicalStatus?.[language] || "inconclusive";
-    const recoveries = model.technicalRecoveries?.[language] || 0;
-    const recoveryBand =
-      technical === "playable_with_recovery"
-        ? recoveries >= 5
-          ? "recovery-high"
-          : recoveries >= 2
-            ? "recovery-medium"
-            : "recovery-low"
-        : "";
-    const tone =
-      technical === "clean" || recoveryBand === "recovery-low"
-        ? "positive"
-        : recoveryBand === "recovery-medium"
-          ? "mixed"
-          : recoveryBand === "recovery-high"
-            ? "warning"
-            : ["unstable", "unsupported"].includes(technical)
-              ? "negative"
-              : "neutral";
-    return createModelSignal(
-      "technical",
-      `model-technical technical-${technical} ${recoveryBand} signal-${tone}`,
-      modelTechnicalCopy(model, language),
-      language,
-    );
-  }
-
-  function createQualitySignal(model, language) {
-    const rating = model.quality?.[language] || "unrated";
-    const supported = model.testedLanguages.includes(language);
-    const tone =
-      rating === "high"
-        ? "positive"
-        : rating === "medium"
-          ? "mixed"
-          : rating === "low"
-            ? "warning"
-            : "neutral";
-    return createModelSignal(
-      "quality",
-      `model-quality quality-${rating} signal-${tone} ${supported ? "is-supported" : "is-unsupported"}`,
-      modelQualityCopy(model, language),
-      language,
-    );
-  }
-
   function modelSpeedCopy(model) {
     const key = {
       fast: "speedFast",
@@ -710,37 +641,6 @@ export function createSetupSettingsController(dependencies) {
       statusBadge.dataset.tooltip = model.error;
     }
     metadata.append(statusBadge);
-    const primaryLanguage = "en";
-    const technicalGroup = createElement("span", "model-technical-group");
-    technicalGroup.append(createTechnicalSignal(model, primaryLanguage));
-    const qualityGroup = createElement("span", "model-quality-group");
-    qualityGroup.append(createQualitySignal(model, primaryLanguage));
-    const additionalLanguages = languages()
-      .map((language) => language.code)
-      .filter((language) => language !== primaryLanguage);
-    if (additionalLanguages.length > 0) {
-      const details = createElement("details", "model-language-details");
-      const summary = createElement("summary", "model-language-summary");
-      summary.title = t("otherLanguages");
-      summary.setAttribute(
-        "aria-label",
-        `${primaryLanguage.toUpperCase()} · ${t("otherLanguages")}`,
-      );
-      summary.append(technicalGroup, qualityGroup);
-      const menu = createElement("div", "model-language-menu");
-      for (const language of additionalLanguages) {
-        const languageRow = createElement("div", "model-language-row");
-        languageRow.append(
-          createTechnicalSignal(model, language),
-          createQualitySignal(model, language),
-        );
-        menu.append(languageRow);
-      }
-      details.append(summary, menu);
-      metadata.append(details);
-    } else {
-      metadata.append(technicalGroup, qualityGroup);
-    }
     const speedTone =
       model.speed === "fast"
         ? "positive"

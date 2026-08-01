@@ -13,7 +13,6 @@ import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { MODEL_EXECUTION_ADAPTER_REVISION } from "../src/model-execution-profile.js";
 import { campaignScopePath } from "../src/persistence/campaign-catalog.js";
 import { withSerializedFileLock } from "../src/persistence/lock.js";
-import { CERTIFICATION_PACKAGE_VERSION } from "../tools/playtest/harness/packages.js";
 import { createDungeonWebServer } from "../src/web-server.js";
 import { StateStore } from "../src/store.js";
 import type { ProviderConfig } from "../src/schemas.js";
@@ -566,9 +565,9 @@ describe("multi-campaign Web server", () => {
     const recommended = gemini.models.find((model: any) => model.id === "gemini-3.6-flash");
 
     expect(gemini).toMatchObject({ recommended: true, keyPresent: false, keySource: "missing" });
-    // The V2 contract retires shipped compatibility and certification
-    // evidence: the browser must show the recommended default awaiting a fresh
-    // probe rather than claiming results from a schema that no longer exists.
+    // A protocol change retires shipped compatibility evidence: the browser
+    // must show the recommended default awaiting a fresh probe rather than
+    // claiming results from a schema that no longer exists.
     expect(recommended).toMatchObject({
       recommended: true,
       known: true,
@@ -576,8 +575,6 @@ describe("multi-campaign Web server", () => {
       enabled: true,
       available: false,
       adapterStatus: "uncalibrated",
-      technicalStatus: { en: "inconclusive", ru: "inconclusive" },
-      quality: { en: "unrated", ru: "unrated" },
       recommendationEligibility: {
         eligible: true,
         reasons: ["product_recommended_default"],
@@ -585,13 +582,12 @@ describe("multi-campaign Web server", () => {
       evidence: {
         compatibility: null,
         assessment: expect.arrayContaining([expect.objectContaining({ source: "calibration" })]),
-        certificationCurrent: { en: false, ru: false },
       },
     });
     expect(status.llm.defaultModel).toEqual({ provider: "gemini", model: "gemini-3.6-flash" });
   });
 
-  it("projects calibrated certification evidence without letting the browser rewrite it", async () => {
+  it("projects calibration evidence without letting the browser rewrite it", async () => {
     const root = await fixtureRoot();
     const assessments = new ModelAssessmentCatalog(root);
     const profileFingerprint = "a".repeat(64);
@@ -603,14 +599,6 @@ describe("multi-campaign Web server", () => {
       executionProfileFingerprint: profileFingerprint,
       recordedAt: "2026-07-19T08:00:00.000Z",
     };
-    const certificationEvidence = {
-      source: "certification" as const,
-      reference: "certification-run-qwen-en",
-      packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      executionProfileFingerprint: profileFingerprint,
-      recordedAt: "2026-07-19T09:00:00.000Z",
-    };
     await assessments.recordCalibration({
       provider: "openrouter",
       model: "qwen/qwen3.7-plus",
@@ -619,19 +607,6 @@ describe("multi-campaign Web server", () => {
       adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
       profileFingerprint,
       evidence: calibrationEvidence,
-    });
-    await assessments.recordCertification({
-      provider: "openrouter",
-      model: "qwen/qwen3.7-plus",
-      route: "openrouter",
-      language: "en",
-      packageId: "certification-v1",
-      packageVersion: String(CERTIFICATION_PACKAGE_VERSION),
-      profileFingerprint,
-      technicalStatus: "clean",
-      qualityStatus: "high",
-      candidateMetricsHash: "b".repeat(64),
-      evidence: certificationEvidence,
     });
     const assessmentPath = path.join(root, "config", "model-assessments.json");
     const before = await readFile(assessmentPath, "utf8");
@@ -643,16 +618,13 @@ describe("multi-campaign Web server", () => {
       .models.find((candidate: any) => candidate.id === "qwen/qwen3.7-plus");
     expect(qwen).toMatchObject({
       adapterStatus: "calibrated",
-      technicalStatus: { en: "clean", ru: "inconclusive" },
-      technicalRecoveries: { en: 0, ru: 0 },
-      quality: { en: "high", ru: "unrated" },
-      recommendationEligibility: { eligible: false, reasons: ["certification_profile_stale"] },
+      recommendationEligibility: { eligible: true, reasons: [] },
       evidence: {
-        assessment: expect.arrayContaining([calibrationEvidence, certificationEvidence]),
-        certificationCurrent: { en: true, ru: false },
+        assessment: expect.arrayContaining([calibrationEvidence]),
         profileFingerprint,
       },
     });
+    // Reading status must never write to the durable catalog.
     expect(await readFile(assessmentPath, "utf8")).toBe(before);
   });
 

@@ -13,7 +13,6 @@ import {
   readCalibrationVariants,
   readDiagnosticBundle,
   readFocusedReplayManifest,
-  promoteModelEvidence,
   type FocusedReplayCodec,
   type PlaytestModelTarget,
   type PlaytestProgressEvent,
@@ -375,29 +374,6 @@ export class PlaytestCli {
     p.outro(`Compatibility current. Cost: $${result.costUsd.toFixed(4)}.`);
   }
 
-  async promote(target: string, options: { note?: string } = {}): Promise<void> {
-    const selected = modelSpec(target);
-    p.intro(`Promote shipped evidence: ${targetLabel(selected)}`);
-    const result = await promoteModelEvidence({
-      projectRoot: this.project.paths.root,
-      provider: selected.config.provider,
-      model: selected.config.model,
-      route: selected.route,
-      note: options.note,
-    });
-    p.log.success(
-      `Promoted languages: ${result.promotedLanguages.map((language) => language.toUpperCase()).join(", ")}`,
-    );
-    p.log.success(`Curated model: ${targetLabel(selected)} (shipped and non-removable)`);
-    for (const skipped of result.skippedLanguages) {
-      p.log.warn(`${skipped.language.toUpperCase()} not promoted: ${skipped.reason}`);
-    }
-    for (const file of result.filesWritten) p.log.info(`Wrote ${file}`);
-    p.outro(
-      `Fingerprint ${result.profileFingerprint}. Commit these files so other checkouts get the same model and evidence.`,
-    );
-  }
-
   async replay(bundleFile: string, options: ReplayOptions): Promise<void> {
     if ((options.inputCost === undefined) !== (options.outputCost === undefined)) {
       throw new Error("Custom replay pricing requires both --input-cost and --output-cost");
@@ -463,12 +439,6 @@ export class PlaytestCli {
 
   async run(packageId: string, options: PlaytestRunOptions): Promise<void> {
     const config = await this.buildRunConfig(packageId, options, false);
-    await this.execute(config);
-  }
-
-  async certify(options: PlaytestRunOptions): Promise<void> {
-    const languages = options.languages ?? ["en", "ru"];
-    const config = await this.buildRunConfig("certification-v1", { ...options, languages }, false);
     await this.execute(config);
   }
 

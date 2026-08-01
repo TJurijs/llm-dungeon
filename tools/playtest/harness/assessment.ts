@@ -135,7 +135,7 @@ export function buildCandidateTechnicalSnapshot(
     reasons.push(
       input.adapterStatus !== "calibrated"
         ? `adapter status is ${input.adapterStatus}`
-        : "the certification execution profile fingerprint is stale",
+        : "the calibrated execution profile fingerprint is stale",
     );
   } else if (!input.evidenceComplete || externalFailedTurns > 0) {
     status = "inconclusive";
@@ -232,7 +232,7 @@ export function assessPlaytest(
   _priorQualityStatus?: QualityStatus,
 ): PlaytestAssessment {
   let qualityStatus: QualityStatus;
-  if (purpose !== "certification") {
+  if (purpose === "autoplay") {
     qualityStatus = "unrated";
   } else if (judgmentAttempt.status === "completed" && judgmentAttempt.judgment) {
     qualityStatus = judgmentAttempt.judgment.qualityStatus;

@@ -92,7 +92,7 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
   const evaluation = new EvaluationCli(project);
   const program = new Command()
     .name("llm-dungeon-playtest")
-    .description("Developer-only model calibration, certification, and playtesting");
+    .description("Developer-only model calibration and playtesting");
   const prompts = program.command("prompts").description("Inspect static prompt-suite previews");
   prompts.command("list").action(() => console.log(PROMPT_PHASES.join("\n")));
   prompts
@@ -172,13 +172,6 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
     .requiredOption("--max-cost <usd>", "hard compatibility-probe cost ceiling", positiveNumber)
     .action((options: CompatibilityProbeOptions) => playtest.probe(options));
   playtests
-    .command("promote <target>")
-    .description(
-      "Ship a calibrated/certified model and curate it as a public non-removable candidate",
-    )
-    .option("--note <text>", "human provenance stored with the shipped compatibility test")
-    .action((target: string, options: { note?: string }) => playtest.promote(target, options));
-  playtests
     .command("replay <bundle>")
     .description("Run bounded non-committing adapter variants against one diagnostic bundle")
     .option("--variant <file>", "JSON profile draft or array; repeat", collectValue, [])
@@ -199,9 +192,6 @@ export function createPlaytestCliProgram(project: PlaytestProjectContext): Comma
   addPlaytestRunOptions(
     playtests.command("run <package>").description("Run one playtest package for a candidate"),
   ).action((packageId: string, options: PlaytestRunOptions) => playtest.run(packageId, options));
-  addPlaytestRunOptions(
-    playtests.command("certify").description("Run authoritative bilingual certification-v1"),
-  ).action((options: PlaytestRunOptions) => playtest.certify(options));
   addPlaytestRunOptions(
     playtests.command("matrix <package>").description("Run a package across frozen candidates"),
     true,

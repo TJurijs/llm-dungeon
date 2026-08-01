@@ -122,14 +122,11 @@ export interface BrowserLanguagePresentation {
 export type BrowserModelCompatibilityStatus = "untested" | "compatible" | "failed" | "stale";
 export type BrowserModelAdapterStatus =
   "uncalibrated" | "calibrated" | "calibration_inconclusive" | "no_compatible_profile";
-export type BrowserModelTechnicalStatus =
-  "clean" | "playable_with_recovery" | "unstable" | "unsupported" | "inconclusive";
-export type BrowserModelQualityStatus = "high" | "medium" | "low" | "unrated" | "awaiting_judgment";
 export type BrowserModelSpeedRating = "fast" | "average" | "slow" | "very-slow";
 export type BrowserModelCostRating = "cheap" | "moderate" | "expensive" | "very-expensive";
 
 export interface BrowserModelEvidenceReference {
-  source: "calibration" | "certification" | "legacy_evaluation";
+  source: "calibration" | "legacy_evaluation";
   reference: string;
   packageId?: string | undefined;
   packageVersion?: string | undefined;
@@ -150,14 +147,13 @@ export interface BrowserModelPriceEstimate {
   estimated50TurnsUsd: number;
 }
 
+/** Published by OpenRouter for its own routed endpoint; not measured here. */
 export interface BrowserModelSpeedEstimate {
-  ordinaryTurnSeconds: number;
-  checkedTurnSeconds: number;
-  sampleTurns: number;
-  measuredAt: string;
-  latencyBasis: "canonical" | "loaded" | "unknown";
-  concurrency?: number;
-  evidence: BrowserModelEvidenceReference;
+  source: "openrouter_published";
+  sourceUrl: string;
+  checkedAt: string;
+  outputTokensPerSecond: number;
+  routeMismatch: boolean;
 }
 
 export interface BrowserLlmModelPresentation {
@@ -166,15 +162,12 @@ export interface BrowserLlmModelPresentation {
   compatibilityStatus: BrowserModelCompatibilityStatus;
   status: BrowserModelCompatibilityStatus;
   adapterStatus: BrowserModelAdapterStatus;
-  technicalStatus: Partial<Record<BrowserLanguageCode, BrowserModelTechnicalStatus>>;
-  technicalRecoveries: Partial<Record<BrowserLanguageCode, number>>;
   enabled: boolean;
   available: boolean;
   known: boolean;
   testedLanguages: BrowserLanguageCode[];
   failedLanguages: BrowserLanguageCode[];
   pricing?: BrowserModelPriceEstimate;
-  quality: Partial<Record<BrowserLanguageCode, BrowserModelQualityStatus>>;
   speed?: BrowserModelSpeedRating;
   speedEstimate?: BrowserModelSpeedEstimate;
   cost?: BrowserModelCostRating;
@@ -188,7 +181,6 @@ export interface BrowserLlmModelPresentation {
       fingerprint: string;
     } | null;
     assessment: BrowserModelEvidenceReference[];
-    certificationCurrent: Partial<Record<BrowserLanguageCode, boolean>>;
     profileFingerprint?: string;
   };
   hidden: boolean;

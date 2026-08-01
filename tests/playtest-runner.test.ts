@@ -10,7 +10,6 @@ import {
 } from "../src/model-execution-profile.js";
 import {
   ModelAssessmentCatalog,
-  type RecordCertificationInput,
 } from "../src/model-assessment-catalog.js";
 import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
 import type { StateOperation } from "../src/schemas.js";
@@ -22,10 +21,9 @@ import {
   type PlaytestTurnRecord,
 } from "../tools/playtest/harness/contracts.js";
 import {
-  CERTIFICATION_CANONICAL_SETUPS,
-  CERTIFICATION_PACKAGE,
-  CERTIFICATION_PACKAGE_VERSION,
-  CERTIFICATION_SCRIPT,
+  CANONICAL_SETUPS,
+  CANONICAL_SCRIPT,
+  TUNING_PACKAGE,
 } from "../tools/playtest/harness/packages.js";
 import { PlaytestRunner, type PlaytestProgressEvent } from "../tools/playtest/harness/runner.js";
 import { CampaignCatalog } from "../src/campaign-catalog.js";
@@ -73,10 +71,19 @@ const COMPLETED_STORY_FIXTURE = Array.from(
   (_, index) => `retrospective${index + 1}`,
 ).join(" ");
 
-function certificationConfig(overrides: Partial<PlaytestRunConfig> = {}): PlaytestRunConfig {
+/**
+ * The scripted, judged, canonical-fixture run the runner tests drive.
+ *
+ * This was certification-v1 until certification was removed as a feature.
+ * tuning-v1 is the surviving package with the same shape — canonical bilingual
+ * setup, scripted turns, deterministic rolls, one final judge call — so the
+ * runner paths these tests cover are unchanged.
+ */
+function scriptedConfig(overrides: Partial<PlaytestRunConfig> = {}): PlaytestRunConfig {
   return {
     engineVersion: 1,
-    package: { id: "certification-v1", version: CERTIFICATION_PACKAGE_VERSION },
+    package: { id: TUNING_PACKAGE.id, version: TUNING_PACKAGE.version },
+    tuningVariable: "prompt: runner fixture baseline",
     candidates: [candidateTarget],
     languages: ["en"],
     turns: 10,
@@ -121,7 +128,7 @@ function resolved(turn: number) {
   return {
     kind: "resolved" as const,
     narration: `The controlled scene resolves turn ${turn} without adding unsupported state.`,
-    turnSummary: `Controlled certification turn ${turn} completed.`,
+    turnSummary: `Controlled scripted turn ${turn} completed.`,
     operations: threadProgress(turn),
   };
 }
@@ -168,7 +175,7 @@ function judgment(turns = 10) {
     executiveSummary: "The controlled transcript remains coherent.",
     strengths: ["The candidate preserves the application-owned state boundary."],
     issues: [],
-    coverageJudgments: CERTIFICATION_PACKAGE.coverageRequirements
+    coverageJudgments: TUNING_PACKAGE.coverageRequirements
       .filter((requirement) => requirement.mode === "judge")
       .map((requirement) => ({
         requirementId: requirement.id,
@@ -284,7 +291,7 @@ class RunnerFakeProvider implements LlmProvider {
           approach: "exploration",
         };
       } else if (request.schemaName.includes("campaign_setup")) {
-        value = CERTIFICATION_CANONICAL_SETUPS.en;
+        value = CANONICAL_SETUPS.en;
       } else if (request.schemaName.includes("turn_resolution_v3")) {
         // The domain correction arrives on this schema, so an armed repair stays
         // invalid and the turn exhausts its one bounded correction.
@@ -419,21 +426,6 @@ class FirstCallSignalWaitProvider extends RunnerFakeProvider {
   }
 }
 
-class RecordingAssessmentCatalog extends ModelAssessmentCatalog {
-  readonly certificationRecords: RecordCertificationInput[] = [];
-  certificationAttempts = 0;
-  failOnCertificationAttempt: number | undefined;
-
-  override async recordCertification(input: RecordCertificationInput): Promise<void> {
-    this.certificationAttempts += 1;
-    if (this.certificationAttempts === this.failOnCertificationAttempt) {
-      throw new Error("Temporary assessment commit failure");
-    }
-    this.certificationRecords.push(structuredClone(input));
-    await super.recordCertification(input);
-  }
-}
-
 async function readTurns(runDir: string, jobId = "job-001"): Promise<PlaytestTurnRecord[]> {
   const text = await readFile(path.join(runDir, "jobs", jobId, "turns.jsonl"), "utf8");
   return PlaytestTurnRecordSchema.array().parse(
@@ -445,8 +437,8 @@ async function readTurns(runDir: string, jobId = "job-001"): Promise<PlaytestTur
   );
 }
 
-async function fixtureCatalog(root: string): Promise<RecordingAssessmentCatalog> {
-  const catalog = new RecordingAssessmentCatalog(root, () => new Date(CALIBRATED_AT));
+async function fixtureCatalog(root: string): Promise<ModelAssessmentCatalog> {
+  const catalog = new ModelAssessmentCatalog(root, () => new Date(CALIBRATED_AT));
   await catalog.recordCalibration({
     provider: candidateProfile.key.provider,
     model: candidateProfile.key.model,
@@ -523,7 +515,7 @@ describe("playtest runner", () => {
     let result: Awaited<ReturnType<PlaytestRunner["run"]>>;
     try {
       result = await runner.run(
-        certificationConfig({
+        scriptedConfig({
           package: { id: "tuning-v1", version: 1 },
           tuningVariable: "model: reservation-safe-progress-fixture",
           repetitions: 2,
@@ -565,14 +557,14 @@ describe("playtest runner", () => {
     });
 
     await expect(
-      runner.run(certificationConfig({ languages: ["en", "ru"] }), "runner-preflight"),
+      runner.run(scriptedConfig({ languages: ["en", "ru"] }), "runner-preflight"),
     ).rejects.toThrow("Russian judge compatibility is unavailable");
     expect(preflights).toEqual(["gemini:en", "gemini:ru", "openai:en", "openai:ru"]);
     expect(providerCreations).toBe(0);
   });
 
-  it("rejects duplicate certification candidates and repeated certification before any preflight or call", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-certification-controls-"));
+  it("rejects duplicate candidates before any preflight or call", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-candidate-controls-"));
     const candidate = new RunnerFakeProvider(candidateProfile);
     let profileReads = 0;
     let preflights = 0;
@@ -594,15 +586,12 @@ describe("playtest runner", () => {
 
     await expect(
       runner.run(
-        certificationConfig({
+        scriptedConfig({
           candidates: [candidateTarget, candidateTarget],
         }),
-        "runner-duplicate-certification",
+        "runner-duplicate-candidates",
       ),
     ).rejects.toThrow("Candidate provider/model/routes must be unique");
-    await expect(
-      runner.run(certificationConfig({ repetitions: 2 }), "runner-repeated-certification"),
-    ).rejects.toThrow("certification-v1 requires exactly one authoritative repetition");
     expect({ profileReads, preflights, providerCreations }).toEqual({
       profileReads: 0,
       preflights: 0,
@@ -624,7 +613,7 @@ describe("playtest runner", () => {
 
     await expect(
       runner.run(
-        certificationConfig({
+        scriptedConfig({
           judge: { policy: "final", rubricVersion: 1, target: candidateTarget },
         }),
         "runner-same-model-judge",
@@ -632,7 +621,7 @@ describe("playtest runner", () => {
     ).rejects.toThrow("same-model judge reached preflight");
   });
 
-  it("executes all ten certification actions and rolls, then reruns a separate judge without gameplay commits", async () => {
+  it("executes all ten scripted actions and rolls, then reruns a separate judge without gameplay commits", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-runner-"));
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
@@ -644,19 +633,19 @@ describe("playtest runner", () => {
       dependencies(candidate, judge, catalog),
     );
 
-    const failedJudgment = await runner.run(certificationConfig(), "runner-certification");
+    const failedJudgment = await runner.run(scriptedConfig(), "runner-scripted");
     const jobDir = path.join(failedJudgment.runDir, "jobs", "job-001");
     const turns = await readTurns(failedJudgment.runDir);
     expect(turns).toHaveLength(10);
     expect(turns.map((turn) => turn.scriptedTurnId)).toEqual(
-      CERTIFICATION_SCRIPT.map((turn) => turn.id),
+      CANONICAL_SCRIPT.map((turn) => turn.id),
     );
     expect(turns.map((turn) => turn.assignedNaturalRoll)).toEqual([
       42, 55, 100, 64, 71, 82, 1, 36, 49, 93,
     ]);
     expect(turns.every((turn) => turn.driver === "scripted")).toBe(true);
     for (const [index, turn] of turns.entries()) {
-      expect(CERTIFICATION_SCRIPT[index]!.branches.map((branch) => branch.action.en)).toContain(
+      expect(CANONICAL_SCRIPT[index]!.branches.map((branch) => branch.action.en)).toContain(
         turn.action,
       );
     }
@@ -696,7 +685,7 @@ describe("playtest runner", () => {
         throw new Error("Historical judging must not rerun current preflight");
       },
     });
-    const judged = await retryRunner.judge("runner-certification");
+    const judged = await retryRunner.judge("runner-scripted");
     expect(judged.manifest.jobs[0]).toMatchObject({
       status: "completed",
       completedTurns: 10,
@@ -710,97 +699,38 @@ describe("playtest runner", () => {
     expect((await campaignStore.load()).manifest.turn).toBe(10);
     expect(currentProfileReads).toBe(0);
     expect(currentPreflights).toBe(0);
-    expect(catalog.certificationRecords).toHaveLength(2);
+    // Calibration is the only route evidence a run still writes; a judged
+    // quality label stays on the run and is never promoted into the catalog.
     expect(
-      catalog.certificationRecords.every((record) => record.packageId === "certification-v1"),
-    ).toBe(true);
-    expect(
-      await catalog.effective(
-        {
-          provider: candidateTarget.config.provider,
-          model: candidateTarget.config.model,
-          route: candidateTarget.route,
-        },
-        "en",
-      ),
-    ).toMatchObject({ certificationCurrent: true, qualityStatus: "high" });
+      await catalog.effective({
+        provider: candidateTarget.config.provider,
+        model: candidateTarget.config.model,
+        route: candidateTarget.route,
+      }),
+    ).toMatchObject({ adapterStatus: "calibrated" });
   });
 
-  it("preserves a valid death and finishes later coverage in a fresh isolated fixture", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-terminal-continuation-"));
-    const candidate = new RunnerFakeProvider(candidateProfile);
-    candidate.terminalOnDecision = 7;
-    const judge = new RunnerFakeProvider(judgeProfile);
-    const catalog = await fixtureCatalog(root);
-    const runner = new PlaytestRunner(
-      root,
-      path.join(root, "playtests"),
-      dependencies(candidate, judge, catalog),
-    );
-
-    const result = await runner.run(certificationConfig(), "runner-terminal-continuation");
-    const jobDir = path.join(result.runDir, "jobs", "job-001");
-    const turns = await readTurns(result.runDir);
-    expect(turns).toHaveLength(10);
-    expect(turns.slice(0, 7).every((turn) => turn.fixtureId === "primary")).toBe(true);
-    expect(turns.slice(7).every((turn) => turn.fixtureId === "coverage-after-007")).toBe(true);
-    expect((await new StateStore(path.join(jobDir, "campaign")).load()).manifest).toMatchObject({
-      turn: 7,
-      status: "dead",
-    });
-    expect(
-      (await new StateStore(path.join(jobDir, "fixtures", "coverage-after-007", "campaign")).load())
-        .manifest,
-    ).toMatchObject({ turn: 10, status: "active" });
-    const warmupText = await readFile(
-      path.join(jobDir, "fixtures", "coverage-after-007", "warmup-turns.jsonl"),
-      "utf8",
-    );
-    const warmupTurns = PlaytestTurnRecordSchema.array().parse(
-      warmupText
-        .trim()
-        .split(/\r?\n/u)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line)),
-    );
-    expect(warmupTurns).toHaveLength(7);
-    expect(result.manifest.jobs[0]).toMatchObject({
-      status: "completed",
-      completedTurns: 10,
-      stopReason: "turn_limit",
-      technicalStatus: "clean",
-    });
-    expect(await readFile(path.join(jobDir, "transcript.md"), "utf8")).toContain(
-      "Fresh isolated coverage fixture",
-    );
-    // Two full campaigns over a real temp directory; the default 5s budget is
-    // met in isolation but not reliably when the whole suite runs in parallel.
-  }, 30_000);
-
-  it("reconciles a completed immutable judgment after its assessment commit was interrupted", async () => {
+  it("re-judges a settled run without rerunning gameplay or repeating the judge call", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-judgment-commit-"));
     const candidate = new RunnerFakeProvider(candidateProfile);
     const judge = new RunnerFakeProvider(judgeProfile);
     const catalog = await fixtureCatalog(root);
-    catalog.failOnCertificationAttempt = 2;
     const runner = new PlaytestRunner(
       root,
       path.join(root, "playtests"),
       dependencies(candidate, judge, catalog),
     );
 
-    const interrupted = await runner.run(certificationConfig(), "runner-judgment-commit");
-    expect(interrupted.manifest.jobs[0]).toMatchObject({
-      status: "awaiting_judgment",
-      failureOwner: "judge",
-      qualityStatus: "awaiting_judgment",
-    });
+    const first = await runner.run(scriptedConfig(), "runner-judgment-commit");
+    expect(first.manifest.jobs[0]).toMatchObject({ status: "completed", qualityStatus: "high" });
     const judgeCallsBefore = judge.requests.filter((request) =>
       request.schemaName.includes("playtest_judgment"),
     ).length;
+    const candidateCallsBefore = candidate.requests.length;
     expect(judgeCallsBefore).toBe(1);
 
-    catalog.failOnCertificationAttempt = undefined;
+    // Judging is rerunnable without rerunning gameplay, and an existing
+    // immutable judgment is reused rather than paid for twice.
     const reconciled = await runner.judge("runner-judgment-commit");
     expect(reconciled.manifest.jobs[0]).toMatchObject({
       status: "completed",
@@ -809,7 +739,7 @@ describe("playtest runner", () => {
     expect(
       judge.requests.filter((request) => request.schemaName.includes("playtest_judgment")),
     ).toHaveLength(judgeCallsBefore);
-    expect(catalog.certificationRecords).toHaveLength(2);
+    expect(candidate.requests).toHaveLength(candidateCallsBefore);
   });
 
   it("resumes a prepared checked turn from its persisted pending roll without duplicating a commit", async () => {
@@ -825,7 +755,7 @@ describe("playtest runner", () => {
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
-    const interrupted = await runner.run(certificationConfig(), "runner-resume");
+    const interrupted = await runner.run(scriptedConfig(), "runner-resume");
     const jobDir = path.join(interrupted.runDir, "jobs", "job-001");
     expect(interrupted.manifest.jobs[0]).toMatchObject({ status: "cancelled", completedTurns: 2 });
     const prepared = JSON.parse(
@@ -1115,7 +1045,7 @@ describe("playtest runner", () => {
     expect(technical.status).toBe("unstable");
   });
 
-  it("still aborts a certification run on an uncommittable turn", async () => {
+  it("still aborts a measured run on an uncommittable turn", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-playtest-no-skip-"));
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), {
       profileFor: async () => playerProfile,
@@ -1125,14 +1055,15 @@ describe("playtest runner", () => {
         return provider;
       },
       costFor: () => ({ inputPerMillion: 1, outputPerMillion: 1 }),
-      worldRulesFor: async () => "Deterministic certification rules.",
+      worldRulesFor: async () => "Deterministic scripted rules.",
     });
     const config: PlaytestRunConfig = {
       engineVersion: 1,
-      package: { id: "certification-v1", version: 3 },
+      package: { id: TUNING_PACKAGE.id, version: TUNING_PACKAGE.version },
+      tuningVariable: "prompt: runner fixture baseline",
       candidates: [playerTarget],
       languages: ["en"],
-      seed: "certification-aborts-uncommittable",
+      seed: "scripted-aborts-uncommittable",
       repetitions: 1,
       globalWorkerLimit: 1,
       latencyMode: "canonical",
@@ -1142,7 +1073,7 @@ describe("playtest runner", () => {
       judge: { policy: "final", rubricVersion: 1, target: playerTarget },
     };
 
-    const result = await runner.run(config, "runner-certification-no-skip");
+    const result = await runner.run(config, "runner-scripted-no-skip");
     const jobDir = path.join(result.runDir, "jobs", "job-001");
 
     // A package that produces evidence about a model must never step over the
@@ -1298,7 +1229,7 @@ describe("playtest runner", () => {
       assessmentCatalog: catalog,
     };
     const runner = new PlaytestRunner(root, path.join(root, "playtests"), runnerDependencies);
-    const config = certificationConfig({
+    const config = scriptedConfig({
       languages: ["en", "ru"],
       globalWorkerLimit: 2,
       latencyMode: "loaded",
@@ -1346,7 +1277,7 @@ describe("playtest runner", () => {
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
-    const interrupted = await runner.run(certificationConfig(), "runner-attribution-resume");
+    const interrupted = await runner.run(scriptedConfig(), "runner-attribution-resume");
     expect(interrupted.manifest.jobs[0]).toMatchObject({ status: "cancelled", completedTurns: 2 });
     const jobDir = path.join(interrupted.runDir, "jobs", "job-001");
     const candidateCallsPath = path.join(jobDir, "calls", "candidate.jsonl");
@@ -1424,7 +1355,7 @@ describe("playtest runner", () => {
     candidate.cancelOnDecision = 3;
     candidate.cancel = () => runner.cancel();
 
-    const interrupted = await runner.run(certificationConfig(), "runner-failure-limit-owner");
+    const interrupted = await runner.run(scriptedConfig(), "runner-failure-limit-owner");
     expect(interrupted.manifest.jobs[0]).toMatchObject({ status: "cancelled", completedTurns: 2 });
     const candidateCallsPath = path.join(
       interrupted.runDir,
@@ -1466,12 +1397,41 @@ describe("playtest runner", () => {
       failureFingerprint: "b".repeat(64),
       error: "First bounded candidate failure",
     });
+    // tuning-v1 allows three candidate failures where certification allowed
+    // one, so reaching the limit takes a third. The point of the test is which
+    // failure owns the stop, not how many it takes to get there.
+    const secondCandidateFailure = PlaytestCallRecordSchema.parse({
+      ...callBase,
+      id: "failure-limit-candidate-2",
+      timestamp: "2026-07-19T00:01:00.0005Z",
+      phase: "decision",
+      sequence: existingCalls.length + 2,
+      schemaName: "turn_decision_v3",
+      success: false,
+      failureKind: "wire_schema_violation",
+      failureOwner: "candidate_model",
+      failureFingerprint: "d".repeat(64),
+      error: "Second bounded candidate failure",
+    });
+    const thirdCandidateFailure = PlaytestCallRecordSchema.parse({
+      ...callBase,
+      id: "failure-limit-candidate-3",
+      timestamp: "2026-07-19T00:01:00.0007Z",
+      phase: "decision",
+      sequence: existingCalls.length + 3,
+      schemaName: "turn_decision_v3",
+      success: false,
+      failureKind: "wire_schema_violation",
+      failureOwner: "candidate_model",
+      failureFingerprint: "e".repeat(64),
+      error: "Third bounded candidate failure",
+    });
     const adapterFailure = PlaytestCallRecordSchema.parse({
       ...callBase,
       id: "failure-limit-adapter",
       timestamp: "2026-07-19T00:01:00.001Z",
       phase: "decision",
-      sequence: existingCalls.length + 2,
+      sequence: existingCalls.length + 4,
       schemaName: "turn_decision_v3",
       success: false,
       finishReason: "MAX_TOKENS",
@@ -1486,14 +1446,14 @@ describe("playtest runner", () => {
       id: "failure-limit-repair",
       timestamp: "2026-07-19T00:01:00.002Z",
       phase: "repair",
-      sequence: existingCalls.length + 3,
+      sequence: existingCalls.length + 5,
       schemaName: "repair_turn_decision_v3",
       success: true,
       repairKind: "schema",
     });
     await appendFile(
       candidateCallsPath,
-      `${[candidateFailure, adapterFailure, successfulRepair]
+      `${[candidateFailure, secondCandidateFailure, thirdCandidateFailure, adapterFailure, successfulRepair]
         .map((call) => JSON.stringify(call))
         .join("\n")}\n`,
       "utf8",
@@ -1536,7 +1496,7 @@ describe("playtest runner", () => {
       assessmentCatalog: catalog,
     });
     const config: PlaytestRunConfig = {
-      ...certificationConfig(),
+      ...scriptedConfig(),
       package: { id: "tuning-v1", version: 1 },
       tuningVariable: "model: one-controlled-test-variable",
       repetitions: 2,
@@ -1554,6 +1514,5 @@ describe("playtest runner", () => {
     expect(shared.maxActive).toBeLessThanOrEqual(2);
     expect(candidates).toHaveLength(2);
     expect(candidates.every((candidate) => candidate.activity.maxActive === 1)).toBe(true);
-    expect(catalog.certificationRecords).toEqual([]);
   });
 });

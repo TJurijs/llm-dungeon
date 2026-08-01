@@ -8,29 +8,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "1d869b770d7806777b6ac8d3563c8daebc78dbe3e2ccd28367d58b72916954ab",
       "calibrationReference": "playtests/replays/de405598-1d0a-4b6f-ad7c-91c8f47ac827",
-      "calibratedAt": "2026-07-22T10:32:41.463Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "9cf0c40c484e3fea7a9676e786b05c1dd3ab0438a1fce9b138ee7b4a444bc951",
-          "reference": "playtests/runs/2026-07-22T10-33-30-757Z-8f73bcd9-8d5d-45b0-91bc-5ad2dc6979c2/jobs/job-001",
-          "recordedAt": "2026-07-22T10:56:12.399Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "b35bf08b2db0dc6dc584d3e97bdde667564cd66d1159b01c474d24c3c960de82",
-          "reference": "playtests/runs/2026-07-22T10-33-30-757Z-8f73bcd9-8d5d-45b0-91bc-5ad2dc6979c2/jobs/job-002",
-          "recordedAt": "2026-07-22T10:56:30.624Z"
-        }
-      ]
+      "calibratedAt": "2026-07-22T10:32:41.463Z"
     },
     {
       "provider": "gemini",
@@ -39,29 +17,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "957a28d5a3284d58a23032d92e2ed3e68c69c506c33722f14d722527f85a412e",
       "calibrationReference": "playtests/calibration/gemini-3.5-flash-initial",
-      "calibratedAt": "2026-07-19T14:58:25.697Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "2ec783316ec4e78e7e905aae0cc8e1246078583a2b652120820a5a0a64b5ac83",
-          "reference": "playtests/jobs/gemini-3.5-flash-en",
-          "recordedAt": "2026-07-19T22:33:20.118Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "8237edb3768ae375412c6bd68ccbd7f2161a3bf3666164ca1afa15b31d3f3a67",
-          "reference": "playtests/jobs/gemini-3.5-flash-ru",
-          "recordedAt": "2026-07-19T22:33:20.150Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T14:58:25.697Z"
     },
     {
       "provider": "gemini",
@@ -70,29 +26,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "af8ddfd75ce068f9aca9573ca43bf38a4915f3b91f1f47040aa5a38dcbee4caa",
       "calibrationReference": "playtests/calibration/gemini-3.1-flash-lite-initial",
-      "calibratedAt": "2026-07-19T20:01:51.243Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/jobs/gemini-3.1-flash-lite-en",
-          "recordedAt": "2026-07-19T22:33:19.686Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/jobs/gemini-3.1-flash-lite-ru",
-          "recordedAt": "2026-07-19T22:33:19.717Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T20:01:51.243Z"
     },
     {
       "provider": "openrouter",
@@ -101,29 +35,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "cde93c7e308b9ff9a0f250490bd0bc106d9c9230de7c186a1babeeafa2abbcac",
       "calibrationReference": "playtests/calibration/qwen-qwen3.7-plus-initial",
-      "calibratedAt": "2026-07-19T20:43:30.760Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "5aec5000977e69deedfb4033215880259c63f80bef5a528409f0d516dc424573",
-          "reference": "playtests/jobs/qwen-qwen3.7-plus-en",
-          "recordedAt": "2026-07-19T20:46:53.798Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "unstable",
-          "recoveryCount": 1,
-          "qualityStatus": "awaiting_judgment",
-          "candidateMetricsHash": "92b78cb3a2156d441bde83808a6c942e220aea4017b3f4094c3f5530d8b19add",
-          "reference": "playtests/jobs/qwen-qwen3.7-plus-ru",
-          "recordedAt": "2026-07-19T20:44:36.448Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T20:43:30.760Z"
     },
     {
       "provider": "xai",
@@ -132,29 +44,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "c9840a035b832ebe260978af336b369447c259ab87d6e2d1b5c8bcebfd2e3360",
       "calibrationReference": "playtests/calibration/grok-4.5-initial",
-      "calibratedAt": "2026-07-19T20:34:44.395Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/jobs/grok-4.5-en",
-          "recordedAt": "2026-07-19T22:33:20.952Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/jobs/grok-4.5-ru",
-          "recordedAt": "2026-07-19T22:33:20.984Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T20:34:44.395Z"
     },
     {
       "provider": "openai",
@@ -163,29 +53,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "e078d694d7e7bfec060ae40411031802e04faf8f6733f52ab299f65f7de04c83",
       "calibrationReference": "playtests/calibration/gpt-5.4-initial",
-      "calibratedAt": "2026-07-19T21:04:16.063Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "1f9e98fc70fdbc02169b734969a94b0a28eddf78abb3bd727bf89309ebbb13b0",
-          "reference": "playtests/jobs/gpt-5.4-en",
-          "recordedAt": "2026-07-19T22:33:20.539Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "medium",
-          "candidateMetricsHash": "bcbb22c8daca0e354272c1f44ebfb178c80a6b2493bdc881932fb72838e897aa",
-          "reference": "playtests/jobs/gpt-5.4-ru",
-          "recordedAt": "2026-07-19T22:33:20.570Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T21:04:16.063Z"
     },
     {
       "provider": "deepseek",
@@ -194,29 +62,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "11e6d104df6bfddf818aac35ab0727784ef1f636761bddfc39033e973ea6102e",
       "calibrationReference": "playtests/calibration/deepseek-v4-flash-repair-thinking-final",
-      "calibratedAt": "2026-07-19T22:15:29.409Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 3,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "72ec11d1123e2d8d48506085091fe99a469dc4cabddb91e4112263e8d10c6966",
-          "reference": "playtests/jobs/deepseek-v4-flash-en",
-          "recordedAt": "2026-07-19T22:31:21.677Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 2,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "87f577cf705e5b6883de69a8a91e3cdb1fbac7fd6a487effe6ca2030a2d5d0d7",
-          "reference": "playtests/jobs/deepseek-v4-flash-ru",
-          "recordedAt": "2026-07-19T22:31:21.706Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T22:15:29.409Z"
     },
     {
       "provider": "deepseek",
@@ -225,29 +71,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "9947b705d9ad3bdad4d86084782f952896bf991b9516f7b239111d30ccc64da7",
       "calibrationReference": "playtests/calibration/deepseek-v4-pro-initial",
-      "calibratedAt": "2026-07-19T22:41:54.139Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 2,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a858ac4b4165001d22473a2d2d4e2e1d8d80815a554d376538cb2e79314a58c6",
-          "reference": "playtests/jobs/deepseek-v4-pro-en",
-          "recordedAt": "2026-07-19T22:46:47.960Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "playable_with_recovery",
-          "recoveryCount": 1,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "62665b44206708b766abd01c281ec3eccaa98c41ce641d9a247493b9bcab88bf",
-          "reference": "playtests/jobs/deepseek-v4-pro-ru",
-          "recordedAt": "2026-07-19T22:46:47.355Z"
-        }
-      ]
+      "calibratedAt": "2026-07-19T22:41:54.139Z"
     },
     {
       "provider": "gemini",
@@ -256,29 +80,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "7236eec0db8dc08b79907bd94f5c9c1f9eeb9df06879317d7beb27228502e521",
       "calibrationReference": "playtests/calibration/2026-07-23T13-08-03-881Z-9719563c-5e5e-45db-ac0d-aac6227476c1",
-      "calibratedAt": "2026-07-23T13:08:27.843Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/runs/2026-07-23T13-12-20-414Z-c33d3661-e888-4dfd-a79d-4acf588ad3c3/jobs/job-001",
-          "recordedAt": "2026-07-23T13:17:25.453Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/runs/2026-07-23T13-12-20-414Z-c33d3661-e888-4dfd-a79d-4acf588ad3c3/jobs/job-002",
-          "recordedAt": "2026-07-23T13:17:45.632Z"
-        }
-      ]
+      "calibratedAt": "2026-07-23T13:08:27.843Z"
     },
     {
       "provider": "gemini",
@@ -287,29 +89,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "a48c91c1bf7e47cdccf7f2efff14c14df075aa3edfbe36a58ff8d462360362c4",
       "calibrationReference": "playtests/calibration/2026-07-23T13-10-16-915Z-695442f6-e0d0-43de-8339-dade16f61889",
-      "calibratedAt": "2026-07-23T13:10:29.133Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/runs/2026-07-23T16-33-17-911Z-a95f51a6-7af7-4b0f-a00e-68d646bf9f74/jobs/job-001",
-          "recordedAt": "2026-07-23T16:35:56.120Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "a282d1debe76104dba496bc63d4369b378b25da05be805325a6719b155f8726e",
-          "reference": "playtests/runs/2026-07-23T16-33-17-911Z-a95f51a6-7af7-4b0f-a00e-68d646bf9f74/jobs/job-002",
-          "recordedAt": "2026-07-23T16:36:16.654Z"
-        }
-      ]
+      "calibratedAt": "2026-07-23T13:10:29.133Z"
     },
     {
       "provider": "openrouter",
@@ -318,29 +98,7 @@
       "adapterRevision": 7,
       "profileFingerprint": "343cd1bab3a61da21f71119d5c916dea372c41d4d607d7b9e33e3384778ffb67",
       "calibrationReference": "playtests/calibration/kimi-k3-openrouter-16k-20260726-r2",
-      "calibratedAt": "2026-07-25T22:30:14.803Z",
-      "certifications": [
-        {
-          "packageVersion": "3",
-          "language": "en",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/runs/2026-07-25T22-30-54-504Z-9c3762f3-e9b7-4475-8693-e6d3265dc283/jobs/job-001",
-          "recordedAt": "2026-07-25T22:45:33.157Z"
-        },
-        {
-          "packageVersion": "3",
-          "language": "ru",
-          "technicalStatus": "clean",
-          "recoveryCount": 0,
-          "qualityStatus": "high",
-          "candidateMetricsHash": "4890b9429d438cd64a870f191b2d4bccc5486824c4c5e0a8f9d0949feef68ef9",
-          "reference": "playtests/runs/2026-07-25T22-30-54-504Z-9c3762f3-e9b7-4475-8693-e6d3265dc283/jobs/job-002",
-          "recordedAt": "2026-07-25T22:45:50.886Z"
-        }
-      ]
+      "calibratedAt": "2026-07-25T22:30:14.803Z"
     }
   ]
 }
