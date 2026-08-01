@@ -984,9 +984,7 @@ export const PlaytestTurnRecordSchema = z
      * committed: these measure DM judgment across a run rather than enforcing
      * it against any single turn.
      */
-    domainSignals: z
-      .array(z.object({ code: z.string().min(1).max(80) }).strict())
-      .default([]),
+    domainSignals: z.array(z.object({ code: z.string().min(1).max(80) }).strict()).default([]),
     failureOwner: FailureOwnerSchema.optional(),
     error: z.string().optional(),
     contextObservation: z

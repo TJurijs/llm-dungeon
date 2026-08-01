@@ -5,10 +5,7 @@ import {
   inventoryOwnershipSnapshot,
 } from "../src/domain/state-consistency.js";
 import { TransactionValidationError, applyTransaction } from "../src/domain/transaction.js";
-import {
-  CampaignInvariantError,
-  DomainValidationError,
-} from "../src/domain/validation-error.js";
+import { CampaignInvariantError, DomainValidationError } from "../src/domain/validation-error.js";
 import type { Entity, StateOperation } from "../src/schemas.js";
 import { createTestStore } from "./helpers.js";
 
@@ -148,7 +145,11 @@ describe("transaction boundary", () => {
     }
 
     const nonMachine = apply([
-      { type: "set_entity_state", targetId: "npc:mara-venn", tags: ["innkeeper", "\u0412\u043e\u043e\u0440\u0443\u0436\u0435\u043d\u0430"] },
+      {
+        type: "set_entity_state",
+        targetId: "npc:mara-venn",
+        tags: ["innkeeper", "\u0412\u043e\u043e\u0440\u0443\u0436\u0435\u043d\u0430"],
+      },
     ]);
     expect(nonMachine.entities.get("npc:mara-venn")?.tags).toEqual(["innkeeper"]);
 
@@ -185,7 +186,13 @@ describe("transaction boundary", () => {
       applyTransaction(
         [
           { type: "add_trait", targetId: "npc:nobody", trait: "Watchful" },
-          { type: "transfer_item", fromId: "npc:mara-venn", toId: "npc:nobody-else", itemId: "item:travel-sword", quantity: 1 },
+          {
+            type: "transfer_item",
+            fromId: "npc:mara-venn",
+            toId: "npc:nobody-else",
+            itemId: "item:travel-sword",
+            quantity: 1,
+          },
           {
             type: "add_fact",
             targetId: "player:hero",
@@ -519,9 +526,7 @@ describe("transaction boundary", () => {
     // The unresolved hint stays on the operation so admission sees the whole
     // transaction, which puts it in front of reference normalization too. A
     // turn gets one bounded correction, so one fault must cost one message.
-    expect(violations.map((violation) => violation.code)).toEqual([
-      "thread_ordinal_out_of_range",
-    ]);
+    expect(violations.map((violation) => violation.code)).toEqual(["thread_ordinal_out_of_range"]);
   });
 
   it("classifies how a reference missed without repeating what it said", async () => {
@@ -617,16 +622,10 @@ describe("invariant failures", () => {
 
     let thrown: unknown;
     try {
-      applyTransaction(
-        [],
-        1,
-        loaded.manifest,
-        loaded.entities,
-        impossible,
-        loaded.chronicle,
-        [],
-        { threads: impossible, playerId: loaded.manifest.playerId },
-      );
+      applyTransaction([], 1, loaded.manifest, loaded.entities, impossible, loaded.chronicle, [], {
+        threads: impossible,
+        playerId: loaded.manifest.playerId,
+      });
     } catch (error) {
       thrown = error;
     }

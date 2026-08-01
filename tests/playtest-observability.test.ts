@@ -30,10 +30,7 @@ import {
 } from "../tools/playtest/harness/contracts.js";
 import { PlaytestCostManager } from "../tools/playtest/harness/cost.js";
 import { appendPlaytestJsonLine, readPlaytestJsonLines } from "../tools/playtest/harness/files.js";
-import {
-  CAMPAIGN_AUTOPLAY_PACKAGE,
-  TUNING_PACKAGE,
-} from "../tools/playtest/harness/packages.js";
+import { CAMPAIGN_AUTOPLAY_PACKAGE, TUNING_PACKAGE } from "../tools/playtest/harness/packages.js";
 import {
   collectPlaytestReport,
   comparePlaytestRuns,
@@ -1072,9 +1069,9 @@ describe("playtest reporting", () => {
       }),
     );
     // And the kind breakdown names what stopped being written.
-    expect(
-      rich.criteria.find((c) => c.id === "durable_operations_per_turn")?.observed,
-    ).toContain("set_entity_state=34");
+    expect(rich.criteria.find((c) => c.id === "durable_operations_per_turn")?.observed).toContain(
+      "set_entity_state=34",
+    );
     expect(
       hollow.criteria.find((c) => c.id === "durable_operations_per_turn")?.observed,
     ).not.toContain("set_entity_state");

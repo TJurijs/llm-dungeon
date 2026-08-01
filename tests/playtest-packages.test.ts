@@ -119,7 +119,6 @@ describe("versioned playtest packages", () => {
       expect(setup.threads).toMatchObject([
         { id: "thread:missing-ledger-turn-0", title: "Missing Ledger", status: "active" },
       ]);
-
     }
   });
 

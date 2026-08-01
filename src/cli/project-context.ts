@@ -224,10 +224,7 @@ export class CliProjectContext {
       campaignId: created.campaignId,
       engine: new DungeonEngine(
         created.store,
-        this.createProvider(
-          selectedConfig,
-          await this.calibratedExecutionProfile(selectedConfig),
-        ),
+        this.createProvider(selectedConfig, await this.calibratedExecutionProfile(selectedConfig)),
       ),
     };
   }

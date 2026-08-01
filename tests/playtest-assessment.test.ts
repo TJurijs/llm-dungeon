@@ -607,9 +607,7 @@ describe("playtest deterministic assessment", () => {
     expect(failedJudge.technical).toEqual(technical);
     expect(failedJudge.qualityStatus).toBe("awaiting_judgment");
 
-    const judgment = playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).parse(
-      validJudgment(turns),
-    );
+    const judgment = playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).parse(validJudgment(turns));
     const completed = assessPlaytest("tuning", technical, { status: "completed", judgment });
     expect(completed.technical).toEqual(technical);
     expect(completed.qualityStatus).toBe("high");
@@ -632,9 +630,7 @@ describe("playtest deterministic assessment", () => {
     const coverage = assessCoverage(TUNING_PACKAGE, turns);
     const audit = buildMechanicalAudit(turns);
     const judgment = validJudgment(turns);
-    expect(
-      playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).safeParse(judgment).success,
-    ).toBe(true);
+    expect(playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).safeParse(judgment).success).toBe(true);
     expect(
       playtestJudgmentSchemaFor(TUNING_PACKAGE, turns).safeParse({
         ...judgment,
@@ -657,8 +653,8 @@ describe("playtest deterministic assessment", () => {
     expect(prompt).not.toContain("gemini-3.5-flash");
     expect(prompt).toContain("DETERMINISTIC COVERAGE (AUTHORITATIVE)");
     expect(prompt).toContain("account for every committed operationIndex");
-    expect(
-      renderPlaytestJudgment("tuning-v1", judgment, "fake-judge", "judge-model"),
-    ).toContain("NPC continuity");
+    expect(renderPlaytestJudgment("tuning-v1", judgment, "fake-judge", "judge-model")).toContain(
+      "NPC continuity",
+    );
   });
 });

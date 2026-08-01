@@ -8,9 +8,7 @@ import {
   freezeModelExecutionProfile,
   type FrozenModelExecutionProfile,
 } from "../src/model-execution-profile.js";
-import {
-  ModelAssessmentCatalog,
-} from "../src/model-assessment-catalog.js";
+import { ModelAssessmentCatalog } from "../src/model-assessment-catalog.js";
 import { CandidateTechnicalSnapshotSchema } from "../tools/playtest/harness/assessment.js";
 import type { StateOperation } from "../src/schemas.js";
 import {
@@ -1453,7 +1451,13 @@ describe("playtest runner", () => {
     });
     await appendFile(
       candidateCallsPath,
-      `${[candidateFailure, secondCandidateFailure, thirdCandidateFailure, adapterFailure, successfulRepair]
+      `${[
+        candidateFailure,
+        secondCandidateFailure,
+        thirdCandidateFailure,
+        adapterFailure,
+        successfulRepair,
+      ]
         .map((call) => JSON.stringify(call))
         .join("\n")}\n`,
       "utf8",

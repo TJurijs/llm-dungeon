@@ -73,6 +73,29 @@ DEEPSEEK_API_KEY=
 After changing `.env`, use the reload icon in **Settings → LLM providers** or
 restart the app. Never commit or share this file.
 
+#### If no model is selectable
+
+The new-campaign form may say _"Enable a supported model with a configured
+provider key before creating a campaign"_ with an empty model list, even with a
+valid key.
+
+That means no model has been tested against the current gameplay contract. The
+app deliberately refuses to claim a model works on evidence it does not have,
+and a contract change retires the evidence shipped with the previous release.
+Run one compatibility probe from a terminal:
+
+```bash
+npm run playtest -- playtest probe \
+  --target gemini:gemini-3.6-flash@direct \
+  --languages en \
+  --max-cost 0.50
+```
+
+It makes two small provider calls — a setup schema and a gameplay schema — and
+costs well under a cent. Once it reports `EN: compatible`, the model becomes
+selectable. Repeat with `--languages ru` for Russian, or with a different
+`--target` for another model.
+
 Provider requests may cost money. The app records every physical request,
 including retries, repairs, failed calls, questions, and post-game stories. Its
 estimates and local limits use known standard token prices; actual billing,
@@ -194,9 +217,14 @@ The curated models are:
 | Anthropic     | `claude-sonnet-5`                                         |
 | DeepSeek      | `deepseek-v4-flash`, `deepseek-v4-pro`                    |
 
-Settings shows each model's compatibility, reliability, quality, speed, and
-estimated price. You can also add a custom model ID under a provider and test
-whether it supports English or Russian gameplay before using it.
+Settings shows each model's compatibility and estimated price. You can also add
+a custom model ID under a provider and test whether it supports English or
+Russian gameplay before using it.
+
+Speed and quality ratings are not shown. They used to come from a paid
+certification suite that no longer exists, and rather than display stale
+numbers or invent new ones the app shows nothing until there is real evidence
+to show.
 
 ### Pending requests
 
@@ -347,6 +375,37 @@ npm run web
   languages.
 - There is no supported public or multi-user API.
 
+## How it works
+
+The central bet is that **the model writes fiction and the code owns truth.**
+
+A turn is one structured transaction. The model narrates and proposes durable
+changes; deterministic code validates that transaction and either commits it
+whole or returns it for exactly one bounded correction. A response is never
+partially applied. Campaign state is human-readable Markdown on disk, so a
+campaign survives without the model and can be read, diffed, and backed up with
+ordinary tools.
+
+- `src/schemas.ts`, `src/domain/` — the durable record types and the
+  normalize → admit → apply → verify transaction pipeline
+- `src/domain/rules/registry.ts` — every deterministic rule declared once,
+  which generates its own check code, prompt sentence, and telemetry
+- `src/llm/gameplay-protocol.ts` — the exact wire contract, identical for
+  every provider, with one deterministic decoder
+- `src/store.ts`, `src/persistence/` — Markdown state, atomic commit, recovery
+- `tools/playtest/` — the developer harness; it may import the app, never the
+  reverse
+
+`tests/engine-boundary.test.ts` enforces that separation: the transitive
+imports of the engine never reach presentation, provider construction, the
+catalogs, or the harness.
+
+Contributors should read [AGENTS.md](AGENTS.md) first — it is the operating
+constitution for this repository, and its constraints override everything else.
+[docs/design/state-and-llm.md](docs/design/state-and-llm.md) records why the
+schema, the deterministic state layer, and the LLM interface are shaped the way
+they are, including four proposed changes that measurement refuted.
+
 ## Developer playtests
 
 The developer-only playtest harness can run scripted or model-driven packages.
@@ -366,11 +425,23 @@ npm run playtest -- playtest run campaign-autoplay-v1 \
 Candidate and player targets require their provider keys and matching frozen
 execution profiles. Autoplay does not invoke an AI judge: each job publishes an
 idempotent, tagged, archived campaign copy in the browser for normal transcript
-inspection and download. Ask Codex to review that log when desired. Packages
-that explicitly define a judge still require a judge target. The same model may
-serve as both autoplay candidate and simulated player: they remain separate
-provider calls with separate prompts, context, telemetry, and failure lanes.
-These commands make paid calls and always require an explicit aggregate cost ceiling.
+inspection and download. Packages that explicitly define a judge still require a
+judge target. The same model may serve as both autoplay candidate and simulated
+player: they remain separate provider calls with separate prompts, context,
+telemetry, and failure lanes. These commands make paid calls and always require
+an explicit aggregate cost ceiling.
+
+Every run writes a report that scores itself against written acceptance
+criteria, and two runs can be compared directly:
+
+```bash
+npm run playtest -- playtest report <run-id>
+npm run playtest -- playtest compare <before-run-id> <after-run-id>
+```
+
+`compare` prints **uncontrolled** and refuses to attribute the deltas when the
+two runs differ in anything but the change under test. Believe that label: a
+scenario seed, player profile, or roll seed moves these numbers on its own.
 
 When a production playtest diagnostic proves that the exact frozen profile
 exhausted a phase's full output budget, calibration can retain that evidence

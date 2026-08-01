@@ -116,7 +116,12 @@ describe("engine boundary", () => {
     const store = await readFile(path.join(REPOSITORY_ROOT, "src", "store.ts"), "utf8");
     const imported = [
       ...store.matchAll(/import\s+\{([^}]*)\}\s+from\s+"\.\/persistence\/campaign-catalog\.js"/gu),
-    ].flatMap((match) => match[1]!.split(",").map((name) => name.trim()).filter(Boolean));
+    ].flatMap((match) =>
+      match[1]!
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    );
 
     expect(imported).toEqual(["readCampaignMetadata"]);
 

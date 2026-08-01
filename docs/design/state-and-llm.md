@@ -1,13 +1,41 @@
 # Design: game schema, deterministic state, and the LLM interface
 
-Answer to `DESIGN-BRIEF-STATE-AND-LLM.md`. This is a design document with a
-migration assessment. No engine code was changed. Every number below is derived
-from artifacts already on disk; the scripts are inlined so each claim can be
-re-derived.
+Why the game schema, the deterministic state layer, and the LLM interface are
+shaped the way they are.
 
-Read order: §1 corrects three "Measured" claims. §2 attacks the interpretation.
-§3–§5 answer Q1–Q3. §6 is the migration assessment. §7 is what I would not
-change. §8 is how you would know any of it worked.
+This began as the answer to a design brief (preserved in git history at
+`e65e5cf` as `DESIGN-BRIEF-STATE-AND-LLM.md`) and was written before any code
+changed. Six of its ten proposals then shipped and four were withdrawn, so the
+tense varies: sections written as recommendations are marked with their
+outcome, and the reasoning is left standing even where the conclusion was
+later refuted. That is deliberate — the withdrawals are the most useful part.
+
+Every number is derived from the run artifacts under `playtests/runs/`, and the
+scripts are inlined so each claim can be re-derived rather than trusted.
+
+**Outcome summary**
+
+|     | proposal                                                     | status               |
+| --- | ------------------------------------------------------------ | -------------------- |
+| M1  | Thread lifecycle constraints in the type                     | shipped              |
+| M2  | `invariant` disposition — separate our bugs from the model's | shipped              |
+| M3  | Prompt sentences earned by observed failure                  | shipped              |
+| M4  | Report yield, not only cost                                  | shipped              |
+| M5  | Tell the next turn why the last one was discarded            | shipped              |
+| M6  | Gameplay Contract V3 — one channel, and it is operations     | shipped              |
+| M7  | Item placement as a sum type                                 | **withdrawn** (§3.6) |
+| M8  | Setup as a transaction over an empty campaign                | **withdrawn** (§3.7) |
+| M9  | `Entity` as a discriminated union                            | **withdrawn** (§3.6) |
+| M10 | Kind-scoped ordinals for all references                      | **withdrawn** (§5.6) |
+
+All four withdrawals had the same cause: the shape of the data was inferred
+from the rule registry instead of read from the corpus. The registry records
+what someone once feared; the corpus records what happens.
+
+Read order: §1 corrects three measured claims from the brief. §2 attacks its
+interpretation. §3–§5 answer the three design questions. §6 is the migration
+assessment. §7 is what should not change. §8 is how you would know any of it
+worked.
 
 ---
 
@@ -18,14 +46,14 @@ were predictions; H3–H5 were formed while reading the corpus and are marked
 exploratory, because presenting an exploratory finding as a pre-registered one is
 the exact failure this brief exists to prevent.
 
-| # | Hypothesis | Falsification test | Verdict |
-| --- | --- | --- | --- |
-| H1 | The 47-run corpus is not one population, so aggregate rule counts have no valid denominator. | Group runs by `codeVersion.sourceHash`. If most turns share a code version, H1 fails. | **Confirmed.** 36 source hashes, 47 of 49 runs on dirty trees, largest reproducible sample 55 turns. |
-| H2 | "90 of 97 rules never fired" is unfalsifiable at this sample size, not evidence the rules are useless. | Compute the smallest per-turn hazard detectable at 95% confidence for the real exposure. If it is under ~1%, H2 fails. | **Confirmed.** On the only reproducible corpus (55 turns) an unfired rule could still fire on 5.3% of turns. |
-| H3 | *(exploratory)* The threadAudit channel has produced no thread closures at all. | Count `closed` verdicts and `resolve_thread` operations in the V2 era. Any closures falsify it. | **Confirmed.** 0 closures in 120 V2 turns; `threadTransitions: []` in the 39-turn run. |
-| H4 | *(exploratory)* The "20× repair reduction" measures recovery from a self-inflicted regression, not progress past the prior baseline. | Find the per-run repair rate before the declaration contract on the same seed. If it is worse than 0.026/turn, H4 fails. | **Confirmed.** Same seed, pre-declaration: 0.020/turn over 50 turns, and 0.000/turn over 100 turns. |
-| H5 | *(exploratory)* Claim 2.3's ordinal win is measured against a baseline the audit created. | Split `unknown_thread_reference` firings by whether the audit existed. If it was already frequent pre-audit, H5 fails. | **Confirmed.** 0.62% of turns pre-audit → 5.93% with the ID-addressed audit → 0% with ordinals. |
-| H6 | Rules police fields the model cannot supply, so a `reject` sends the model a fault it cannot fix. | Check whether thread lifecycle turns are reachable from the wire. If the wire can supply them, H6 fails. | **Confirmed.** The wire has no thread-turn field; `transaction-application.ts` stamps all of them; 7 rules police them as `reject`. |
+| #   | Hypothesis                                                                                                                           | Falsification test                                                                                                       | Verdict                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | The 47-run corpus is not one population, so aggregate rule counts have no valid denominator.                                         | Group runs by `codeVersion.sourceHash`. If most turns share a code version, H1 fails.                                    | **Confirmed.** 36 source hashes, 47 of 49 runs on dirty trees, largest reproducible sample 55 turns.                                |
+| H2  | "90 of 97 rules never fired" is unfalsifiable at this sample size, not evidence the rules are useless.                               | Compute the smallest per-turn hazard detectable at 95% confidence for the real exposure. If it is under ~1%, H2 fails.   | **Confirmed.** On the only reproducible corpus (55 turns) an unfired rule could still fire on 5.3% of turns.                        |
+| H3  | _(exploratory)_ The threadAudit channel has produced no thread closures at all.                                                      | Count `closed` verdicts and `resolve_thread` operations in the V2 era. Any closures falsify it.                          | **Confirmed.** 0 closures in 120 V2 turns; `threadTransitions: []` in the 39-turn run.                                              |
+| H4  | _(exploratory)_ The "20× repair reduction" measures recovery from a self-inflicted regression, not progress past the prior baseline. | Find the per-run repair rate before the declaration contract on the same seed. If it is worse than 0.026/turn, H4 fails. | **Confirmed.** Same seed, pre-declaration: 0.020/turn over 50 turns, and 0.000/turn over 100 turns.                                 |
+| H5  | _(exploratory)_ Claim 2.3's ordinal win is measured against a baseline the audit created.                                            | Split `unknown_thread_reference` firings by whether the audit existed. If it was already frequent pre-audit, H5 fails.   | **Confirmed.** 0.62% of turns pre-audit → 5.93% with the ID-addressed audit → 0% with ordinals.                                     |
+| H6  | Rules police fields the model cannot supply, so a `reject` sends the model a fault it cannot fix.                                    | Check whether thread lifecycle turns are reachable from the wire. If the wire can supply them, H6 fails.                 | **Confirmed.** The wire has no thread-turn field; `transaction-application.ts` stamps all of them; 7 rules police them as `reject`. |
 
 ---
 
@@ -42,7 +70,7 @@ what you would do next.
 ### 1.1 Eleven rules have fired, not eight — and the corpus loses a third of its repair causes
 
 The brief's repro command extracts rule codes with `\[([a-z_]{2,64})\]`. That
-only works on the *multi*-violation format. `formatDomainViolations`
+only works on the _multi_-violation format. `formatDomainViolations`
 ([violations.ts:40](src/domain/violations.ts:40)) deliberately keeps a single
 fault's exact rule text with no bracketed code, and `validateInitialSetup`
 ([store.ts:703](src/store.ts:703)) has its own envelope that never emits codes.
@@ -76,8 +104,7 @@ so their identity is permanently gone. The rest render the rule as prose.
 Recovering the prose forms adds three rules to the fired set:
 `unknown_entity_reference` (×1), `setup_unknown_inventory_item` (×2),
 `setup_item_dual_placement` (×1). So **11 named rules have fired, not 8.** Two of
-the 11 have since been deleted, so **88 of the current 97 have never fired, not
-90.** And because `unknown_entity_reference` is one of the 15 rules carrying a
+the 11 have since been deleted, so **88 of the current 97 have never fired, not 90.** And because `unknown_entity_reference` is one of the 15 rules carrying a
 prompt sentence, **2.4's ratio is four of 15, not three of 15.**
 
 ```bash
@@ -99,16 +126,16 @@ The brief ranks by repair count. AGENTS.md is explicit that this is the wrong
 statistic. Counting distinct `logicalOperationId` values instead, and folding in
 the prose-rendered repairs, over all 947 turn records:
 
-| rule | turns | share |
-| --- | --- | --- |
-| `thread_audit_incomplete` *(deleted since)* | 15 | 1.58% |
-| `unknown_thread_reference` | 13 | 1.37% |
-| `thread_audit_unknown_thread` *(deleted since)* | 12 | 1.27% |
-| `unknown_location_reference` | 4 | 0.42% |
-| `thread_audit_unjustified_unchanged` | 4 | 0.42% |
-| `scene_movement_conflict` | 2 | 0.21% |
-| `thread_audit_index_out_of_range` | 2 | 0.21% |
-| `unknown_entity_reference` | 1 | 0.11% |
+| rule                                            | turns | share |
+| ----------------------------------------------- | ----- | ----- |
+| `thread_audit_incomplete` _(deleted since)_     | 15    | 1.58% |
+| `unknown_thread_reference`                      | 13    | 1.37% |
+| `thread_audit_unknown_thread` _(deleted since)_ | 12    | 1.27% |
+| `unknown_location_reference`                    | 4     | 0.42% |
+| `thread_audit_unjustified_unchanged`            | 4     | 0.42% |
+| `scene_movement_conflict`                       | 2     | 0.21% |
+| `thread_audit_index_out_of_range`               | 2     | 0.21% |
+| `unknown_entity_reference`                      | 1     | 0.11% |
 
 `unknown_thread_reference` is still declared. What V2 removed is the wire's
 `update_thread`/`resolve_thread` effects, not the rule — which is the right call,
@@ -179,8 +206,8 @@ Total turn records on disk are **947**, not ~1,200.
 
 This matters most for the brief's own §5: "Deleting anything under
 `playtests/runs/` — those 47 runs are the only regression baseline that exists."
-They are a valuable *corpus*, and I did not touch them. They are not a
-*baseline*: a baseline you cannot re-run is a set of observations, and 36 of the
+They are a valuable _corpus_, and I did not touch them. They are not a
+_baseline_: a baseline you cannot re-run is a set of observations, and 36 of the
 37 codebases that produced them no longer exist.
 
 ---
@@ -194,7 +221,7 @@ structurally unreachable," and calls this "the strongest single result in the
 corpus and the main reason to take 'make it unrepresentable' seriously over 'add
 a check'."
 
-The mechanism is real. The *credit* is not. Split the firings by whether the
+The mechanism is real. The _credit_ is not. Split the firings by whether the
 `threadAudit` channel existed yet:
 
 ```bash
@@ -279,12 +306,12 @@ the shortest and has the highest repair rate.** A 100-turn run on the same seed
 went clean.
 
 The honest caveat, which cuts against me as much as against the brief: the
-pre-V2 code had fewer declared rules, so fewer things *could* fire. Lower repair
+pre-V2 code had fewer declared rules, so fewer things _could_ fire. Lower repair
 rates partly measure looser checking. That is precisely why the number is
 useless as a comparison — and it is why the current acceptance criteria are the
 wrong instrument (§4.4).
 
-What *is* comparable is outcome quality, and it is flat:
+What _is_ comparable is outcome quality, and it is flat:
 
 ```bash
 python3 -c "
@@ -315,18 +342,18 @@ A rule with per-turn hazard `p` is seen at least once in `N` turns with
 probability `1-(1-p)^N`. Inverting, the smallest `p` detectable at 95%
 confidence is `1-0.05^(1/N)`:
 
-| exposure | what it is | smallest detectable `p` |
-| --- | --- | --- |
-| 15 turns | the median run | 18.1% |
-| 55 turns | all reproducible code | 5.3% |
-| 120 turns | the whole declaration era | 2.5% |
-| 947 turns | every turn record on disk | 0.3% |
+| exposure  | what it is                | smallest detectable `p` |
+| --------- | ------------------------- | ----------------------- |
+| 15 turns  | the median run            | 18.1%                   |
+| 55 turns  | all reproducible code     | 5.3%                    |
+| 120 turns | the whole declaration era | 2.5%                    |
+| 947 turns | every turn record on disk | 0.3%                    |
 
 Auto-demotion on the reproducible corpus would demote rules that fire on up to
 **5.3% of turns** — twice the share of the worst rule in the current run.
 Worse, the hazard is not stationary: `inventory_negative` cannot fire until the
 fiction involves quantities, and `campaign_already_ended` cannot fire twice in a
-campaign. Silence is mostly *coverage*, not *futility*.
+campaign. Silence is mostly _coverage_, not _futility_.
 
 Reject #4 as stated. §4.2 keeps the part that survives.
 
@@ -378,11 +405,11 @@ to be under-powered and it is not.
 But three source hashes ran all three seeds at 15 turns each — the only
 same-code seed comparisons in existence:
 
-| sourceHash | far-meridian | dark-sun | default |
-| --- | --- | --- | --- |
-| `dc1bd66a` | 15 turns, 0 repairs | 15 turns, 1 repair | 15 turns, 0 repairs |
-| `0442ecd7` | **died at setup, 0 turns** | 15 turns, 0 repairs | 15 turns, 1 repair |
-| `2c3b2ce4` | 15 turns, 2 repairs | 15 turns, 0 repairs | 15 turns, 0 repairs |
+| sourceHash | far-meridian               | dark-sun            | default             |
+| ---------- | -------------------------- | ------------------- | ------------------- |
+| `dc1bd66a` | 15 turns, 0 repairs        | 15 turns, 1 repair  | 15 turns, 0 repairs |
+| `0442ecd7` | **died at setup, 0 turns** | 15 turns, 0 repairs | 15 turns, 1 repair  |
+| `2c3b2ce4` | 15 turns, 2 repairs        | 15 turns, 0 repairs | 15 turns, 0 repairs |
 
 Controlled, `far-meridian` is not uniformly worse — and its one death is a
 **setup** failure with zero turns committed. Four of its twelve deaths committed
@@ -391,7 +418,7 @@ lives: 20 required entities, 6 containment edges (a 7-node location tree), 4
 custody requirements and 2 threads pre-linked to 11 entities, all of which the
 model must satisfy in one structured setup response. (The brief's "19 mandatory
 entities … 8 custody requirements" is close but does not match the file; the
-counts above are `len()` over each key.) That is a *setup-generation* problem, not
+counts above are `len()` over each key.) That is a _setup-generation_ problem, not
 a per-turn gameplay problem, and it changes what you would fix — which is M8.
 
 ---
@@ -405,9 +432,9 @@ new record model.**
 Today: `Manifest` (campaign header), `Entity` (with nested `Fact`,
 `InventoryEntry`, `Relationship`, traits, conditions), `Thread`,
 `ChronicleEvent`. Plus three non-gameplay records: the setup snapshot, the
-completed-story artifact, the pending turn. The record *set* is good — small,
+completed-story artifact, the pending turn. The record _set_ is good — small,
 readable, and it is why a campaign survives without the model. The problem is
-that each record's *type* permits states the domain forbids, so 97 rules do work
+that each record's _type_ permits states the domain forbids, so 97 rules do work
 the type could do.
 
 > **Correction (after M6 shipped).** §3.1 below was written from the rule list.
@@ -428,14 +455,18 @@ detected:
 
 ```ts
 type LocationEntity = Base & { kind: "location"; parentId?: LocationId; contents: ItemId[] };
-type ItemEntity     = Base & { kind: "item"; placement: Placement };
-type ActorEntity    = Base & { kind: "person"|"creature"; location: LocationId;
-                               inventory: InventoryEntry[]; conditions: string[] };
-type AbstractEntity = Base & { kind: "faction"|"event"|"other" };
+type ItemEntity = Base & { kind: "item"; placement: Placement };
+type ActorEntity = Base & {
+  kind: "person" | "creature";
+  location: LocationId;
+  inventory: InventoryEntry[];
+  conditions: string[];
+};
+type AbstractEntity = Base & { kind: "faction" | "event" | "other" };
 
 type Placement =
-  | { held: { ownerId: ActorId | LocationId; quantity: number } }   // exactly one owner
-  | { loose: { locationId: LocationId } };                          // physically there
+  | { held: { ownerId: ActorId | LocationId; quantity: number } } // exactly one owner
+  | { loose: { locationId: LocationId } }; // physically there
 ```
 
 Dies at the type level: `not_a_location`, `not_an_item`, `non_location_parent`,
@@ -444,14 +475,14 @@ not two independent fields — `conflicting_item_destination`,
 `multiple_inventory_owners`, `inventory_duplicate_ownership`.
 
 **`Placement` is the single highest-value schema change.** "Carried" is currently
-a two-place invariant: an entry in the owner's `inventory` *and* the absence of
+a two-place invariant: an entry in the owner's `inventory` _and_ the absence of
 `location` on the item. Two places means a rule per disagreement. One place means
 none.
 
 Honest limits: `self_containment`, `inventory_self_containment`,
 `inventory_cycle`, `location_hierarchy_cycle` are graph properties. No type
 expresses them; they stay as checks, and they should. `inventory_negative` needs
-`quantity: PositiveInt` plus an arithmetic check, because the *delta* is what
+`quantity: PositiveInt` plus an arithmetic check, because the _delta_ is what
 goes negative.
 
 ### 3.2 Thread's application-owned fields are unconstrained, while Fact's identical fields are constrained
@@ -575,15 +606,15 @@ items held by >1 owner at once: 27 [('item:silver-marks', ['npc:mara-venn', 'pla
 ```
 
 **M7 is withdrawn: an item entity is a fungible type, not a physical object.**
-`item:silver-marks` is held by the player *and* by Mara Venn in the same
+`item:silver-marks` is held by the player _and_ by Mara Venn in the same
 snapshot — 27 such cases, plus 61 inventory entries with quantity above 1. A
 `placement` sum type with one owner cannot express that, so it would break
 currency and consumables. The rules I claimed it would kill —
 `multiple_inventory_owners`, `inventory_duplicate_ownership` — exist precisely
-*because* multi-owner is legitimate for fungibles and must happen only through a
+_because_ multi-owner is legitimate for fungibles and must happen only through a
 conserved transfer. Meanwhile the sum type's other arm is dead: no item carries
 a world `location` in any snapshot, because a loose object is modelled as an
-entry in a *location's* inventory (78 locations hold one). `item_dual_placement`
+entry in a _location's_ inventory (78 locations hold one). `item_dual_placement`
 guards a state that is expressible and has never occurred.
 
 The real missing distinction is fungibility, and nothing in the schema carries
@@ -607,10 +638,10 @@ They cannot. `not_a_location`, `non_location_parent`, `inventory_non_item` and
 resolves to an entity of the right kind. A TypeScript brand is erased before any
 model output exists. **What the data does support is that the containment
 relation is totally uniform** — person→location 217, location→location 206,
-faction→location 12, other→location 5, and *zero* non-location containers, and
+faction→location 12, other→location 5, and _zero_ non-location containers, and
 zero non-item records in 423 inventory entries. That uniformity is what makes
 those four rules eliminable, but only by changing how the reference is
-*expressed*: an ordinal into a kind-scoped context list, the way M6 did for
+_expressed_: an ordinal into a kind-scoped context list, the way M6 did for
 threads. That is a protocol change, not a schema change.
 
 Both mistakes have one cause: I read the rule registry and inferred the shape of
@@ -625,7 +656,7 @@ things are wrong with that.
 
 **ID authority is inverted.** A setup response names its durable IDs and keeps
 them — `faction:mercy-end-colonists`, `location:mercy-end`, no `-turn-N`
-suffix. Gameplay `create_entity` supplies a same-turn *hint* and
+suffix. Gameplay `create_entity` supplies a same-turn _hint_ and
 `assignGeneratedIds` allocates the durable ID. Routing setup through the
 transaction would rewrite every ID a seed and its `requirements.json` name.
 
@@ -645,9 +676,9 @@ for a,g in [('setup_unknown_inventory_item','state_unknown_entity'),
 → `setup_unknown_inventory_item reject  vs  state_unknown_entity invariant`
 → `setup_location_name_duplicate reject  vs  location_name_duplicate signal`
 
-A dangling reference in *committed gameplay state* means the apply stage
+A dangling reference in _committed gameplay state_ means the apply stage
 produced it, so it is an `invariant` — no model can fix it. The same dangling
-reference in a *proposed setup* is straightforwardly the model's, is
+reference in a _proposed setup_ is straightforwardly the model's, is
 repairable, and is two of the seven setup repairs in the corpus. Merging the
 two codes would make a repairable setup fault non-correctable: precisely the
 failure M2 exists to prevent, introduced by the change meant to simplify.
@@ -660,14 +691,14 @@ currently expressed. That is a defensible design, not an accident.
 What survives of M8 is smaller and still worth doing: `validateInitialSetup`
 and `createCampaign` compose the same snapshot and check overlapping
 properties in two hand-written passes (`store.ts:703` and `store.ts:1132`),
-and only the second uses the shared validator. Sharing the *implementation*
+and only the second uses the shared validator. Sharing the _implementation_
 while keeping the per-phase codes would remove the duplication that is real
 without merging the dispositions that must stay apart. It does not delete 14
 rules, and it is not a schema change.
 
 ### 3.5 What Q1 comes to
 
-Nothing above changes what a durable record *is*, so nothing above touches
+Nothing above changes what a durable record _is_, so nothing above touches
 Markdown-first state or needs your sign-off. It changes how the types are
 declared. The 97 rules are not evidence of a wrong record model; they are the
 accumulated cost of four shapes that let the wrong states be written down.
@@ -721,7 +752,7 @@ Roughly 15–20 rules belong there: the seven application-stamped temporal rules
 (§3.2), `state_unknown_entity`, `fact_id_duplicate`, `thread_id_duplicate`,
 `chronicle_id_duplicate`, and the four campaign-coherence rules.
 
-This is *not* the same as demoting them. Markdown-first state is
+This is _not_ the same as demoting them. Markdown-first state is
 human-editable-by-design, so these checks are load-bearing — they are the only
 thing standing between an edited save and a corrupted campaign. They are
 correctly `reject`-strength and incorrectly addressed to the model.
@@ -741,7 +772,7 @@ roughly one $0.06 regeneration every 20–50 turns.
 
 The cost is silent and unbounded. Operations within a turn are causally coupled —
 `advance_time` on 94% of turns, `add_fact` on 77%, `update_thread` on 68% — and
-they are coupled *to the narration*, which is unbounded working memory that
+they are coupled _to the narration_, which is unbounded working memory that
 later turns read. Commit "you hand Tala the crate" with the `transfer_item`
 dropped and the campaign now holds prose contradicting state. That is exactly
 "a later turn cannot correctly read this state," except undetectably, and it is
@@ -752,7 +783,7 @@ autoplay run records an uncommittable turn as `skipped` and continues. It fired
 once in 947 turns. One lost turn, no corruption.
 
 **But take the narrow version of #3 that costs nothing.** Today a dropped turn
-tells the *next* turn nothing, so the model is free to make the same reference
+tells the _next_ turn nothing, so the model is free to make the same reference
 mistake again. Feed a closed-vocabulary summary of the failure (rule codes, not
 prose, per the secret-safe constraint) into the next turn's context. That is the
 useful 80% of #3 without partial application, and it does not touch the
@@ -769,10 +800,10 @@ turn recorded anything.
 
 Seed-controlled on `far-meridian`, pre-declaration vs declaration era:
 
-| | turns | ops/turn | `set_entity_state`/turn | narration (median chars) |
-| --- | --- | --- | --- | --- |
-| pre-V2 | 454 | 4.64 | 0.87 | 1241 |
-| V2 | 120 | 3.64 | **0.13** | 1202 |
+|        | turns | ops/turn | `set_entity_state`/turn | narration (median chars) |
+| ------ | ----- | -------- | ----------------------- | ------------------------ |
+| pre-V2 | 454   | 4.64     | 0.87                    | 1241                     |
+| V2     | 120   | 3.64     | **0.13**                | 1202                     |
 
 An 85% drop in recorded status changes with narration length unchanged: the model
 writes the same fiction and records far less of it. Per-run: 194
@@ -839,15 +870,15 @@ zero by recording nothing.
 
 **Load-bearing, keep exactly as is:**
 
-- *Manifest-last commit with idempotent replay.* A campaign is Markdown across
+- _Manifest-last commit with idempotent replay._ A campaign is Markdown across
   many files; a torn write is the one failure that silently loses a campaign.
-- *Per-campaign filesystem lock.* CLI, browser and playtest harness can all reach
+- _Per-campaign filesystem lock._ CLI, browser and playtest harness can all reach
   one campaign concurrently. This is a real, present race.
-- *Pre-roll persistence of the natural roll.* The only recovery guarantee with
+- _Pre-roll persistence of the natural roll._ The only recovery guarantee with
   player-visible meaning: a crash must not reroll a check. It is a fairness
   property, not a durability one, which is why it must not be traded away for
   simplicity.
-- *Validate the complete plan before mutating.* Same argument as §4.3, at the
+- _Validate the complete plan before mutating._ Same argument as §4.3, at the
   filesystem layer.
 
 **Present, correct, and never exercised in anger:**
@@ -868,7 +899,7 @@ I would not delete any of it — untested-in-production is not the same as wrong
 and `replacement.ts` guards a real persisted format. But I would stop letting it
 constrain schema design. "Setup must be recoverable" is currently an argument for
 the separate setup path in §3.4; it is not a good one, because a setup expressed
-as a transaction over an empty campaign inherits the *same* commit machinery
+as a transaction over an empty campaign inherits the _same_ commit machinery
 instead of needing its own.
 
 ---
@@ -937,8 +968,8 @@ end-state description silently drops unmentioned records; operations require the
 model to track identity.
 
 The corpus makes it asymmetric. `update_thread` appears on **68.5% of turns as a
-domain operation in both eras** — in the declaration era it is *derived from the
-audit*. So the audit is a re-encoding of an operation the model could already
+domain operation in both eras** — in the declaration era it is _derived from the
+audit_. So the audit is a re-encoding of an operation the model could already
 emit directly, and the re-encoding is the part that fails. Meanwhile the
 declaration's own failure mode is live and measured: `omitted: 52` is precisely
 "end-state description silently drops unmentioned records," and the rule that
@@ -958,7 +989,7 @@ has nothing to do with declarations:
 { kind: "resolve_thread", threadOrdinal: 3, outcome: "...", status: "resolved" }
 ```
 
-Transcription-proof reference *and* a single channel. This is what V2 should have
+Transcription-proof reference _and_ a single channel. This is what V2 should have
 been.
 
 Extend ordinals to the other reference classes the same way — entities, items and
@@ -1003,7 +1034,7 @@ recommending a change. Flat schemas are what all six adapters support uniformly,
 compatibility record and certification. The cost is worth naming, though,
 because it is the reason "invalid states are expressible" is the default at the
 wire layer, and it is why the domain layer must keep policing field discipline
-even after §3's changes. Fix the *domain* schema (free) and leave the wire flat
+even after §3's changes. Fix the _domain_ schema (free) and leave the wire flat
 (expensive).
 
 ### 5.6 Why ordinals stop at threads
@@ -1013,7 +1044,7 @@ eliminating the fifteen-rule references section. It does not work, and the
 reason is the property that made it work for threads.
 
 An ordinal is an index into a list the application printed. Threads are safe
-because the *active* thread list is small, capped at 20 in the wire schema, and
+because the _active_ thread list is small, capped at 20 in the wire schema, and
 projected in full every turn: every addressable thread always has a number.
 Entities are not. The DM context is a bounded relevance projection - entities
 at the location, parent locations, inventory-linked and thread-linked records,
@@ -1057,26 +1088,26 @@ each is separately attributable — which is the discipline that was missing.
 
 ### Cheap and portable to the current code
 
-| # | Change | Rules affected | Cost | Attributable by |
-| --- | --- | --- | --- | --- |
-| M1 | Add `superRefine` to `ThreadSchema` mirroring `FactSchema`'s; reclassify the 7 temporal rules to `invariant`. | 7 | ~20 lines + tests | Unit tests only. No live run needed. |
-| M2 | Add the `invariant` disposition; route it away from the model correction; rank it in its own lane. | ~15–20 reclassified | ~60 lines in `violations.ts` + registry + report | Unit tests; then any run shows a clean model-facing worklist. |
-| M3 | Prune and add prompt sentences per §5.5. | 15 → ~8 | registry edits | Token count per call; repair rate must not regress. |
-| M4 | Add the two yield metrics (§4.4) to the run report. | 0 | ~40 lines in `report.ts` | Recompute over all 49 runs retroactively; no new run. |
-| M5 | Feed the closed-vocabulary failure summary of a skipped turn into the next turn's context (§4.3). | 0 | small, engine + prompt | `turnsSkipped` and repeat-cause rate. |
+| #   | Change                                                                                                        | Rules affected      | Cost                                             | Attributable by                                               |
+| --- | ------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------ | ------------------------------------------------------------- |
+| M1  | Add `superRefine` to `ThreadSchema` mirroring `FactSchema`'s; reclassify the 7 temporal rules to `invariant`. | 7                   | ~20 lines + tests                                | Unit tests only. No live run needed.                          |
+| M2  | Add the `invariant` disposition; route it away from the model correction; rank it in its own lane.            | ~15–20 reclassified | ~60 lines in `violations.ts` + registry + report | Unit tests; then any run shows a clean model-facing worklist. |
+| M3  | Prune and add prompt sentences per §5.5.                                                                      | 15 → ~8             | registry edits                                   | Token count per call; repair rate must not regress.           |
+| M4  | Add the two yield metrics (§4.4) to the run report.                                                           | 0                   | ~40 lines in `report.ts`                         | Recompute over all 49 runs retroactively; no new run.         |
+| M5  | Feed the closed-vocabulary failure summary of a skipped turn into the next turn's context (§4.3).             | 0                   | small, engine + prompt                           | `turnsSkipped` and repeat-cause rate.                         |
 
 M1–M4 are all offline-verifiable. M4 should be done **first**, because without it
 none of the others can be shown not to have made the model record less.
 
 ### Moderate, worth doing, needs one authorized run each
 
-| # | Change | Rules affected | Cost |
-| --- | --- | --- | --- |
-| M6 | **DONE.** Deleted `threadAudit` and `sceneState`; restored `update_thread`/`resolve_thread` as ordinal-addressed operations. | 97 → 94 | Shipped as protocol V3. Gate green; the three new guards were mutation-checked. Awaiting the paid comparison run in §8. |
-| ~~M7~~ | ~~`Placement` as a sum type on `ItemEntity`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Items are fungible types held by several owners at once (27 cases, 61 stacked entries); a single-owner sum type cannot express currency. |
-| ~~M8~~ | ~~Setup as `applyTransaction` over an empty campaign.~~ | — | **Withdrawn — premise refuted. See §3.7.** Setup IDs are model-authoritative verbatim; gameplay IDs are application-allocated from a hint. And the "duplicate" rules are not duplicates: the same invariant has a different owner at setup than at commit. |
-| ~~M9~~ | ~~`Entity` as a discriminated union on `kind`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Conditions, traits and inventories span nearly every kind, so the arms are near-identical; and the four reference rules are runtime facts a type brand cannot touch. |
-| ~~M10~~ | ~~Kind-scoped ordinals for entity, location and item references.~~ | - | **Withdrawn - premise refuted. See section 5.6.** An ordinal indexes the context projection, and on 35 of 39 turns records existed outside it. They would become unaddressable, breaking cold-record reactivation by exact ID. |
+| #       | Change                                                                                                                       | Rules affected | Cost                                                                                                                                                                                                                                                       |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M6      | **DONE.** Deleted `threadAudit` and `sceneState`; restored `update_thread`/`resolve_thread` as ordinal-addressed operations. | 97 → 94        | Shipped as protocol V3. Gate green; the three new guards were mutation-checked. Awaiting the paid comparison run in §8.                                                                                                                                    |
+| ~~M7~~  | ~~`Placement` as a sum type on `ItemEntity`.~~                                                                               | —              | **Withdrawn — premise refuted by the data. See §3.6.** Items are fungible types held by several owners at once (27 cases, 61 stacked entries); a single-owner sum type cannot express currency.                                                            |
+| ~~M8~~  | ~~Setup as `applyTransaction` over an empty campaign.~~                                                                      | —              | **Withdrawn — premise refuted. See §3.7.** Setup IDs are model-authoritative verbatim; gameplay IDs are application-allocated from a hint. And the "duplicate" rules are not duplicates: the same invariant has a different owner at setup than at commit. |
+| ~~M9~~  | ~~`Entity` as a discriminated union on `kind`.~~                                                                             | —              | **Withdrawn — premise refuted by the data. See §3.6.** Conditions, traits and inventories span nearly every kind, so the arms are near-identical; and the four reference rules are runtime facts a type brand cannot touch.                                |
+| ~~M10~~ | ~~Kind-scoped ordinals for entity, location and item references.~~                                                           | -              | **Withdrawn - premise refuted. See section 5.6.** An ordinal indexes the context projection, and on 35 of 39 turns records existed outside it. They would become unaddressable, breaking cold-record reactivation by exact ID.                             |
 
 M6 is the highest-value single change and also the only one that is a protocol
 change. Per AGENTS.md that means a deliberate `GAMEPLAY_PROTOCOL_VERSION`
@@ -1084,7 +1115,7 @@ increment to 3, every adapter and the probe updated together, and fresh
 calibration plus `certification-v1` — **which needs your authorization and a
 cost ceiling.** It should not be bundled with anything else.
 
-M7 and M9 touch the Markdown codec. They do not change the *bet* — state stays
+M7 and M9 touch the Markdown codec. They do not change the _bet_ — state stays
 human-readable Markdown — but they change the durable shape, so **M7 and M9 need
 your sign-off before I would start them.**
 
@@ -1107,7 +1138,7 @@ your sign-off before I would start them.**
 
 ## 7. What I would not change, explicitly
 
-- **Markdown-first state.** The corpus is the argument *for* it: 947 turns
+- **Markdown-first state.** The corpus is the argument _for_ it: 947 turns
   across 36 codebases are readable and analysable today precisely because they
   were never opaque. Every measurement in this document was possible only
   because of it.
@@ -1118,7 +1149,7 @@ your sign-off before I would start them.**
   a single bounded correction, and the reason adding checks is not
   counterproductive.
 - **The three-stage discipline** (normalize never rejects / admit collects /
-  verify checks the whole snapshot). It is right; only the *addressing* of verify
+  verify checks the whole snapshot). It is right; only the _addressing_ of verify
   failures is wrong (§4.2).
 - **One bounded correction, one schema repair, one transient retry.** Nothing in
   the corpus suggests more retries would help; the 07-30T20-28 run shows what
@@ -1181,12 +1212,12 @@ evidence available without spending anything.
 
 Throwaway, in the session scratchpad, not added to the repo:
 
-| script | what it produces |
-| --- | --- |
-| `census.py` | per-job corpus table: code version, seed, turns, repairs, per-rule turn sets |
-| `ranking.py` | corrected per-turn rule ranking including prose-rendered repairs |
-| `v2era.py` | declaration yield per turn: audit verdicts, real vs restated movement |
-| `ops.py` | corpus-wide operation census and wire-slot utilisation |
+| script       | what it produces                                                             |
+| ------------ | ---------------------------------------------------------------------------- |
+| `census.py`  | per-job corpus table: code version, seed, turns, repairs, per-rule turn sets |
+| `ranking.py` | corrected per-turn rule ranking including prose-rendered repairs             |
+| `v2era.py`   | declaration yield per turn: audit verdicts, real vs restated movement        |
+| `ops.py`     | corpus-wide operation census and wire-slot utilisation                       |
 
 Every figure in this document is reproducible from the inlined commands above.
 Nothing under `playtests/runs/` was modified, and no paid call was made.

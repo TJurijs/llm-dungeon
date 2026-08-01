@@ -605,10 +605,7 @@ export function scorePlaytestAcceptance(
       id: "top_rule_share",
       label: "Largest single rule's share of turns",
       bar: "< 20%",
-      observed:
-        turns === 0
-          ? "no turns played"
-          : `${formatShare(worst.share)} (\`${worst.key}\`)`,
+      observed: turns === 0 ? "no turns played" : `${formatShare(worst.share)} (\`${worst.key}\`)`,
       verdict: turns > 0 && worst.share < 0.2 ? "pass" : "fail",
     },
     {
@@ -982,8 +979,7 @@ export async function comparePlaytestRuns(
       })
       .sort(
         (a, b) =>
-          b.rightShare - b.leftShare - (a.rightShare - a.leftShare) ||
-          a.key.localeCompare(b.key),
+          b.rightShare - b.leftShare - (a.rightShare - a.leftShare) || a.key.localeCompare(b.key),
       );
     lines.push(
       "",

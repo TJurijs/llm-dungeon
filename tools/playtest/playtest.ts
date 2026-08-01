@@ -127,10 +127,10 @@ export function createUnifiedPlaytestRunner(
         }),
       preflightTarget: async (target, language) => {
         const effective = await assessments.effective({
-            provider: target.config.provider,
-            model: target.config.model,
-            route: target.route,
-          });
+          provider: target.config.provider,
+          model: target.config.model,
+          route: target.route,
+        });
         if (
           effective.adapterStatus !== "calibrated" ||
           effective.profileFingerprint !== target.executionProfileFingerprint

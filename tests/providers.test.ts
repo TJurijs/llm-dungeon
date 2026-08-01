@@ -1402,32 +1402,31 @@ describe("provider adapters", () => {
               {
                 message: {
                   content: JSON.stringify(
-                    resolvedWire(
-                      [
-                        effect({
-                          kind: "add_fact",
-                          targetId: unsafeHint,
-                          factSectionCode: 3,
-                          factBasisCode: 0,
-                          text: "Haddon offered a timber-line patrol contract.",
-                        }),
-                        effect({
-                          kind: "set_relationship",
-                          targetId: "player:hero",
-                          relatedId: unsafeHint,
-                          text: "The hero works for Haddon as a contracted scout.",
-                        }),
-                        effect({
-                          kind: "create_entity",
-                          targetId: unsafeHint,
-                          relatedId: "location:crooked-crown",
-                          entityKindCode: 1,
-                          name: "Master Haddon",
-                          status: "watchful",
-                          text: "A practical timber foreman.",
-                          tags: ["foreman"],
-                        }),
-                      ]),
+                    resolvedWire([
+                      effect({
+                        kind: "add_fact",
+                        targetId: unsafeHint,
+                        factSectionCode: 3,
+                        factBasisCode: 0,
+                        text: "Haddon offered a timber-line patrol contract.",
+                      }),
+                      effect({
+                        kind: "set_relationship",
+                        targetId: "player:hero",
+                        relatedId: unsafeHint,
+                        text: "The hero works for Haddon as a contracted scout.",
+                      }),
+                      effect({
+                        kind: "create_entity",
+                        targetId: unsafeHint,
+                        relatedId: "location:crooked-crown",
+                        entityKindCode: 1,
+                        name: "Master Haddon",
+                        status: "watchful",
+                        text: "A practical timber foreman.",
+                        tags: ["foreman"],
+                      }),
+                    ]),
                   ),
                 },
               },

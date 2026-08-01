@@ -1447,9 +1447,7 @@ export class StateStore {
       previousOperations,
       // Appeals are append-only corrections and never close or open a thread,
       // so they pass no thread list and skip the lifecycle review signal.
-      turnKind === "appeal"
-        ? {}
-        : { threads: loaded.threads, playerId: loaded.manifest.playerId },
+      turnKind === "appeal" ? {} : { threads: loaded.threads, playerId: loaded.manifest.playerId },
     );
     if (turnKind === "appeal") assertAppealOperations(transaction.operations, loaded.entities);
     const { manifest, entities, threads, chronicle } = transaction;

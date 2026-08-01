@@ -836,8 +836,7 @@ export class PlaytestRunner {
             completedTurns: 0,
             ...(config.player ? { player: config.player } : {}),
             judge: config.judge,
-            qualityStatus:
-              playtestPackage.purpose === "autoplay" ? "unrated" : "awaiting_judgment",
+            qualityStatus: playtestPackage.purpose === "autoplay" ? "unrated" : "awaiting_judgment",
             ...(playtestPackage.id === "campaign-autoplay-v1"
               ? { completedStory: { status: "pending" as const, attempts: 0 } }
               : {}),

@@ -143,7 +143,10 @@ function shippedAssessment(
   });
 }
 
-const SHIPPED_MODEL_ASSESSMENTS_URL = new URL("../defaults/model-assessments.json", import.meta.url);
+const SHIPPED_MODEL_ASSESSMENTS_URL = new URL(
+  "../defaults/model-assessments.json",
+  import.meta.url,
+);
 let shippedAssessmentsCache: readonly z.infer<typeof ModelAssessmentSchema>[] | undefined;
 
 async function shippedModelAssessments(): Promise<

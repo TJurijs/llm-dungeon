@@ -400,9 +400,7 @@ describe("bounded campaign context policy", () => {
     ).sections.at(-1)!;
 
     expect(checkpoint.content).toContain("ITEM CUSTODY — PRIORITIZED");
-    expect(checkpoint.content).toContain(
-      '[item:medicine-crate] "Medicine Crate": status="sealed"',
-    );
+    expect(checkpoint.content).toContain('[item:medicine-crate] "Medicine Crate": status="sealed"');
     expect(checkpoint.content).toContain(
       'authoritative custody=1x[location:crooked-crown] "The Crooked Crown" (location)',
     );

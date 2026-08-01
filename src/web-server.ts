@@ -805,10 +805,7 @@ export class DungeonWebController {
         const operationId = `draft:${requestId}`;
         const draft = await this.operations.run(operationId, async (): Promise<SetupDraft> => {
           const draftStore = new StateStore(this.setupDraftRoot(requestId));
-          const engine = new DungeonEngine(
-            draftStore,
-            await this.settings.provider(config),
-          );
+          const engine = new DungeonEngine(draftStore, await this.settings.provider(config));
           const generated = await engine.generateSetupWithMetadata({
             premise,
             character,
@@ -1001,10 +998,7 @@ export class DungeonWebController {
               "Choose a provider and model for this campaign before generating its short story",
             );
           }
-          const engine = new DungeonEngine(
-            store,
-            await this.settings.provider(config),
-          );
+          const engine = new DungeonEngine(store, await this.settings.provider(config));
           const settledActiveSnapshot = metadata.archived && manifest.status === "active";
           return engine.generateCompletedStory(
             settledActiveSnapshot ? { settledSnapshot: true } : undefined,

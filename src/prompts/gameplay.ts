@@ -63,7 +63,9 @@ function discardedAttemptSection(redactedRules: readonly string[]) {
     "PREVIOUS ATTEMPT AT THIS TURN WAS DISCARDED",
     `Nothing was committed and the campaign state below is unchanged. The discarded response violated:\n${redactedRules
       .map((rule) => `- ${rule}`)
-      .join("\n")}\nResolve the player action again and avoid that fault. Do not refer to the discarded attempt in narration.`,
+      .join(
+        "\n",
+      )}\nResolve the player action again and avoid that fault. Do not refer to the discarded attempt in narration.`,
   );
 }
 
