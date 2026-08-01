@@ -1340,8 +1340,6 @@ body.inspection-open #open-inspection {
 .model-recommended,
 .model-key-restriction,
 .model-status,
-.model-technical,
-.model-quality,
 .model-speed,
 .model-price {
   display: inline-flex;
@@ -1499,96 +1497,6 @@ button.llm-key-status[aria-busy="true"]::after {
 .model-status.error {
   border-color: #6f4038;
   color: var(--red);
-}
-.model-technical.technical-clean {
-  border-color: #49613a;
-  color: var(--accent);
-}
-.model-technical.technical-unstable,
-.model-technical.technical-unsupported {
-  border-color: #6f4038;
-  color: var(--red);
-}
-.model-technical.technical-playable_with_recovery.recovery-low {
-  border-color: #49613a;
-  color: var(--accent);
-}
-.model-technical.technical-playable_with_recovery.recovery-medium {
-  border-color: #516475;
-  color: var(--blue);
-}
-.model-technical.technical-playable_with_recovery.recovery-high {
-  border-color: #695936;
-  color: var(--amber);
-}
-.model-quality.quality-high {
-  border-color: #49613a;
-  color: var(--accent);
-}
-.model-quality.quality-medium {
-  border-color: #516475;
-  color: var(--blue);
-}
-.model-quality.quality-low {
-  border-color: #695936;
-  color: var(--amber);
-}
-.model-quality-group,
-.model-technical-group {
-  display: inline-flex;
-  gap: 0.2rem;
-}
-.model-language-details {
-  position: relative;
-  flex: 0 0 auto;
-}
-.model-language-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  border-radius: 8px;
-  cursor: pointer;
-  list-style: none;
-}
-.model-language-summary::-webkit-details-marker {
-  display: none;
-}
-.model-language-summary .model-signal {
-  cursor: pointer;
-}
-.model-language-summary:focus-visible {
-  outline: 2px solid #516475;
-  outline-offset: 2px;
-}
-.model-language-details[open] > .model-language-summary {
-  box-shadow: 0 0 0 1px #516475;
-}
-.model-language-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  padding: 0.35rem;
-  border: 1px solid #4a4c43;
-  border-radius: 9px;
-  background: #171815;
-  box-shadow: 0 12px 28px #0009;
-}
-.model-language-row {
-  display: grid;
-  grid-template-columns: auto auto;
-  align-items: center;
-  gap: 0.3rem;
-}
-.model-language-row + .model-language-row {
-  margin-top: 0.3rem;
-  padding-top: 0.3rem;
-  border-top: 1px solid var(--line);
-}
-.model-quality.is-unsupported {
-  border-color: var(--line);
-  color: var(--faint);
-  opacity: 0.45;
 }
 .model-speed.speed-fast {
   border-color: #49613a;

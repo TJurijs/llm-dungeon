@@ -571,18 +571,13 @@ describe("web UI copy", () => {
     );
     expect(setup).not.toContain('["calibration", "legendCalibration"]');
     expect(styles).toContain(".model-protocol-retest");
-    expect(styles).toContain(".technical-playable_with_recovery.recovery-low");
-    expect(styles).toContain(".technical-playable_with_recovery.recovery-medium");
-    expect(styles).toContain(".technical-playable_with_recovery.recovery-high");
     expect(UI_COPY.en.technicalRecovery).toBe("Recoverable");
     expect(setup).not.toContain("`${language.toUpperCase()} ${label}`");
     expect(setup).not.toContain('createElement("strong", "model-language-name"');
-    expect(styles).toContain(".model-language-menu");
     expect(setup).toContain("const requestId = ++scenarioSeedSequence");
     expect(setup).toContain(
       'requestId !== scenarioSeedSequence || $("#setup-language").value !== language',
     );
-    expect(styles).toContain(".model-language-summary .model-signal");
     expect(setup).not.toContain("legacyQuality");
     expect(setup).not.toContain("model.recommendationEligibility?.eligible");
     expect(setup).not.toContain('t("certificationPending")');
