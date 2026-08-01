@@ -617,6 +617,54 @@ Both mistakes have one cause: I read the rule registry and inferred the shape of
 the data from it, instead of reading the data. The registry describes what
 someone once feared, and the corpus describes what happens.
 
+### 3.7 Why M8 was withdrawn: setup is not the same domain
+
+The claim in §3.4 was that setup is "the same domain applied to an empty
+campaign," so expressing it as `applyTransaction` would delete 14 rules. Two
+things are wrong with that.
+
+**ID authority is inverted.** A setup response names its durable IDs and keeps
+them — `faction:mercy-end-colonists`, `location:mercy-end`, no `-turn-N`
+suffix. Gameplay `create_entity` supplies a same-turn *hint* and
+`assignGeneratedIds` allocates the durable ID. Routing setup through the
+transaction would rewrite every ID a seed and its `requirements.json` name.
+
+**The rules are not duplicates; their owners differ.** This is the more
+interesting one, and it is the distinction M2 just made explicit:
+
+```bash
+python3 -c "
+import re
+b=dict(re.findall(r'^  ([a-z][a-z0-9_]*): rule\(\{(.*?)^  \}\),',open('src/domain/rules/registry.ts').read(),re.M|re.S))
+for a,g in [('setup_unknown_inventory_item','state_unknown_entity'),
+            ('setup_location_name_duplicate','location_name_duplicate')]:
+    f=lambda k: re.search(r'disposition: "(\w+)"',b[k]).group(1)
+    print(f'{a} {f(a)}  vs  {g} {f(g)}')"
+```
+
+→ `setup_unknown_inventory_item reject  vs  state_unknown_entity invariant`
+→ `setup_location_name_duplicate reject  vs  location_name_duplicate signal`
+
+A dangling reference in *committed gameplay state* means the apply stage
+produced it, so it is an `invariant` — no model can fix it. The same dangling
+reference in a *proposed setup* is straightforwardly the model's, is
+repairable, and is two of the seven setup repairs in the corpus. Merging the
+two codes would make a repairable setup fault non-correctable: precisely the
+failure M2 exists to prevent, introduced by the change meant to simplify.
+
+The real conclusion is structural: **disposition is a property of (rule,
+phase), not of a rule.** The registry already carries `phases`; it does not
+carry a per-phase disposition, and separate `setup_*` codes are how that gap is
+currently expressed. That is a defensible design, not an accident.
+
+What survives of M8 is smaller and still worth doing: `validateInitialSetup`
+and `createCampaign` compose the same snapshot and check overlapping
+properties in two hand-written passes (`store.ts:703` and `store.ts:1132`),
+and only the second uses the shared validator. Sharing the *implementation*
+while keeping the per-phase codes would remove the duplication that is real
+without merging the dispositions that must stay apart. It does not delete 14
+rules, and it is not a schema change.
+
 ### 3.5 What Q1 comes to
 
 Nothing above changes what a durable record *is*, so nothing above touches
@@ -998,7 +1046,7 @@ none of the others can be shown not to have made the model record less.
 | --- | --- | --- | --- |
 | M6 | **DONE.** Deleted `threadAudit` and `sceneState`; restored `update_thread`/`resolve_thread` as ordinal-addressed operations. | 97 → 94 | Shipped as protocol V3. Gate green; the three new guards were mutation-checked. Awaiting the paid comparison run in §8. |
 | ~~M7~~ | ~~`Placement` as a sum type on `ItemEntity`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Items are fungible types held by several owners at once (27 cases, 61 stacked entries); a single-owner sum type cannot express currency. |
-| M8 | Setup as `applyTransaction` over an empty campaign. | 14 removed | Deletes ~200 lines from `store.ts`; setup repairs gain rule codes. **Now the highest-value remaining schema change.** |
+| ~~M8~~ | ~~Setup as `applyTransaction` over an empty campaign.~~ | — | **Withdrawn — premise refuted. See §3.7.** Setup IDs are model-authoritative verbatim; gameplay IDs are application-allocated from a hint. And the "duplicate" rules are not duplicates: the same invariant has a different owner at setup than at commit. |
 | ~~M9~~ | ~~`Entity` as a discriminated union on `kind`.~~ | — | **Withdrawn — premise refuted by the data. See §3.6.** Conditions, traits and inventories span nearly every kind, so the arms are near-identical; and the four reference rules are runtime facts a type brand cannot touch. |
 | M10 | Kind-scoped ordinals for entity, location and item references, extending the M6 pattern. | up to 15 reference rules | Protocol change. The containment relation is totally uniform in the corpus (zero non-location containers, zero non-item inventory entries), which is what makes it safe. Replaces what M7/M9 were trying to do. |
 
