@@ -871,3 +871,72 @@ describe("turn engine", () => {
     expect(rolls).toBe(1);
   });
 });
+
+describe("discarded turn feedback", () => {
+  it("tells the next attempt which rule the discarded one tripped, in redacted form", async () => {
+    const store = await createTestStore();
+    const bad = {
+      kind: "resolved" as const,
+      narration: "You reach for a ledger that was never established here.",
+      turnSummary: "The hero reached for an absent record.",
+      operations: [
+        { type: "add_condition" as const, targetId: "npc:nobody-at-all", condition: "wary" },
+      ],
+    };
+    const good = {
+      kind: "resolved" as const,
+      narration: "You take stock of the room instead, and note the shuttered window.",
+      turnSummary: "The hero took stock of the room.",
+      operations: [],
+    };
+    // Attempt, bounded correction, both bad: the turn is discarded. Then a
+    // second player action succeeds.
+    const provider = new FakeProvider([bad, bad, good]);
+    const engine = new DungeonEngine(store, provider);
+
+    await expect(engine.play("I grab the ledger.")).rejects.toThrow();
+    // What the harness does with an uncommittable turn: nothing was committed,
+    // so drop the pending request and carry on.
+    await engine.discardPendingTurn();
+    await engine.play("I look around.");
+
+    const retryPrompt = provider.requests.at(-1)?.prompt ?? "";
+    expect(retryPrompt).toContain("PREVIOUS ATTEMPT AT THIS TURN WAS DISCARDED");
+    // The registry's redacted text, which is a fixed token by construction.
+    expect(retryPrompt).toContain("An effect referenced an entity that does not exist");
+    // Never the rejected response, the bad ID, or any generated prose.
+    expect(retryPrompt).not.toContain("npc:nobody-at-all");
+    expect(retryPrompt).not.toContain("never established here");
+  });
+
+  it("stops mentioning a discarded attempt once a turn commits", async () => {
+    const store = await createTestStore();
+    const bad = {
+      kind: "resolved" as const,
+      narration: "You reach for a ledger that was never established here.",
+      turnSummary: "The hero reached for an absent record.",
+      operations: [
+        { type: "add_condition" as const, targetId: "npc:nobody-at-all", condition: "wary" },
+      ],
+    };
+    const good = (n: number) => ({
+      kind: "resolved" as const,
+      narration: `You take stock of the room, noting detail ${n} without changing anything.`,
+      turnSummary: `The hero took stock, pass ${n}.`,
+      operations: [],
+    });
+    const provider = new FakeProvider([bad, bad, good(1), good(2)]);
+    const engine = new DungeonEngine(store, provider);
+
+    await expect(engine.play("I grab the ledger.")).rejects.toThrow();
+    // What the harness does with an uncommittable turn: nothing was committed,
+    // so drop the pending request and carry on.
+    await engine.discardPendingTurn();
+    await engine.play("I look around.");
+    await engine.play("I look again.");
+
+    expect(provider.requests.at(-1)?.prompt ?? "").not.toContain(
+      "PREVIOUS ATTEMPT AT THIS TURN WAS DISCARDED",
+    );
+  });
+});

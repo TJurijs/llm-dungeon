@@ -47,6 +47,7 @@ import {
 import { TransactionValidationError } from "./domain/transaction.js";
 import { AppealPolicyError } from "./domain/appeal.js";
 import type { DomainViolationCode } from "./domain/violations.js";
+import { DOMAIN_RULES } from "./domain/rules/registry.js";
 import { formatAppealCommand } from "./appeal.js";
 import { StructuredClient, combineUsage } from "./llm/structured-generation.js";
 import { structuredFailureDetails } from "./llm/structured-error.js";
@@ -204,6 +205,22 @@ class LockedOutcomeError extends Error {
   }
 }
 
+/**
+ * The redacted declarations behind a failed transaction.
+ *
+ * Redaction comes from the rule registry rather than from the rendered
+ * message, so the result is a closed vocabulary of fixed tokens: it can carry
+ * no ID, name, quantity, or generated prose, and the rejected response itself
+ * is never persisted.
+ */
+function redactedRulesOf(error: unknown): readonly string[] {
+  const violations =
+    error instanceof TransactionValidationError || error instanceof LockedOutcomeError
+      ? error.violations
+      : [];
+  return [...new Set(violations.map((violation) => DOMAIN_RULES[violation.code].redacted))];
+}
+
 /** Campaign status is part of the locked check and is applied by code, never inferred from narration. */
 function enforceLockedResolution(
   resolved: ResolvedTurn,
@@ -244,6 +261,14 @@ export class DungeonEngine implements GameEngine {
   private readonly structured: StructuredClient;
   private readonly automaticCompletedStory: boolean;
   readonly provider: LlmProvider;
+  /**
+   * Rules the previous discarded attempt tripped, in redacted form.
+   *
+   * In memory on purpose: a discarded turn committed nothing, so there is no
+   * durable record for it to belong to, and it is only useful to the immediate
+   * retry. Losing it across a restart costs one repeated mistake at most.
+   */
+  private discardedRules: readonly string[] = [];
 
   constructor(
     private readonly store: StateStore,
@@ -532,7 +557,7 @@ export class DungeonEngine implements GameEngine {
     const preparedPrompt = preparePrompt(
       this.provider,
       DM_SYSTEM_PROMPT,
-      adjudicationPromptDocument(context, cleanAction),
+      adjudicationPromptDocument(context, cleanAction, this.discardedRules),
       "decision",
       { generationPhase: "decision" },
       { "campaign-context": contextDocument.sections },
@@ -844,13 +869,21 @@ export class DungeonEngine implements GameEngine {
         request.kind === "gameplay"
           ? enforceLockedResolution(corrected.data, check)
           : corrected.data;
-      return this.commit(
-        request,
-        enforced,
-        check,
-        { ...corrected, ...(usage ? { usage } : {}) },
-        automaticOutcome,
-      );
+      try {
+        return await this.commit(
+          request,
+          enforced,
+          check,
+          { ...corrected, ...(usage ? { usage } : {}) },
+          automaticOutcome,
+        );
+      } catch (correctionError) {
+        // The bounded correction is spent and the turn is being discarded.
+        // Remember what it tripped so the next attempt is told, in redacted
+        // rule text only.
+        this.discardedRules = redactedRulesOf(correctionError);
+        throw correctionError;
+      }
     }
   }
 
@@ -861,6 +894,7 @@ export class DungeonEngine implements GameEngine {
     result: StructuredResult<unknown>,
     automaticOutcome?: AutomaticOutcome,
   ): Promise<TurnResult> {
+    this.discardedRules = [];
     const committed: CommittedTurn = {
       kind: request.kind,
       action: request.action,

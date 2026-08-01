@@ -45,9 +45,36 @@ function selectedOutcomeStake(result: CheckResult): string {
   return result.spec.severeFailureStakes;
 }
 
-export function adjudicationPromptDocument(context: string, action: string): PromptDocument {
+/**
+ * What the previous attempt at this turn tripped, if it was discarded.
+ *
+ * A dropped turn used to tell the next one nothing, so the model was free to
+ * make the same reference mistake again and spend another turn on it. This is
+ * the cheap part of committing partial turns without any of the risk: it
+ * carries forward why, not what.
+ *
+ * Rule text only, drawn from the registry's redacted declarations. Those are
+ * fixed tokens by construction, so nothing here can leak an ID, a name, or the
+ * rejected response — which is deliberately never persisted.
+ */
+function discardedAttemptSection(redactedRules: readonly string[]) {
+  return section(
+    "discarded-attempt",
+    "PREVIOUS ATTEMPT AT THIS TURN WAS DISCARDED",
+    `Nothing was committed and the campaign state below is unchanged. The discarded response violated:\n${redactedRules
+      .map((rule) => `- ${rule}`)
+      .join("\n")}\nResolve the player action again and avoid that fault. Do not refer to the discarded attempt in narration.`,
+  );
+}
+
+export function adjudicationPromptDocument(
+  context: string,
+  action: string,
+  discardedRules: readonly string[] = [],
+): PromptDocument {
   return renderPrompt([
     section("campaign-context", undefined, context),
+    ...(discardedRules.length === 0 ? [] : [discardedAttemptSection(discardedRules)]),
     actionSection(action),
     section(
       "adjudication-task",
