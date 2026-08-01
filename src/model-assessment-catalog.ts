@@ -52,7 +52,19 @@ const AdapterAssessmentSchema = z
 
 const ModelAssessmentSchema = RouteKeySchema.extend({
   adapter: AdapterAssessmentSchema.optional(),
-}).strict();
+  /**
+   * Per-language certification verdicts, written while that feature existed.
+   *
+   * Accepted and discarded rather than rejected. Every route in an existing
+   * `config/model-assessments.json` carries this key, and a strict schema would
+   * refuse to load the file at all — stranding the calibration sitting beside
+   * it and blocking model settings, playtest preflight, and provider
+   * construction. It is dropped on the next write.
+   */
+  certifications: z.unknown().optional(),
+})
+  .strict()
+  .transform(({ certifications: _discarded, ...model }) => model);
 export type ModelAssessment = z.infer<typeof ModelAssessmentSchema>;
 
 function assessmentKey(value: z.infer<typeof RouteKeySchema>): string {

@@ -135,9 +135,10 @@ describe("model assessment catalog", () => {
     const root = await mkdtemp(path.join(tmpdir(), "llm-dungeon-assessment-legacy-"));
     const catalog = new ModelAssessmentCatalog(root);
     await mkdir(path.dirname(catalog.filePath), { recursive: true });
-    // A user's config file predates the removal. Its certifications array is
-    // discarded, not rejected: refusing to load would strand the calibration
-    // sitting next to it.
+    // A user's config file predates the removal. Every route in one carries a
+    // certifications array, so it must be discarded rather than rejected:
+    // refusing the file strands the calibration sitting beside it and blocks
+    // model settings, playtest preflight, and provider construction.
     await writeFile(
       catalog.filePath,
       `${JSON.stringify({
@@ -152,6 +153,21 @@ describe("model assessment catalog", () => {
               evidence: { source: "calibration", reference: "calibrations/legacy" },
               updatedAt: "2026-07-18T00:00:00.000Z",
             },
+            certifications: [
+              {
+                language: "en",
+                packageId: "certification-v1",
+                packageVersion: "3",
+                protocolVersion: 2,
+                profileFingerprint: fingerprintA,
+                technicalStatus: "clean",
+                recoveryCount: 0,
+                qualityStatus: "high",
+                candidateMetricsHash: "d".repeat(64),
+                evidence: { source: "certification", reference: "playtests/legacy" },
+                certifiedAt: "2026-07-18T00:00:00.000Z",
+              },
+            ],
           },
         ],
       })}\n`,
@@ -160,6 +176,15 @@ describe("model assessment catalog", () => {
       adapterStatus: "calibrated",
       profileFingerprint: fingerprintA,
     });
+    // Dropped on the next write rather than carried forward.
+    await catalog.recordCalibration({
+      ...target,
+      status: "calibrated",
+      adapterRevision: MODEL_EXECUTION_ADAPTER_REVISION,
+      profileFingerprint: fingerprintB,
+      evidence: { source: "calibration", reference: "calibrations/rewrite" },
+    });
+    expect(await readFile(catalog.filePath, "utf8")).not.toContain("certifications");
   });
 
   it("keeps Gemini 3.6 Flash product-recommended without any run evidence", async () => {
