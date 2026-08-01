@@ -103,6 +103,16 @@ export interface PlaytestJobReport {
     omitted: number;
     invented: number;
   };
+  /**
+   * Durable operations the committed turns actually wrote, by kind.
+   *
+   * Every other acceptance criterion improves when the model emits fewer
+   * operations, so without this nothing watches whether a turn recorded
+   * anything at all. A run that repairs less because it writes less is not a
+   * better run, and that is invisible from repair counts.
+   */
+  operationCounts: Record<string, number>;
+  operationsPerTurn: number;
   technicalReasons: string[];
   playerVisibleAverageMs: number;
   completedStory?: PlaytestCompletedStory;
@@ -448,6 +458,12 @@ export async function collectPlaytestReport(runDir: string): Promise<PlaytestRep
         }),
         { unchanged: 0, progressed: 0, closed: 0, omitted: 0, invented: 0 },
       ),
+      operationCounts: countOperations(turns),
+      operationsPerTurn: round(
+        turns.length === 0
+          ? 0
+          : turns.reduce((sum, turn) => sum + (turn.operations?.length ?? 0), 0) / turns.length,
+      ),
       technicalReasons: technical?.reasons ?? [],
       playerVisibleAverageMs: round(
         visible.length === 0 ? 0 : visible.reduce((sum, value) => sum + value, 0) / visible.length,
@@ -460,6 +476,17 @@ export async function collectPlaytestReport(runDir: string): Promise<PlaytestRep
     });
   }
   return { manifest, jobs };
+}
+
+/** Committed durable operations by kind, over the turns this job committed. */
+function countOperations(turns: readonly PlaytestTurnRecord[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const turn of turns) {
+    for (const operation of turn.operations ?? []) {
+      counts[operation.type] = (counts[operation.type] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 function countLine(counts: Readonly<Record<string, number>>): string {
@@ -549,12 +576,20 @@ export function scorePlaytestAcceptance(
   const invariantFailures = jobs.reduce((total, job) => total + job.invariantFailures, 0);
   const domainRepairs = jobs.reduce((total, job) => total + job.candidate.repairs.domain, 0);
   const repairsPerTurn = turns === 0 ? 0 : domainRepairs / turns;
-  const auditEntries = jobs.reduce(
-    (total, job) =>
-      total + job.threadAudit.unchanged + job.threadAudit.progressed + job.threadAudit.closed,
+  const closed = jobs.reduce((total, job) => total + job.threadAudit.closed, 0);
+  // Tolerant of an absent field so a report can still be scored over a run
+  // recorded before operation yield was tracked.
+  const operations = jobs.reduce(
+    (total, job) => total + Object.values(job.operationCounts ?? {}).reduce((sum, n) => sum + n, 0),
     0,
   );
-  const closed = jobs.reduce((total, job) => total + job.threadAudit.closed, 0);
+  const operationsPerTurn = turns === 0 ? 0 : operations / turns;
+  const operationKinds = jobs.reduce<Record<string, number>>((total, job) => {
+    for (const [kind, count] of Object.entries(job.operationCounts ?? {})) {
+      total[kind] = (total[kind] ?? 0) + count;
+    }
+    return total;
+  }, {});
   const criteria: PlaytestAcceptanceCriterion[] = [
     {
       id: "run_completion",
@@ -598,13 +633,28 @@ export function scorePlaytestAcceptance(
       verdict: "measured",
     },
     {
-      id: "thread_closure_rate",
-      label: "Thread closure rate",
+      // Per 100 turns rather than per verdict, so it is comparable between a
+      // 15-turn run and a 100-turn one. Reported, never tuned against.
+      id: "thread_closures_per_100_turns",
+      label: "Thread closures per 100 turns",
       bar: "measure and report only",
       observed:
-        auditEntries === 0
-          ? "no thread audit entries"
-          : `${formatShare(closed / auditEntries)} (${closed} closed / ${auditEntries} verdicts)`,
+        turns === 0
+          ? "no turns played"
+          : `${((closed / turns) * 100).toFixed(1)} (${closed} closed / ${turns} turns)`,
+      verdict: "measured",
+    },
+    {
+      // The yield side of the ledger. Every criterion above improves when the
+      // model records less, so a run that repairs less because it wrote less
+      // would otherwise read as an improvement.
+      id: "durable_operations_per_turn",
+      label: "Durable operations per turn",
+      bar: "measure and report only; a fall here cancels a fall in repairs",
+      observed:
+        turns === 0
+          ? "no turns played"
+          : `${operationsPerTurn.toFixed(2)} (${operations} operations / ${turns} turns) — ${countLine(operationKinds)}`,
       verdict: "measured",
     },
   ];

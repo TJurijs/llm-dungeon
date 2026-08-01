@@ -1025,6 +1025,61 @@ describe("playtest reporting", () => {
     );
   });
 
+  it("shows the yield a run bought, not only what it cost", () => {
+    // Every hard criterion improves when the model emits fewer operations, so
+    // a quieter run reads as a better one unless something watches the yield.
+    // These two score identically on repairs and differ only in what they
+    // actually recorded.
+    const job = (operationCounts: Record<string, number>, domain: number) =>
+      ({
+        jobId: "job-1",
+        turnsRequested: 40,
+        turnsCompleted: 40,
+        turnsSkipped: 0,
+        stopReason: "turn_limit",
+        checkRate: 0.1,
+        invariantFailures: 0,
+        threadAudit: { unchanged: 4, progressed: 5, closed: 1, omitted: 0, invented: 0 },
+        operationCounts,
+        candidate: {
+          repairs: { schema: 0, content: 0, transient: 0, domain },
+          domainRepairCauses: [],
+        },
+        playerDriver: { domainRepairCauses: [] },
+        judge: { domainRepairCauses: [] },
+        artifact: { domainRepairCauses: [] },
+      }) as unknown as Parameters<typeof scorePlaytestAcceptance>[0][number];
+
+    const rich = scorePlaytestAcceptance([
+      job({ advance_time: 40, add_fact: 35, set_entity_state: 34, update_thread: 32 }, 1),
+    ]);
+    const hollow = scorePlaytestAcceptance([job({ advance_time: 40, add_fact: 2 }, 1)]);
+
+    // Both are accepted: yield is reported, never a gate. The point is that
+    // the difference is now visible at all.
+    expect(rich.accepted).toBe(true);
+    expect(hollow.accepted).toBe(true);
+    expect(rich.criteria).toContainEqual(
+      expect.objectContaining({
+        id: "durable_operations_per_turn",
+        observed: expect.stringContaining("3.52 (141 operations / 40 turns)"),
+      }),
+    );
+    expect(hollow.criteria).toContainEqual(
+      expect.objectContaining({
+        id: "durable_operations_per_turn",
+        observed: expect.stringContaining("1.05 (42 operations / 40 turns)"),
+      }),
+    );
+    // And the kind breakdown names what stopped being written.
+    expect(
+      rich.criteria.find((c) => c.id === "durable_operations_per_turn")?.observed,
+    ).toContain("set_entity_state=34");
+    expect(
+      hollow.criteria.find((c) => c.id === "durable_operations_per_turn")?.observed,
+    ).not.toContain("set_entity_state");
+  });
+
   it("scores a repaired run as acceptable and an aborted run as not", () => {
     const base = {
       jobId: "job-1",
@@ -1046,7 +1101,10 @@ describe("playtest reporting", () => {
     ] as unknown as Parameters<typeof scorePlaytestAcceptance>[0]);
     expect(repaired.accepted).toBe(true);
     expect(repaired.criteria).toContainEqual(
-      expect.objectContaining({ id: "thread_closure_rate", observed: "10.0% (1 closed / 10 verdicts)" }),
+      expect.objectContaining({
+        id: "thread_closures_per_100_turns",
+        observed: "2.5 (1 closed / 40 turns)",
+      }),
     );
 
     // A valid in-fiction death completes its fixture; only a technical abort fails.
